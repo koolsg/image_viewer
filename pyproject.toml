@@ -1,0 +1,11 @@
+[project]
+name = "image-viewer"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "numpy>=2.3.4",
+    "pyside6>=6.10.0",
+    "pyvips[binary]>=3.0.0",
+]

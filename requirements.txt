@@ -1,5 +1,0 @@
-Pillow
-PyTurboJPEG
-numpy
-pyside6
-pillow
