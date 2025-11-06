@@ -614,6 +614,8 @@ class ImageViewer(QMainWindow):
         self.thumbnail_mode_action.setChecked(not self.decode_full)
         self.thumbnail_mode_action.triggered.connect(self.toggle_thumbnail_mode)
         view_menu.addAction(self.thumbnail_mode_action)
+        # 썸네일 모드에서는 고품질 축소 옵션이 의미 없음 → 비활성화
+        self.hq_downscale_action.setEnabled(self.decode_full)
 
         # 프레스 중 배율: 바로 입력창을 띄우는 단일 항목
         self.multiplier_action = QAction("프레스 중 배율...", self)
@@ -1218,6 +1220,11 @@ class ImageViewer(QMainWindow):
         self.decode_full = not is_thumbnail
         # 설정 저장: 썸네일 모드 상태만 저장
         self._save_settings_key("thumbnail_mode", is_thumbnail)
+        # 썸네일 모드에서는 고품질 축소 옵션 비활성화 및 해제
+        self.hq_downscale_action.setEnabled(self.decode_full)
+        if not self.decode_full and self.hq_downscale_action.isChecked():
+            self.hq_downscale_action.setChecked(False)
+            self.canvas._hq_downscale = False
         # 현재 캐시를 비워 새 전략으로 비교가 즉시 가능하도록 함
         self.pixmap_cache.clear()
         # 현재 이미지를 재표시 및 프리패치 재요청
