@@ -36,6 +36,14 @@ def _decode_with_pyvips_from_file(path: str,
     """Decode arbitrary image bytes into an RGB numpy array using pyvips."""
     try:
         import pyvips  # type: ignore
+        # Minimize chances of libvips holding file descriptors via internal caches
+        try:
+            pyvips.cache_set_max(0)
+            pyvips.cache_set_max_mem(0)
+            pyvips.cache_set_max_files(0)
+        except Exception:
+            # Best-effort; continue even if cache tuning is unsupported
+            pass
     except Exception as exc:
         raise RuntimeError(f"PyVips not available: {exc}") from exc
     try:
@@ -55,6 +63,12 @@ def _decode_with_pyvips_from_file(path: str,
             image = pyvips.Image.new_from_file(path, access="sequential")
     else:
         image = pyvips.Image.new_from_file(path, access="sequential")
+
+    # Detach from the source file as early as possible to release file handles
+    try:
+        image = image.copy_memory()
+    except Exception:
+        pass
     # Ensure we work in 8-bit sRGB space with exactly 3 bands.
     try:
         image = image.colourspace("srgb")
@@ -74,6 +88,12 @@ def _decode_with_pyvips_from_file(path: str,
 
     mem = image.write_to_memory()
     array = np.frombuffer(mem, dtype=np.uint8).reshape(image.height, image.width, image.bands)
+    # Ensure no hidden reference to libvips buffers
+    array = array.copy()
+    try:
+        del image
+    except Exception:
+        pass
     if array.shape[2] != 3:
         raise RuntimeError(f"Unsupported band count after conversion: {array.shape[2]}")
     return array

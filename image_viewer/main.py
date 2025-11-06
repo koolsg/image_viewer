@@ -1,4 +1,4 @@
-import sys
+﻿import sys
 import os
 import json
 import threading
@@ -38,11 +38,20 @@ class Loader(QObject):
         max_io = max(2, min(4, (os.cpu_count() or 2)))
         self.io_pool = ThreadPoolExecutor(max_workers=max_io)
         self._pending = set()
+        self._ignored = set()
+        self._next_id = 1
+        self._latest_id = {}
         self._lock = threading.Lock()
 
-    def _submit_decode(self, file_path: str, target_width: int | None, target_height: int | None, size: str = "both"):
+    def _submit_decode(self, file_path: str, target_width: int | None, target_height: int | None, size: str = "both", req_id: int | None = None):
         try:
             future = self.executor.submit(decode_image, file_path, target_width, target_height, size)
+            try:
+                # Attach request metadata for staleness check
+                setattr(future, "_req_id", req_id)
+                setattr(future, "_path", file_path)
+            except Exception:
+                pass
             future.add_done_callback(self.on_decode_finished)
         except Exception as e:
             with self._lock:
@@ -51,16 +60,42 @@ class Loader(QObject):
 
     def on_decode_finished(self, future):
         path, data, error = future.result()
+        try:
+            req_id = getattr(future, "_req_id", None)
+        except Exception:
+            req_id = None
         with self._lock:
             self._pending.discard(path)
+            if path in self._ignored:
+                return
+            latest = self._latest_id.get(path)
+            if latest is not None and req_id is not None and req_id != latest:
+                return
         self.image_decoded.emit(path, data, error)
 
     def request_load(self, path, target_width: int | None = None, target_height: int | None = None, size: str = "both"):
         with self._lock:
-            if path in self._pending:
+            if path in self._pending or path in self._ignored:
                 return
             self._pending.add(path)
-        self.io_pool.submit(self._submit_decode, path, target_width, target_height, size)
+            req_id = self._next_id
+            self._next_id += 1
+            self._latest_id[path] = req_id
+        self.io_pool.submit(self._submit_decode, path, target_width, target_height, size, req_id)
+
+    def ignore_path(self, path: str):
+        """Mark path as ignored so late decode results are dropped and future submissions blocked."""
+        with self._lock:
+            self._ignored.add(path)
+            self._pending.discard(path)
+            try:
+                self._latest_id.pop(path, None)
+            except Exception:
+                pass
+    def unignore_path(self, path: str):
+        """Remove path from ignored set to allow future submissions."""
+        with self._lock:
+            self._ignored.discard(path)
 
     def shutdown(self):
         self.executor.shutdown(wait=False, cancel_futures=True)
@@ -96,6 +131,8 @@ class ImageCanvas(QGraphicsView):
         # 프레스-줌 상태
         self._zoom_saved = None
         self._press_zoom_multiplier = 2.0
+        # 회전 상태(도 단위, 시계 방향 양수)
+        self._rotation = 0.0
 
         # 렌더 품질 설정
         self.setRenderHints(self.renderHints())
@@ -128,7 +165,15 @@ class ImageCanvas(QGraphicsView):
     def set_pixmap(self, pixmap: QPixmap):
         self._pix_item.setPixmap(pixmap)
         self._pix_item.setOffset(0, 0)
-        self._scene.setSceneRect(QRectF(pixmap.rect()))
+        # 새 이미지에서는 회전을 초기화
+        self._rotation = 0.0
+        try:
+            pm_rect = QRectF(pixmap.rect())
+            self._pix_item.setTransformOriginPoint(pm_rect.center())
+            self._pix_item.setRotation(self._rotation)
+            self._scene.setSceneRect(pm_rect)
+        except Exception:
+            self._scene.setSceneRect(QRectF(pixmap.rect()))
         self._hq_pixmap = None
         self.apply_current_view()
 
@@ -292,11 +337,41 @@ class ImageCanvas(QGraphicsView):
         self._zoom = 1.0
         self.apply_current_view()
 
+    def rotate_by(self, degrees: float):
+        try:
+            self._rotation = (self._rotation + float(degrees)) % 360.0
+        except Exception:
+            return
+        # 회전 반영 및 뷰 갱신
+        pm = self._pix_item.pixmap()
+        if pm.isNull():
+            return
+        pm_rect = QRectF(pm.rect())
+        try:
+            self._pix_item.setTransformOriginPoint(pm_rect.center())
+            self._pix_item.setRotation(self._rotation)
+            br = self._pix_item.mapRectToScene(pm_rect)
+            self._scene.setSceneRect(br)
+        except Exception:
+            pass
+        # 현재 보기 정책 재적용(맞춤/실제 + 줌)
+        self.apply_current_view()
+
     def apply_current_view(self):
         pix = self._pix_item.pixmap()
         if pix.isNull():
             return
         self.resetTransform()
+        # 회전은 아이템 단위로 적용됨
+        try:
+            pm_rect = QRectF(pix.rect())
+            self._pix_item.setTransformOriginPoint(pm_rect.center())
+            self._pix_item.setRotation(self._rotation)
+            # 회전 후 장면 경계 갱신
+            br = self._pix_item.mapRectToScene(pm_rect)
+            self._scene.setSceneRect(br)
+        except Exception:
+            pass
         if self._preset_mode == "fit":
             if self._hq_downscale:
                 self._apply_hq_fit()
@@ -470,6 +545,31 @@ class ImageViewer(QMainWindow):
                 self.canvas._press_zoom_multiplier = float(mul)
         except Exception:
             pass
+
+        # 경로 정규화 유틸(Windows 특수 접두 및 잡음 제거)
+        def _normalize_path_for_windows(p: str) -> str:
+            try:
+                if not isinstance(p, str):
+                    return p
+                p = p.strip()
+                if os.name == 'nt':
+                    p = p.replace('/', '\\')
+                    if p.startswith('\\\\?\\'):
+                        if p.startswith('\\\\?\\UNC\\'):
+                            p = '\\\\' + p[8:]
+                        else:
+                            p = p[4:]
+                    if p.startswith('[:'):
+                        p = p[2:]
+                    if p and p[0] in '[{(':
+                        import re
+                        m = re.search(r'[A-Za-z]:\\\\', p)
+                        if m:
+                            p = p[m.start():]
+                return os.path.normpath(p)
+            except Exception:
+                return p
+        self._normalize_path_for_windows = _normalize_path_for_windows
 
     def _create_menus(self):
         menu_bar = self.menuBar()
@@ -701,30 +801,69 @@ class ImageViewer(QMainWindow):
             self._settings = {}
 
     def open_folder(self):
-        start_dir = self._load_last_parent_dir()
-        folder_path = QFileDialog.getExistingDirectory(self, "폴더 선택", start_dir)
-        if not folder_path:
+        try:
+            start_dir = self._load_last_parent_dir()
+        except Exception:
+            start_dir = os.path.expanduser("~")
+        try:
+            dir_path = QFileDialog.getExistingDirectory(self, "폴더 열기", start_dir)
+        except Exception:
+            dir_path = None
+        if not dir_path:
             return
-        parent_dir = os.path.dirname(folder_path)
-        if parent_dir and os.path.isdir(parent_dir):
-            self._save_last_parent_dir(parent_dir)
-        self.image_files = sorted([
-            os.path.join(folder_path, f)
-            for f in os.listdir(folder_path)
-            if f.lower().endswith(self.supported_formats)
-        ])
 
-        if self.image_files:
-            self.current_index = 0
+        # 새 폴더 진입: 기존 세션 상태 정리
+        try:
+            # 1) 로더 상태 초기화 (무시/보류 제거)
+            if hasattr(self, 'loader'):
+                try:
+                    # 최소화: 무시 집합/펜딩 초기화
+                    self.loader._ignored.clear()
+                    self.loader._pending.clear()
+                    # 최신 요청 맵이 있으면 초기화
+                    if hasattr(self.loader, '_latest_id'):
+                        self.loader._latest_id.clear()
+                except Exception:
+                    pass
+            # 2) 캐시/표시 초기화
             self.pixmap_cache.clear()
-            self.display_image()
-            self.maintain_decode_window(back=0, ahead=5)
-            self.fit_action.setChecked(True)
-            self.canvas._preset_mode = "fit"
-        else:
             self.current_index = -1
+            try:
+                empty = QPixmap(1, 1)
+                empty.fill(Qt.transparent)
+                self.canvas.set_pixmap(empty)
+            except Exception:
+                pass
+        except Exception:
+            pass
+
+        # 이미지 목록 재구성
+        try:
+            files = []
+            for name in os.listdir(dir_path):
+                p = os.path.join(dir_path, name)
+                if os.path.isfile(p):
+                    lower = name.lower()
+                    if lower.endswith((".jpg", ".jpeg", ".png", ".bmp", ".gif", ".webp", ".tif", ".tiff")):
+                        files.append(p)
+            files.sort()
+            self.image_files = files
+        except Exception:
             self.image_files = []
-            self._update_status("이미지가 없습니다")
+
+        # 인덱스/상태 갱신 및 첫 이미지 표시
+        if not self.image_files:
+            self.setWindowTitle("Image Viewer")
+            self._update_status("이미지가 없습니다.")
+            return
+        self.current_index = 0
+        try:
+            self._save_last_parent_dir(dir_path)
+        except Exception:
+            pass
+        self.setWindowTitle(f"Image Viewer - {os.path.basename(self.image_files[self.current_index])}")
+        self.display_image()
+        self.maintain_decode_window(back=0, ahead=5)
 
     def display_image(self):
         if self.current_index == -1:
@@ -750,6 +889,12 @@ class ImageViewer(QMainWindow):
         self.loader.request_load(image_path, target_w, target_h, "both")
 
     def on_image_ready(self, path, image_data, error):
+        # Drop late results for items no longer present (e.g., deleted)
+        try:
+            if path not in self.image_files:
+                return
+        except Exception:
+            pass
         if error:
             print(f"Error decoding {path}: {error}")
             try:
@@ -799,11 +944,27 @@ class ImageViewer(QMainWindow):
             self.next_image()
         elif key == Qt.Key_Left:
             self.prev_image()
+        elif key == Qt.Key_A:
+            # 좌측 90도 회전
+            try:
+                self.canvas.rotate_by(-90)
+            except Exception:
+                pass
+        elif key == Qt.Key_D:
+            # 우측 90도 회전
+            try:
+                self.canvas.rotate_by(90)
+            except Exception:
+                pass
+        elif key == Qt.Key_Delete:
+            self.delete_current_file()
         elif key == Qt.Key_Return or key == Qt.Key_Enter:
             # 전체 화면 토글: 전체 화면 상태에서 Enter/Return으로 빠져나오기 포함
             self.toggle_fullscreen()
         else:
             super().keyPressEvent(event)
+
+
 
     def maintain_decode_window(self, back: int = 3, ahead: int = 5):
         if not self.image_files:
@@ -859,6 +1020,159 @@ class ImageViewer(QMainWindow):
         self.current_index = len(self.image_files) - 1
         self.display_image()
         self.maintain_decode_window()
+
+    def delete_current_file(self):
+        # 현재 파일을 휴지통으로 이동(확인 대화상자 표시).
+        # UX: 삭제 확정 후 먼저 다른 이미지로 전환하고, 그 다음 실제 삭제를 시도한다.
+        if not self.image_files or self.current_index < 0 or self.current_index >= len(self.image_files):
+            print("[delete] abort: no images or invalid index")
+            return
+        del_path = self.image_files[self.current_index]
+        abs_path = os.path.abspath(del_path)
+        print(f"[delete] start: idx={self.current_index}, total={len(self.image_files)}")
+
+        try:
+            from PySide6.QtWidgets import QMessageBox, QApplication
+        except Exception:
+            QMessageBox = None
+            QApplication = None
+            print("[delete] QMessageBox/QApplication unavailable")
+
+        # 확인 다이얼로그
+        proceed = True
+        if QMessageBox is not None:
+            base = os.path.basename(del_path)
+            ret = QMessageBox.question(
+                self,
+                "휴지통으로 이동",
+                f"이 파일을 휴지통으로 이동하시겠습니까?\n{base}",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.Yes,
+            )
+            proceed = (ret == QMessageBox.Yes)
+            print(f"[delete] confirm: proceed={proceed}")
+        if not proceed:
+            print("[delete] user cancelled")
+            return
+
+        # 1) 다른 이미지로 전환하여 표시 기준을 바꾼다
+        if len(self.image_files) > 1:
+            if self.current_index < len(self.image_files) - 1:
+                new_index = self.current_index + 1
+            else:
+                new_index = self.current_index - 1
+            print(f"[delete] switch image: {self.current_index} -> {new_index}")
+            self.current_index = new_index
+            try:
+                self.display_image()
+                self.maintain_decode_window()
+            except Exception as ex:
+                print(f"[delete] switch image error: {ex}")
+        else:
+            print("[delete] single image case: will clear view later")
+
+        # 화면/캐시에서 해당 경로 제거 + 이벤트/GC로 안정화
+        try:
+            removed = self.pixmap_cache.pop(del_path, None) is not None
+            print(f"[delete] cache pop: removed={removed}")
+        except Exception as ex:
+            print(f"[delete] cache pop error: {ex}")
+        try:
+            import gc, time as _time
+            if 'QApplication' in globals() and QApplication is not None:
+                QApplication.processEvents()
+                print("[delete] processEvents done")
+            gc.collect()
+            print("[delete] gc.collect done")
+            _time.sleep(0.15)
+            print("[delete] settle sleep done")
+        except Exception as ex:
+            print(f"[delete] settle phase error: {ex}")
+
+        # 2) 실제 휴지통 이동(재시도 포함)
+        try:
+            try:
+                from send2trash import send2trash
+                import time
+                last_err = None
+                for attempt in range(1, 4):
+                    try:
+                        print(f"[delete] trash attempt {attempt}")
+                        send2trash(abs_path)
+                        last_err = None
+                        print("[delete] trash success")
+                        break
+                    except Exception as ex:
+                        last_err = ex
+                        print(f"[delete] trash failed attempt {attempt}: {ex}")
+                        time.sleep(0.2)
+                if last_err is not None:
+                    raise last_err
+            except Exception:
+                raise
+        except Exception as e:
+            print(f"[delete] trash final error: {e}")
+            if 'QMessageBox' in globals() and QMessageBox is not None:
+                QMessageBox.critical(
+                    self,
+                    "이동 실패",
+                    (
+                        "휴지통으로 이동 중 오류가 발생했습니다.\n"
+                        "send2trash 설치 및 경로를 확인해 주세요.\n\n"
+                        f"오류: {e}\n"
+                        f"원본경로: {del_path}\n"
+                        f"절대경로: {abs_path}\n"
+                    ),
+                )
+            return
+
+        # 삭제 성공 확인 후에만, 재요청/완료 신호를 확실히 무시하도록 ignore 적용
+        try:
+            if hasattr(self, 'loader'):
+                self.loader.ignore_path(del_path)
+        except Exception:
+            pass
+
+        # 3) 목록에서 제거하고 인덱스 정리
+        try:
+            try:
+                del_pos = self.image_files.index(del_path)
+            except ValueError:
+                del_pos = None
+            print(f"[delete] remove list: pos={del_pos}")
+            if del_pos is not None:
+                self.image_files.pop(del_pos)
+                if del_pos <= self.current_index:
+                    old_idx = self.current_index
+                    self.current_index = max(0, self.current_index - 1)
+                    print(f"[delete] index adjust: {old_idx} -> {self.current_index}")
+        except Exception as ex:
+            print(f"[delete] list pop error, fallback remove: {ex}")
+            try:
+                self.image_files.remove(del_path)
+                print("[delete] list remove by value: success")
+            except Exception as ex2:
+                print(f"[delete] list remove by value error: {ex2}")
+
+        # 4) 최종 표시/상태 갱신
+        if not self.image_files:
+            print("[delete] list empty: clearing view")
+            self.current_index = -1
+            try:
+                empty = QPixmap(1, 1)
+                empty.fill(Qt.transparent)
+                self.canvas.set_pixmap(empty)
+            except Exception as ex:
+                print(f"[delete] clear view error: {ex}")
+            self.setWindowTitle("Image Viewer")
+            self._update_status()
+            return
+        try:
+            print(f"[delete] show current: idx={self.current_index}, total={len(self.image_files)}")
+            self.display_image()
+            self.maintain_decode_window()
+        except Exception as ex:
+            print(f"[delete] final display error: {ex}")
 
     def closeEvent(self, event):
         self.loader.shutdown()

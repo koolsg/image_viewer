@@ -80,6 +80,7 @@ dependencies = [
     { name = "numpy" },
     { name = "pyside6" },
     { name = "pyvips", extra = ["binary"] },
+    { name = "send2trash" },
 ]
 
 [package.metadata]
@@ -87,6 +88,7 @@ requires-dist = [
     { name = "numpy", specifier = ">=2.3.4" },
     { name = "pyside6", specifier = ">=6.10.0" },
     { name = "pyvips", extras = ["binary"], specifier = ">=3.0.0" },
+    { name = "send2trash", specifier = ">=1.8" },
 ]
 
 [[package]]
@@ -260,6 +262,15 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/85/6d/81c0b45517c14c3938fe4ad387a5680dbc68514f9ea85c27e5155c0746ac/pyvips_binary-8.17.3-cp37-abi3-win32.whl", hash = "sha256:b63dcd30945e475f5dcdf5423fa1f8e9116a6e31f3b9d6d381dce7c90e4212f8", size = 8190345, upload-time = "2025-10-31T13:14:33.481Z" },
     { url = "https://files.pythonhosted.org/packages/69/fc/9915c752634a96b66da78da776f7c6cb7f9bcca1a286d188a9f3891ce0e8/pyvips_binary-8.17.3-cp37-abi3-win_amd64.whl", hash = "sha256:b15c4f8523cb654918ccf99d75f20aa9687225a945e53a1a5c49a0a89594275b", size = 8179060, upload-time = "2025-10-31T13:14:35.851Z" },
     { url = "https://files.pythonhosted.org/packages/dc/be/78735c03d4a04a53478426959033b9fbd8ff3e5034ead5f80b9aeb1ce839/pyvips_binary-8.17.3-cp37-abi3-win_arm64.whl", hash = "sha256:0bfd1ce40f64e16bb71ae016631b4a6187498a90a812588394457ceec76163ba", size = 7388844, upload-time = "2025-10-31T13:14:37.62Z" },
+]
+
+[[package]]
+name = "send2trash"
+version = "1.8.3"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/fd/3a/aec9b02217bb79b87bbc1a21bc6abc51e3d5dcf65c30487ac96c0908c722/Send2Trash-1.8.3.tar.gz", hash = "sha256:b18e7a3966d99871aefeb00cfbcfdced55ce4871194810fc71f4aa484b953abf", size = 17394, upload-time = "2024-04-07T00:01:09.267Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/40/b0/4562db6223154aa4e22f939003cb92514c79f3d4dccca3444253fd17f902/Send2Trash-1.8.3-py3-none-any.whl", hash = "sha256:0c31227e0bd08961c7665474a3d1ef7193929fedda4233843689baa056be46c9", size = 18072, upload-time = "2024-04-07T00:01:07.438Z" },
 ]
 
 [[package]]

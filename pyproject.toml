@@ -8,4 +8,5 @@ dependencies = [
     "numpy>=2.3.4",
     "pyside6>=6.10.0",
     "pyvips[binary]>=3.0.0",
+    "send2trash>=1.8",
 ]
