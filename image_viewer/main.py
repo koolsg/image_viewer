@@ -1,11 +1,11 @@
-﻿import sys
+import sys
 import os
 import json
 import threading
 from collections import OrderedDict
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 
-from PySide6.QtCore import Qt, QObject, Signal, QRectF
+from PySide6.QtCore import Qt, QObject, Signal, QRectF, Slot
 from PySide6.QtWidgets import (
     QApplication,
     QMainWindow,
@@ -17,17 +17,35 @@ from PySide6.QtWidgets import (
     QFrame,
 )
 from PySide6.QtWidgets import QColorDialog
+from PySide6.QtWidgets import QDialog, QVBoxLayout, QLabel, QProgressBar
 from PySide6.QtGui import QPixmap, QAction, QKeySequence, QImage, QShortcut, QActionGroup, QPainter, QColor
+
+# 분리된 모듈에서 로드
+try:
+    from .loader import Loader as ExtLoader
+    from .ui_canvas import ImageCanvas as ExtImageCanvas
+    from .trim import detect_trim_box, detect_trim_box_mask, detect_trim_box_stats, make_trim_preview, make_dual_preview, apply_trim_to_file
+    from .ui_menus import build_menus
+except Exception:
+    import os as _os, sys as _sys
+    _sys.path.append(_os.path.dirname(_os.path.dirname(__file__)))
+    from image_viewer.loader import Loader as ExtLoader
+    from image_viewer.ui_canvas import ImageCanvas as ExtImageCanvas
+    from image_viewer.trim import detect_trim_box, detect_trim_box_mask, detect_trim_box_stats, make_trim_preview, make_dual_preview, apply_trim_to_file
+    from image_viewer.ui_menus import build_menus
 
 
 # --- Top-level function for the Process Pool ---
 # multiprocessing에서 피클링 가능하도록 최상위에 유지되는 셔틀 함수
 def decode_image(file_path, target_width=None, target_height=None, size="both"):
-    from .decoder import decode_image as _decode
+    try:
+        from .decoder import decode_image as _decode
+    except Exception:
+        from image_viewer.decoder import decode_image as _decode
     return _decode(file_path, target_width, target_height, size)
 
 
-class Loader(QObject):
+class _LegacyLoaderDoNotUse(QObject):
     """백그라운드 로딩/디코딩 파이프라인 관리자."""
 
     image_decoded = Signal(str, object, object)  # path, numpy_array, error
@@ -105,7 +123,7 @@ class Loader(QObject):
             self.io_pool.shutdown(wait=False)
 
 
-class ImageCanvas(QGraphicsView):
+class _LegacyImageCanvasDoNotUse(QGraphicsView):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._scene = QGraphicsScene(self)
@@ -518,12 +536,13 @@ class ImageViewer(QMainWindow):
         # 디코딩 전략: True이면 원본 디코딩, False이면 썸네일 모드 (기본: 원본)
         self.decode_full: bool = True
 
-        self.canvas = ImageCanvas(self)
+        self.canvas = ExtImageCanvas(self)
         self.setCentralWidget(self.canvas)
 
-        self._create_menus()
+        # 메뉴 구성(점진 분리: 별도 모듈 래퍼 통해 호출)
+        build_menus(self)
 
-        self.loader = Loader()
+        self.loader = ExtLoader(decode_image)
         self.loader.image_decoded.connect(self.on_image_ready)
 
         self._settings_path = os.path.join(os.path.dirname(__file__), "settings.json")
@@ -570,6 +589,69 @@ class ImageViewer(QMainWindow):
             except Exception:
                 return p
         self._normalize_path_for_windows = _normalize_path_for_windows
+
+    class TrimBatchWorker(QObject):
+        progress = Signal(int, int, str)  # total, index (1-based), filename
+        finished = Signal()
+
+        def __init__(self, paths: list[str], alg: str):
+            super().__init__()
+            self.paths = paths
+            self.alg = alg
+
+        @Slot()
+        def run(self):
+            try:
+                from image_viewer.trim import (
+                    detect_trim_box_mask,
+                    detect_trim_box_stats,
+                    apply_trim_to_file,
+                )
+            except Exception:
+                self.finished.emit()
+                return
+            total = len(self.paths)
+            for i, path in enumerate(self.paths, 1):
+                try:
+                    crop = detect_trim_box_mask(path) if self.alg == "mask" else detect_trim_box_stats(path)
+                    if crop:
+                        apply_trim_to_file(path, crop, overwrite=False, alg=self.alg)
+                except Exception:
+                    pass
+                try:
+                    name = os.path.basename(path)
+                except Exception:
+                    name = path
+                self.progress.emit(total, i, name)
+            self.finished.emit()
+
+    class TrimProgressDialog(QDialog):
+        def __init__(self, parent=None):
+            super().__init__(parent)
+            self.setWindowTitle("트림 처리 중...")
+            self.setModal(True)
+            try:
+                layout = QVBoxLayout(self)
+                self._label_summary = QLabel("대기 중...", self)
+                self._label_file = QLabel("", self)
+                self._bar = QProgressBar(self)
+                self._bar.setRange(0, 100)
+                self._bar.setValue(0)
+                layout.addWidget(self._label_summary)
+                layout.addWidget(self._label_file)
+                layout.addWidget(self._bar)
+            except Exception:
+                pass
+
+        @Slot(int, int, str)
+        def on_progress(self, total: int, index: int, name: str):
+            try:
+                self._label_summary.setText(f"{total}개 중 {index}개 처리 중")
+                self._label_file.setText(name)
+                pct = int(index * 100 / max(1, total))
+                self._bar.setValue(pct)
+            except Exception:
+                pass
 
     def _create_menus(self):
         menu_bar = self.menuBar()
@@ -645,6 +727,18 @@ class ImageViewer(QMainWindow):
         zoom_out_action.triggered.connect(lambda: self.zoom_by(0.75))
         view_menu.addAction(zoom_out_action)
 
+        # 트림 옵션/실행
+        try:
+            self.trim_options_action = QAction("트림 옵션...", self)
+            self.trim_options_action.triggered.connect(self.prompt_trim_options)
+            view_menu.addAction(self.trim_options_action)
+
+            self.trim_action = QAction("트림...", self)
+            self.trim_action.triggered.connect(self.start_trim_workflow)
+            view_menu.addAction(self.trim_action)
+        except Exception:
+            pass
+
         self.fullscreen_action = QAction("전체 화면", self, checkable=True)
         self.fullscreen_action.setShortcuts([
             QKeySequence(Qt.Key_Return),
@@ -674,6 +768,35 @@ class ImageViewer(QMainWindow):
 
         self._shortcut_escape = QShortcut(QKeySequence(Qt.Key_Escape), self)
         self._shortcut_escape.activated.connect(self.exit_fullscreen)
+
+    def prompt_trim_options(self):
+        try:
+            from PySide6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QRadioButton, QLabel, QPushButton
+        except Exception:
+            return
+        alg = self._settings.get("trim_algorithm", "mask")
+        dlg = QDialog(self)
+        dlg.setWindowTitle("트림 옵션")
+        v = QVBoxLayout(dlg)
+        v.addWidget(QLabel("트림 알고리즘을 선택하세요:"))
+        r_mask = QRadioButton("Mask 방식")
+        r_stats = QRadioButton("Stats 방식")
+        r_mask.setChecked(alg != "stats")
+        r_stats.setChecked(alg == "stats")
+        v.addWidget(r_mask)
+        v.addWidget(r_stats)
+        btns = QHBoxLayout()
+        ok = QPushButton("확인")
+        cancel = QPushButton("취소")
+        btns.addWidget(ok)
+        btns.addWidget(cancel)
+        v.addLayout(btns)
+        ok.clicked.connect(dlg.accept)
+        cancel.clicked.connect(dlg.reject)
+        if dlg.exec():
+            new_alg = "stats" if r_stats.isChecked() else "mask"
+            self._settings["trim_algorithm"] = new_alg
+            self._save_settings_key("trim_algorithm", new_alg)
 
     # 상태 오버레이 텍스트 갱신용 함수는 _update_status를 사용합니다.
 
@@ -927,6 +1050,9 @@ class ImageViewer(QMainWindow):
         if len(self.pixmap_cache) > self.cache_size:
             self.pixmap_cache.popitem(last=False)
 
+        # 미리보기(트림 등) 중에는 화면 갱신을 건너뛴다
+        if getattr(self, '_in_trim_preview', False):
+            return
         if path == self.image_files[self.current_index]:
             self.update_pixmap(pixmap)
 
@@ -1312,7 +1438,188 @@ class ImageViewer(QMainWindow):
         if ok:
             self.set_press_zoom_multiplier(val)
 
-    # 전체 화면
+    # ---------------- Trim Workflow ----------------
+    def start_trim_workflow(self):
+        # 재진입/중복 실행 방지
+        if getattr(self, "_trim_running", False):
+            return
+        self._trim_running = True
+        try:
+            if not self.image_files:
+                return
+            try:
+                from PySide6.QtWidgets import QMessageBox
+            except Exception:
+                return
+
+            # 1) 트림 알고리즘 선택 (매 실행 시 묻기)
+            alg_box = QMessageBox(self)
+            alg_box.setWindowTitle("트림 방식 선택")
+            alg_box.setText("어떤 방식으로 트림할까요?")
+            alg_mask = alg_box.addButton("Mask", QMessageBox.AcceptRole)
+            alg_stats = alg_box.addButton("Stats", QMessageBox.ActionRole)
+            alg_cancel = alg_box.addButton("취소", QMessageBox.RejectRole)
+            alg_box.setDefaultButton(alg_mask)
+            alg_box.exec()
+            clicked_alg = alg_box.clickedButton()
+            if clicked_alg is alg_cancel or clicked_alg is None:
+                return
+            alg = 'mask' if clicked_alg is alg_mask else 'stats'
+            try:
+                self._save_settings_key("trim_algorithm", alg)
+            except Exception:
+                pass
+
+            # 2) 저장 방식 선택 (덮어씌우기/사본/취소)
+            mode_box = QMessageBox(self)
+            mode_box.setWindowTitle("트림")
+            mode_box.setText(("Mask 방식" if alg == "mask" else "Stats 방식") +
+                             "으로 트림하겠습니다.\n(덮어씌우기, 따로 저장, 취소)")
+            overwrite_btn = mode_box.addButton("덮어씌우기", QMessageBox.AcceptRole)
+            saveas_btn = mode_box.addButton("사본 저장(_trimmed)", QMessageBox.ActionRole)
+            cancel_btn = mode_box.addButton("취소", QMessageBox.RejectRole)
+            mode_box.setDefaultButton(overwrite_btn)
+            mode_box.exec()
+            clicked = mode_box.clickedButton()
+            if clicked is cancel_btn or clicked is None:
+                return
+            overwrite = (clicked is overwrite_btn)
+
+            if not overwrite:
+                # 사본 저장: 백그라운드 스레드 일괄 처리 + 진행 대화상자
+                try:
+                    from PySide6.QtCore import QThread
+                except Exception:
+                    QThread = None  # type: ignore
+
+                paths = list(self.image_files)
+                dlg = self.TrimProgressDialog(self)
+
+                if QThread is None:
+                    # 폴백: 동기 처리
+                    worker = self.TrimBatchWorker(paths, alg)
+                    def _on_progress(total, index, name):
+                        dlg.on_progress(total, index, name)
+                    worker.progress.connect(_on_progress)
+                    worker.finished.connect(dlg.accept)
+                    worker.run()
+                    dlg.exec()
+                    self.maintain_decode_window()
+                    return
+
+                thread = QThread(self)
+                worker = self.TrimBatchWorker(paths, alg)
+                worker.moveToThread(thread)
+                thread.started.connect(worker.run)
+                worker.progress.connect(dlg.on_progress)
+
+                def _finish():
+                    try:
+                        thread.quit()
+                        thread.wait()
+                    except Exception:
+                        pass
+                    try:
+                        worker.deleteLater()
+                        thread.deleteLater()
+                    except Exception:
+                        pass
+                    dlg.accept()
+                    self.maintain_decode_window()
+
+                worker.finished.connect(_finish)
+                thread.start()
+                dlg.exec()
+                return
+
+            # 덮어씌우기: 파일별 승인(미리보기 + Y/N/A 단축키)
+            stop_all = False
+            for path in list(self.image_files):
+                if stop_all:
+                    break
+                try:
+                    crop = detect_trim_box_mask(path) if alg == "mask" else detect_trim_box_stats(path)
+                except Exception:
+                    crop = None
+                if not crop:
+                    continue
+                view_w = max(1, self.canvas.viewport().width())
+                view_h = max(1, self.canvas.viewport().height())
+                preview = make_trim_preview(path, crop, view_w, view_h)
+                if preview is None:
+                    continue
+                prev_pix = self.canvas._pix_item.pixmap() if self.canvas._pix_item else None
+                try:
+                    self._in_trim_preview = True
+                    self.canvas.set_pixmap(preview)
+                    self.canvas._preset_mode = "fit"
+                    self.canvas.apply_current_view()
+                except Exception:
+                    pass
+
+                box = QMessageBox(self)
+                box.setWindowTitle("Trim")
+                box.setText("트림할까요? (Y/N)")
+                yes = box.addButton("Accept (Y)", QMessageBox.YesRole)
+                no = box.addButton("Reject (N)", QMessageBox.NoRole)
+                abort_btn = box.addButton("Abort (A)", QMessageBox.RejectRole)
+                # Y/N/A 단축키 동작 추가: 단축키로 버튼 클릭을 트리거
+                try:
+                    from PySide6.QtGui import QKeySequence, QShortcut
+                    sc_y = QShortcut(QKeySequence("Y"), box)
+                    sc_n = QShortcut(QKeySequence("N"), box)
+                    sc_a = QShortcut(QKeySequence("A"), box)
+                    sc_y.activated.connect(lambda: yes.click())
+                    sc_n.activated.connect(lambda: no.click())
+                    sc_a.activated.connect(lambda: abort_btn.click())
+                except Exception:
+                    pass
+                box.setDefaultButton(yes)
+                box.exec()
+                clicked_btn = box.clickedButton()
+                if clicked_btn is abort_btn:
+                    stop_all = True
+                    accepted = False
+                else:
+                    accepted = (clicked_btn is yes)
+
+                # 원래 뷰 복귀
+                try:
+                    if prev_pix and not prev_pix.isNull():
+                        self.canvas.set_pixmap(prev_pix)
+                        self.canvas.apply_current_view()
+                    else:
+                        self.display_image()
+                except Exception:
+                    self.display_image()
+                finally:
+                    self._in_trim_preview = False
+
+                if not accepted:
+                    continue
+
+                try:
+                    apply_trim_to_file(path, crop, overwrite=True)
+                except Exception:
+                    try:
+                        QMessageBox.critical(self, "Trim 오류", f"파일 저장 실패: {os.path.basename(path)}")
+                    except Exception:
+                        pass
+                    continue
+
+                # 캐시 무효화 및 필요시 재표시
+                try:
+                    self.pixmap_cache.pop(path, None)
+                except Exception:
+                    pass
+                if self.current_index >= 0 and self.current_index < len(self.image_files) and self.image_files[self.current_index] == path:
+                    self.display_image()
+
+            self.maintain_decode_window()
+        finally:
+            # 실행 플래그 해제
+            self._trim_running = False
+
     def enter_fullscreen(self):
         if self.isFullScreen():
             return

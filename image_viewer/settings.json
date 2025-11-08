@@ -1,6 +1,7 @@
 {
-  "last_parent_dir": "D:/downloads/[小众视觉] No.014 悦悦",
+  "last_parent_dir": "D:/downloads/[JP] Kana Nakada (中田花奈) - ２ｎｄ写真集 掻き立てる",
   "press_zoom_multiplier": 3.0,
   "background_color": "#000000",
-  "thumbnail_mode": false
+  "thumbnail_mode": true,
+  "trim_algorithm": "mask"
 }
