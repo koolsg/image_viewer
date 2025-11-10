@@ -6,6 +6,9 @@ from typing import Callable
 from PySide6.QtCore import QObject, Signal
 
 
+from .logger import get_logger
+_logger = get_logger("loader")
+
 class Loader(QObject):
     """파일 I/O 스케줄링 + 다중 프로세스 디코딩을 관리하는 로더.
 
@@ -37,12 +40,25 @@ class Loader(QObject):
                 pass
             future.add_done_callback(self.on_decode_finished)
         except Exception as e:
+            _logger.exception("submit decode failed for %s", file_path)
             with self._lock:
                 self._pending.discard(file_path)
             self.image_decoded.emit(file_path, None, str(e))
 
     def on_decode_finished(self, future):
-        path, data, error = future.result()
+        try:
+            path, data, error = future.result()
+        except Exception as e:
+            _logger.exception("decode future failed")
+            # future may not have attrs if error happened before tagging
+            try:
+                path = getattr(future, "_path", "<unknown>")
+            except Exception:
+                path = "<unknown>"
+            with self._lock:
+                self._pending.discard(path)
+            self.image_decoded.emit(path, None, str(e))
+            return
         try:
             req_id = getattr(future, "_req_id", None)
         except Exception:
@@ -64,6 +80,7 @@ class Loader(QObject):
             req_id = self._next_id
             self._next_id += 1
             self._latest_id[path] = req_id
+        _logger.debug("request_load path=%s id=%s", path, req_id)
         self.io_pool.submit(self._submit_decode, path, target_width, target_height, size, req_id)
 
     def ignore_path(self, path: str):

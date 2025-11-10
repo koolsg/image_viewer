@@ -2,6 +2,11 @@ import os
 from typing import Tuple, Optional
 
 # --- Optional .env support to load LIBVIPS_BIN for Windows child processes ---
+from typing import Optional, Tuple
+from .logger import get_logger
+
+_logger = get_logger("decoder")
+
 def _load_env_file(env_path: str = ".env") -> None:
     try:
         if not os.path.exists(env_path):
@@ -15,9 +20,9 @@ def _load_env_file(env_path: str = ".env") -> None:
                 k, v = k.strip(), v.strip()
                 if k and v and k not in os.environ:
                     os.environ[k] = v
-    except Exception:
-        # Silently ignore .env loading issues
-        pass
+    except (OSError, UnicodeError) as e:
+        # .env 로드 실패는 치명적이지 않음
+        _logger.debug("env load skipped: %s", e)
 
 _load_env_file()
 _LIBVIPS_BIN = os.environ.get("LIBVIPS_BIN")
@@ -32,17 +37,15 @@ if _LIBVIPS_BIN and os.name == "nt":
 def _decode_with_pyvips_from_file(path: str,
                                   target_width: Optional[int] = None,
                                   target_height: Optional[int] = None,
-                                  size: str = "both"):
+                                  size: str = "both") -> "np.ndarray":
     """Decode arbitrary image bytes into an RGB numpy array using pyvips."""
     try:
         import pyvips  # type: ignore
-        # Minimize chances of libvips holding file descriptors via internal caches
         try:
             pyvips.cache_set_max(0)
             pyvips.cache_set_max_mem(0)
             pyvips.cache_set_max_files(0)
         except Exception:
-            # Best-effort; continue even if cache tuning is unsupported
             pass
     except Exception as exc:
         raise RuntimeError(f"PyVips not available: {exc}") from exc
@@ -54,7 +57,6 @@ def _decode_with_pyvips_from_file(path: str,
     if (target_width and target_width > 0) or (target_height and target_height > 0):
         tw = int(target_width or 0)
         th = int(target_height or 0)
-        # Use kwargs style consistently for local libvips/pyvips
         if tw > 0 and th > 0:
             image = pyvips.Image.thumbnail(path, tw, height=th, size=size)
         elif tw > 0:
@@ -64,31 +66,25 @@ def _decode_with_pyvips_from_file(path: str,
     else:
         image = pyvips.Image.new_from_file(path, access="sequential")
 
-    # Detach from the source file as early as possible to release file handles
     try:
         image = image.copy_memory()
     except Exception:
         pass
-    # Ensure we work in 8-bit sRGB space with exactly 3 bands.
     try:
         image = image.colourspace("srgb")
     except Exception:
-        # Some formats are already in the right colourspace; continue if conversion fails.
         pass
     if image.hasalpha():
-        # Flatten against opaque black background to mirror Pillow's convert("RGB") behaviour.
         image = image.flatten(background=[0, 0, 0])
     if image.bands > 3:
         image = image.extract_band(0, 3)
     elif image.bands < 3:
-        # Replicate grayscale or two-band images across RGB channels.
         image = pyvips.Image.bandjoin([image] * 3)
     if image.format != "uchar":
         image = image.cast("uchar")
 
     mem = image.write_to_memory()
     array = np.frombuffer(mem, dtype=np.uint8).reshape(image.height, image.width, image.bands)
-    # Ensure no hidden reference to libvips buffers
     array = array.copy()
     try:
         del image
@@ -111,4 +107,5 @@ def decode_image(file_path: str,
         array = _decode_with_pyvips_from_file(file_path, target_width, target_height, size)
         return file_path, array, None
     except Exception as e:
+        _logger.debug("decode failed: %s", e)
         return file_path, None, str(e)

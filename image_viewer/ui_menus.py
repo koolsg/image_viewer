@@ -2,7 +2,15 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QActionGroup, QKeySequence, QColor, QShortcut
 
 
-def build_menus(viewer):
+from typing import TYPE_CHECKING
+from .logger import get_logger
+
+if TYPE_CHECKING:
+    from .main import ImageViewer
+
+_logger = get_logger("ui_menus")
+
+def build_menus(viewer: "ImageViewer") -> None:
     """viewer의 메뉴 바와 보기 메뉴를 구성한다.
 
     - 한국어 라벨 유지
@@ -47,7 +55,7 @@ def build_menus(viewer):
     viewer.hq_downscale_action.triggered.connect(viewer.toggle_hq_downscale)
     view_menu.addAction(viewer.hq_downscale_action)
 
-    # 디코딩 전략 토글: 썸네일 모드(fast viewing)
+    # 디코딩 전락 토글: 썸네일 모드(fast viewing)
     viewer.thumbnail_mode_action = QAction("썸네일 모드(fast viewing)", viewer, checkable=True)
     viewer.thumbnail_mode_action.setChecked(not getattr(viewer, 'decode_full', True))
     viewer.thumbnail_mode_action.triggered.connect(viewer.toggle_thumbnail_mode)
@@ -91,8 +99,9 @@ def build_menus(viewer):
         viewer.trim_action = QAction("트림...", viewer)
         viewer.trim_action.triggered.connect(viewer.start_trim_workflow)
         view_menu.addAction(viewer.trim_action)
-    except Exception:
-        pass
+    except Exception as ex:
+        # 메뉴 생성 실패는 실행을 막지 않음
+        _logger.debug("trim menu unavailable: %s", ex)
 
     # 전체 화면
     viewer.fullscreen_action = QAction("전체 화면", viewer, checkable=True)
@@ -103,7 +112,7 @@ def build_menus(viewer):
     viewer.fullscreen_action.triggered.connect(viewer.toggle_fullscreen)
     view_menu.addAction(viewer.fullscreen_action)
 
-    # 전역 단축키 (이전 main.py와 동일 역할)
+    # 전역 단축키
     try:
         viewer._shortcut_next = QShortcut(QKeySequence(Qt.Key_Right), viewer)
         viewer._shortcut_next.activated.connect(viewer.next_image)
@@ -127,5 +136,5 @@ def build_menus(viewer):
         viewer._shortcut_zoom_in.activated.connect(lambda: viewer.zoom_by(1.25))
         viewer._shortcut_zoom_out = QShortcut(QKeySequence(Qt.Key_Down), viewer)
         viewer._shortcut_zoom_out.activated.connect(lambda: viewer.zoom_by(0.75))
-    except Exception:
-        pass
+    except Exception as ex:
+        _logger.debug("shortcuts unavailable: %s", ex)

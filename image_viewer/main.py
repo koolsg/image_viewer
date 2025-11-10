@@ -1,522 +1,47 @@
 import sys
 import os
 import json
-import threading
 from collections import OrderedDict
-from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 
-from PySide6.QtCore import Qt, QObject, Signal, QRectF, Slot
+from PySide6.QtCore import Qt, QObject, Signal, Slot
+from PySide6.QtGui import QAction, QActionGroup, QImage, QKeySequence, QPixmap, QColor
 from PySide6.QtWidgets import (
     QApplication,
+    QDialog,
     QMainWindow,
-    QLabel,
     QFileDialog,
-    QGraphicsView,
-    QGraphicsScene,
-    QGraphicsPixmapItem,
-    QFrame,
+    QColorDialog,
+    QVBoxLayout,
+    QLabel,
+    QProgressBar
 )
-from PySide6.QtWidgets import QColorDialog
-from PySide6.QtWidgets import QDialog, QVBoxLayout, QLabel, QProgressBar
-from PySide6.QtGui import QPixmap, QAction, QKeySequence, QImage, QShortcut, QActionGroup, QPainter, QColor
 
 # 분리된 모듈에서 로드
-try:
-    from .loader import Loader as ExtLoader
-    from .ui_canvas import ImageCanvas as ExtImageCanvas
-    from .trim import detect_trim_box, detect_trim_box_mask, detect_trim_box_stats, make_trim_preview, make_dual_preview, apply_trim_to_file
-    from .ui_menus import build_menus
-except Exception:
-    import os as _os, sys as _sys
-    _sys.path.append(_os.path.dirname(_os.path.dirname(__file__)))
-    from image_viewer.loader import Loader as ExtLoader
-    from image_viewer.ui_canvas import ImageCanvas as ExtImageCanvas
-    from image_viewer.trim import detect_trim_box, detect_trim_box_mask, detect_trim_box_stats, make_trim_preview, make_dual_preview, apply_trim_to_file
-    from image_viewer.ui_menus import build_menus
+_pkg_root = os.path.dirname(os.path.dirname(__file__))
+if _pkg_root not in sys.path:
+    sys.path.append(_pkg_root)
+from image_viewer.loader import Loader
+from image_viewer.ui_canvas import ImageCanvas
+from image_viewer.trim import (
+    detect_trim_box_stats,
+    make_trim_preview,
+    apply_trim_to_file,
+)
+from image_viewer.ui_menus import build_menus
+from image_viewer.decoder import decode_image as _decode
 
 
 # --- Top-level function for the Process Pool ---
 # multiprocessing에서 피클링 가능하도록 최상위에 유지되는 셔틀 함수
 def decode_image(file_path, target_width=None, target_height=None, size="both"):
-    try:
-        from .decoder import decode_image as _decode
-    except Exception:
-        from image_viewer.decoder import decode_image as _decode
     return _decode(file_path, target_width, target_height, size)
 
 
-class _LegacyLoaderDoNotUse(QObject):
-    """백그라운드 로딩/디코딩 파이프라인 관리자."""
+from typing import Optional, Any
+from .logger import get_logger
+from .ui_trim import TrimBatchWorker, TrimProgressDialog
 
-    image_decoded = Signal(str, object, object)  # path, numpy_array, error
-
-    def __init__(self):
-        super().__init__()
-        self.executor = ProcessPoolExecutor()
-        max_io = max(2, min(4, (os.cpu_count() or 2)))
-        self.io_pool = ThreadPoolExecutor(max_workers=max_io)
-        self._pending = set()
-        self._ignored = set()
-        self._next_id = 1
-        self._latest_id = {}
-        self._lock = threading.Lock()
-
-    def _submit_decode(self, file_path: str, target_width: int | None, target_height: int | None, size: str = "both", req_id: int | None = None):
-        try:
-            future = self.executor.submit(decode_image, file_path, target_width, target_height, size)
-            try:
-                # Attach request metadata for staleness check
-                setattr(future, "_req_id", req_id)
-                setattr(future, "_path", file_path)
-            except Exception:
-                pass
-            future.add_done_callback(self.on_decode_finished)
-        except Exception as e:
-            with self._lock:
-                self._pending.discard(file_path)
-            self.image_decoded.emit(file_path, None, str(e))
-
-    def on_decode_finished(self, future):
-        path, data, error = future.result()
-        try:
-            req_id = getattr(future, "_req_id", None)
-        except Exception:
-            req_id = None
-        with self._lock:
-            self._pending.discard(path)
-            if path in self._ignored:
-                return
-            latest = self._latest_id.get(path)
-            if latest is not None and req_id is not None and req_id != latest:
-                return
-        self.image_decoded.emit(path, data, error)
-
-    def request_load(self, path, target_width: int | None = None, target_height: int | None = None, size: str = "both"):
-        with self._lock:
-            if path in self._pending or path in self._ignored:
-                return
-            self._pending.add(path)
-            req_id = self._next_id
-            self._next_id += 1
-            self._latest_id[path] = req_id
-        self.io_pool.submit(self._submit_decode, path, target_width, target_height, size, req_id)
-
-    def ignore_path(self, path: str):
-        """Mark path as ignored so late decode results are dropped and future submissions blocked."""
-        with self._lock:
-            self._ignored.add(path)
-            self._pending.discard(path)
-            try:
-                self._latest_id.pop(path, None)
-            except Exception:
-                pass
-    def unignore_path(self, path: str):
-        """Remove path from ignored set to allow future submissions."""
-        with self._lock:
-            self._ignored.discard(path)
-
-    def shutdown(self):
-        self.executor.shutdown(wait=False, cancel_futures=True)
-        try:
-            self.io_pool.shutdown(wait=False, cancel_futures=True)  # type: ignore
-        except TypeError:
-            self.io_pool.shutdown(wait=False)
-
-
-class _LegacyImageCanvasDoNotUse(QGraphicsView):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self._scene = QGraphicsScene(self)
-        self.setScene(self._scene)
-        self._pix_item = QGraphicsPixmapItem()
-        self._scene.addItem(self._pix_item)
-        # 뷰 프레임/여백 제거로 가장자리 테두리 방지
-        try:
-            self.setFrameShape(QFrame.NoFrame)
-            self.setFrameShadow(QFrame.Plain)
-            self.setLineWidth(0)
-            self.setViewportMargins(0, 0, 0, 0)
-            self.setStyleSheet("QGraphicsView { border: none; }")
-        except Exception:
-            pass
-        # 줌 상태: 원본 픽셀 기준(1.0 = 실제 크기)
-        self._zoom = 1.0
-        # 프리셋(Fit/Actual) 기록: Space 스냅에 사용
-        self._preset_mode = "fit"
-        # HQ 다운스케일 옵션 및 캐시
-        self._hq_downscale = False
-        self._hq_pixmap = None
-        # 프레스-줌 상태
-        self._zoom_saved = None
-        self._press_zoom_multiplier = 2.0
-        # 회전 상태(도 단위, 시계 방향 양수)
-        self._rotation = 0.0
-
-        # 렌더 품질 설정
-        self.setRenderHints(self.renderHints())
-        self.setRenderHint(QPainter.SmoothPixmapTransform, True)
-        self.setDragMode(QGraphicsView.ScrollHandDrag)
-        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        self.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-
-    def get_fit_scale(self) -> float:
-        pix = self._pix_item.pixmap()
-        if pix.isNull():
-            return 1.0
-        pw = max(1, pix.width())
-        ph = max(1, pix.height())
-        vw = max(1, self.viewport().width())
-        vh = max(1, self.viewport().height())
-        sx = vw / pw
-        sy = vh / ph
-        return min(sx, sy)
-
-    def get_current_scale_factor(self) -> float:
-        """현재 뷰 배율(원본 픽스맵 대비)을 반환."""
-        try:
-            if self._preset_mode == "fit":
-                return float(self.get_fit_scale())
-            return float(self._zoom)
-        except Exception:
-            return 1.0
-
-    def set_pixmap(self, pixmap: QPixmap):
-        self._pix_item.setPixmap(pixmap)
-        self._pix_item.setOffset(0, 0)
-        # 새 이미지에서는 회전을 초기화
-        self._rotation = 0.0
-        try:
-            pm_rect = QRectF(pixmap.rect())
-            self._pix_item.setTransformOriginPoint(pm_rect.center())
-            self._pix_item.setRotation(self._rotation)
-            self._scene.setSceneRect(pm_rect)
-        except Exception:
-            self._scene.setSceneRect(QRectF(pixmap.rect()))
-        self._hq_pixmap = None
-        self.apply_current_view()
-
-    def wheelEvent(self, event):
-        if self._pix_item.pixmap().isNull():
-            return
-        if event.modifiers() & Qt.ControlModifier:
-            angle = event.angleDelta().y()
-            factor = 1.25 if angle > 0 else 0.8
-            self.zoom_by(factor)
-        else:
-            angle = event.angleDelta().y()
-            parent = self.parent()
-            if angle > 0 and hasattr(parent, "prev_image"):
-                parent.prev_image()
-                event.accept()
-            elif angle < 0 and hasattr(parent, "next_image"):
-                parent.next_image()
-                event.accept()
-            else:
-                super().wheelEvent(event)
-
-    def mousePressEvent(self, event):
-        try:
-            btn = event.button()
-        except Exception:
-            btn = None
-        # 우클릭 드래그: 스크롤바가 있으면 수동 패닝
-        if btn == Qt.RightButton:
-            try:
-                hbar = self.horizontalScrollBar()
-                vbar = self.verticalScrollBar()
-                h_scroll = hbar.maximum() > 0
-                v_scroll = vbar.maximum() > 0
-            except Exception:
-                h_scroll = v_scroll = False
-            if h_scroll or v_scroll:
-                self._rc_drag_active = True
-                view_pt = event.position() if hasattr(event, "position") else event.pos()
-                self._rc_drag_start_view = view_pt
-                self._rc_drag_start_h = hbar.value()
-                self._rc_drag_start_v = vbar.value()
-                event.accept()
-                return
-        # 중클릭: 전역 보기 스냅
-        if btn == Qt.MiddleButton:
-            parent = self.parent()
-            if hasattr(parent, "snap_to_global_view"):
-                parent.snap_to_global_view()
-                event.accept()
-                return
-        # 좌클릭: 프레스-줌(커서 고정)
-        if btn == Qt.LeftButton and self._zoom_saved is None:
-            try:
-                view_pt = event.position() if hasattr(event, "position") else event.pos()
-            except Exception:
-                view_pt = event.pos() if hasattr(event, "pos") else None
-            scene_pt = self.mapToScene(view_pt.toPoint()) if view_pt is not None else None
-            item_pt = self._pix_item.mapFromScene(scene_pt) if scene_pt is not None else None
-
-            self._preset_before_press = getattr(self, "_preset_mode", "fit")
-            # 실제 모드로 전환하되, 기준 배율은 '현재 보이는 배율'을 사용하여 항상 확대가 되도록 함
-            baseline = self.get_fit_scale() if self._preset_before_press == "fit" else self._zoom
-            self._preset_mode = "actual"
-            self._zoom_saved = baseline
-            mul = float(getattr(self, "_press_zoom_multiplier", 2.0) or 2.0)
-            self._zoom = max(0.05, min(baseline * mul, 20.0))
-            self.apply_current_view()
-
-            if item_pt is not None and view_pt is not None:
-                new_scene_pt = self._pix_item.mapToScene(item_pt)
-                new_view_pt = self.mapFromScene(new_scene_pt)
-                delta_x = int(new_view_pt.x() - view_pt.x())
-                delta_y = int(new_view_pt.y() - view_pt.y())
-                try:
-                    hbar = self.horizontalScrollBar()
-                    vbar = self.verticalScrollBar()
-                    hbar.setValue(hbar.value() + delta_x)
-                    vbar.setValue(vbar.value() + delta_y)
-                except Exception:
-                    self.centerOn(new_scene_pt)
-            event.accept()
-            super().mousePressEvent(event)
-            return
-        # 보조 버튼: 확대/축소
-        if btn == Qt.XButton1:
-            self.zoom_by(0.8)
-            event.accept()
-            return
-        elif btn == Qt.XButton2:
-            self.zoom_by(1.25)
-            event.accept()
-            return
-        super().mousePressEvent(event)
-
-    def mouseMoveEvent(self, event):
-        if getattr(self, "_rc_drag_active", False):
-            try:
-                view_pt = event.position() if hasattr(event, "position") else event.pos()
-                dx = int(view_pt.x() - self._rc_drag_start_view.x())
-                dy = int(view_pt.y() - self._rc_drag_start_view.y())
-                hbar = self.horizontalScrollBar()
-                vbar = self.verticalScrollBar()
-                hbar.setValue(self._rc_drag_start_h - dx)
-                vbar.setValue(self._rc_drag_start_v - dy)
-                event.accept()
-                return
-            except Exception:
-                pass
-        super().mouseMoveEvent(event)
-
-    def mouseReleaseEvent(self, event):
-        try:
-            btn = event.button()
-        except Exception:
-            btn = None
-        if btn == Qt.LeftButton and (self._zoom_saved is not None):
-            self._zoom = self._zoom_saved
-            self._zoom_saved = None
-            prev = getattr(self, "_preset_before_press", None)
-            if prev is not None:
-                self._preset_mode = prev
-                self._preset_before_press = None
-            self.apply_current_view()
-            event.accept()
-            super().mouseReleaseEvent(event)
-            return
-        if btn == Qt.RightButton and getattr(self, "_rc_drag_active", False):
-            self._rc_drag_active = False
-            event.accept()
-            super().mouseReleaseEvent(event)
-            return
-        super().mouseReleaseEvent(event)
-
-    def is_fit(self):
-        return self._preset_mode == "fit"
-
-    def fit_to_view(self):
-        pix = self._pix_item.pixmap()
-        if pix.isNull():
-            return
-        self._zoom = self.get_fit_scale()
-        self.apply_current_view()
-
-    def toggle_fit(self):
-        self._preset_mode = "actual" if self._preset_mode == "fit" else "fit"
-        if self._preset_mode == "fit":
-            self._zoom = self.get_fit_scale()
-        else:
-            self._zoom = 1.0
-        self.apply_current_view()
-
-    def zoom_by(self, factor: float):
-        self._preset_mode = "actual"
-        self._zoom *= factor
-        self._zoom = max(0.05, min(self._zoom, 20.0))
-        self.apply_current_view()
-
-    def reset_zoom(self):
-        self._preset_mode = "actual"
-        self._zoom = 1.0
-        self.apply_current_view()
-
-    def rotate_by(self, degrees: float):
-        try:
-            self._rotation = (self._rotation + float(degrees)) % 360.0
-        except Exception:
-            return
-        # 회전 반영 및 뷰 갱신
-        pm = self._pix_item.pixmap()
-        if pm.isNull():
-            return
-        pm_rect = QRectF(pm.rect())
-        try:
-            self._pix_item.setTransformOriginPoint(pm_rect.center())
-            self._pix_item.setRotation(self._rotation)
-            br = self._pix_item.mapRectToScene(pm_rect)
-            self._scene.setSceneRect(br)
-        except Exception:
-            pass
-        # 현재 보기 정책 재적용(맞춤/실제 + 줌)
-        self.apply_current_view()
-
-    def apply_current_view(self):
-        pix = self._pix_item.pixmap()
-        if pix.isNull():
-            return
-        self.resetTransform()
-        # 회전은 아이템 단위로 적용됨
-        try:
-            pm_rect = QRectF(pix.rect())
-            self._pix_item.setTransformOriginPoint(pm_rect.center())
-            self._pix_item.setRotation(self._rotation)
-            # 회전 후 장면 경계 갱신
-            br = self._pix_item.mapRectToScene(pm_rect)
-            self._scene.setSceneRect(br)
-        except Exception:
-            pass
-        if self._preset_mode == "fit":
-            if self._hq_downscale:
-                self._apply_hq_fit()
-            else:
-                self.fitInView(self._pix_item, Qt.KeepAspectRatio)
-        else:
-            if abs(self._zoom - 1.0) > 1e-6:
-                self.scale(self._zoom, self._zoom)
-        try:
-            parent = self.parent()
-            if hasattr(parent, "_update_status"):
-                parent._update_status()
-        except Exception:
-            pass
-
-    def drawForeground(self, painter, rect):
-        # 좌측 상단 두 줄 상태 텍스트 그리기 (뷰포트 좌표)
-        try:
-            parent = self.parent()
-            title = getattr(parent, "_overlay_title", "")
-            info = getattr(parent, "_overlay_info", "")
-            if not title and not info:
-                return
-            painter.save()
-            # 뷰포트 좌표로 전환
-            painter.resetTransform()
-            # 대비 색상 선택(배경이 밝으면 검정, 어두우면 흰색)
-            bg = getattr(parent, "_bg_color", None)
-            from math import pow
-            def rel_lum(c: QColor) -> float:
-                r = c.red() / 255.0
-                g = c.green() / 255.0
-                b = c.blue() / 255.0
-                def f(u):
-                    return pow((u + 0.055) / 1.055, 2.4) if u > 0.04045 else (u / 12.92)
-                rL, gL, bL = f(r), f(g), f(b)
-                return 0.2126 * rL + 0.7152 * gL + 0.0722 * bL
-            text_color = QColor(255, 255, 255)
-            try:
-                if isinstance(bg, QColor):
-                    text_color = QColor(0, 0, 0) if rel_lum(bg) > 0.5 else QColor(255, 255, 255)
-            except Exception:
-                pass
-            painter.setPen(text_color)
-            # 살짝 여백
-            margin = 8
-            x = margin
-            y = margin + 14  # 첫 줄 베이스라인
-            from PySide6.QtGui import QFont
-            font = QFont()
-            font.setPointSize(10)
-            painter.setFont(font)
-            painter.drawText(x, y, title)
-            painter.drawText(x, y + 18, info)
-            painter.restore()
-        except Exception:
-            pass
-
-    def _apply_hq_fit(self):
-        pix = self._pix_item.pixmap()
-        if pix.isNull():
-            return
-        vw, vh = self.viewport().width(), self.viewport().height()
-        pw, ph = pix.width(), pix.height()
-        if vw <= 0 or vh <= 0 or pw <= 0 or ph <= 0:
-            self.fitInView(self._pix_item, Qt.KeepAspectRatio)
-            return
-        sx = vw / pw
-        sy = vh / ph
-        scale = min(sx, sy)
-        tw, th = max(1, int(pw * scale)), max(1, int(ph * scale))
-
-        if self._hq_pixmap is not None and self._hq_pixmap.width() == tw and self._hq_pixmap.height() == th:
-            self._pix_item.setPixmap(self._hq_pixmap)
-            self.fitInView(self._pix_item, Qt.KeepAspectRatio)
-            return
-
-        try:
-            qimg = pix.toImage().convertToFormat(QImage.Format_RGB888)
-            width, height = qimg.width(), qimg.height()
-            bpl = qimg.bytesPerLine()
-            import numpy as np
-            buf = qimg.bits().tobytes()
-            if len(buf) < bpl * height:
-                self.fitInView(self._pix_item, Qt.KeepAspectRatio)
-                return
-            arr = np.frombuffer(buf, dtype=np.uint8).reshape((height, bpl))[:, : (width * 3)]
-            arr = arr.reshape((height, width, 3))
-            arr = np.ascontiguousarray(arr)
-            try:
-                import pyvips  # type: ignore
-            except Exception:
-                self.fitInView(self._pix_item, Qt.KeepAspectRatio)
-                return
-            try:
-                vips_img = pyvips.Image.new_from_memory(arr.tobytes(), width, height, 3, "uchar")
-                scale_x = tw / width
-                scale_y = th / height
-                vips_resized = vips_img.resize(scale_x, kernel="lanczos3", vscale=scale_y)
-                mem = vips_resized.write_to_memory()
-                arr2 = np.frombuffer(mem, dtype=np.uint8).reshape(
-                    vips_resized.height, vips_resized.width, vips_resized.bands
-                )
-            except Exception:
-                self.fitInView(self._pix_item, Qt.KeepAspectRatio)
-                return
-            if arr2.shape[2] != 3:
-                self.fitInView(self._pix_item, Qt.KeepAspectRatio)
-                return
-            h2, w2, _ = arr2.shape
-            qimg2 = QImage(arr2.data, w2, h2, w2 * 3, QImage.Format_RGB888)
-            new_pix = QPixmap.fromImage(qimg2)
-            self._hq_pixmap = new_pix
-            self._pix_item.setPixmap(new_pix)
-            self._scene.setSceneRect(QRectF(new_pix.rect()))
-            self.fitInView(self._pix_item, Qt.KeepAspectRatio)
-        except Exception:
-            self.fitInView(self._pix_item, Qt.KeepAspectRatio)
-
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        if self._preset_mode == "fit":
-            if self._hq_downscale:
-                self._hq_pixmap = None
-            self._zoom = self.get_fit_scale()
-        self.apply_current_view()
-
+logger = get_logger("main")
 
 class ImageViewer(QMainWindow):
     def __init__(self):
@@ -532,17 +57,16 @@ class ImageViewer(QMainWindow):
         self.current_index = -1
         self.pixmap_cache: OrderedDict[str, QPixmap] = OrderedDict()
         self.cache_size = 20
-        self.supported_formats = (".png", ".jpg", ".jpeg", ".webp")
         # 디코딩 전략: True이면 원본 디코딩, False이면 썸네일 모드 (기본: 원본)
         self.decode_full: bool = True
 
-        self.canvas = ExtImageCanvas(self)
+        self.canvas = ImageCanvas(self)
         self.setCentralWidget(self.canvas)
 
         # 메뉴 구성(점진 분리: 별도 모듈 래퍼 통해 호출)
         build_menus(self)
 
-        self.loader = ExtLoader(decode_image)
+        self.loader = Loader(decode_image)
         self.loader.image_decoded.connect(self.on_image_ready)
 
         self._settings_path = os.path.join(os.path.dirname(__file__), "settings.json")
@@ -553,6 +77,17 @@ class ImageViewer(QMainWindow):
         # settings.json 상태 그대로 사용: thumbnail_mode가 있으면 그것만 사용
         if "thumbnail_mode" in self._settings:
             self.decode_full = not bool(self._settings.get("thumbnail_mode", False))
+        # 메뉴 액션과 내부 상태 동기화 (설정 반영 이후에 반드시 동기화)
+        try:
+            if hasattr(self, "thumbnail_mode_action"):
+                self.thumbnail_mode_action.setChecked(not self.decode_full)
+            if hasattr(self, "hq_downscale_action"):
+                self.hq_downscale_action.setEnabled(self.decode_full)
+                if not self.decode_full and self.hq_downscale_action.isChecked():
+                    self.hq_downscale_action.setChecked(False)
+                    self.canvas._hq_downscale = False
+        except Exception:
+            pass
         # 배경색(기본: 검정) 및 적용
         col = self._settings.get("background_color")
         self._bg_color = QColor(col) if isinstance(col, str) and QColor(col).isValid() else QColor(0, 0, 0)
@@ -565,93 +100,9 @@ class ImageViewer(QMainWindow):
         except Exception:
             pass
 
-        # 경로 정규화 유틸(Windows 특수 접두 및 잡음 제거)
-        def _normalize_path_for_windows(p: str) -> str:
-            try:
-                if not isinstance(p, str):
-                    return p
-                p = p.strip()
-                if os.name == 'nt':
-                    p = p.replace('/', '\\')
-                    if p.startswith('\\\\?\\'):
-                        if p.startswith('\\\\?\\UNC\\'):
-                            p = '\\\\' + p[8:]
-                        else:
-                            p = p[4:]
-                    if p.startswith('[:'):
-                        p = p[2:]
-                    if p and p[0] in '[{(':
-                        import re
-                        m = re.search(r'[A-Za-z]:\\\\', p)
-                        if m:
-                            p = p[m.start():]
-                return os.path.normpath(p)
-            except Exception:
-                return p
-        self._normalize_path_for_windows = _normalize_path_for_windows
+    
 
-    class TrimBatchWorker(QObject):
-        progress = Signal(int, int, str)  # total, index (1-based), filename
-        finished = Signal()
-
-        def __init__(self, paths: list[str], alg: str):
-            super().__init__()
-            self.paths = paths
-            self.alg = alg
-
-        @Slot()
-        def run(self):
-            try:
-                from image_viewer.trim import (
-                    detect_trim_box_mask,
-                    detect_trim_box_stats,
-                    apply_trim_to_file,
-                )
-            except Exception:
-                self.finished.emit()
-                return
-            total = len(self.paths)
-            for i, path in enumerate(self.paths, 1):
-                try:
-                    crop = detect_trim_box_mask(path) if self.alg == "mask" else detect_trim_box_stats(path)
-                    if crop:
-                        apply_trim_to_file(path, crop, overwrite=False, alg=self.alg)
-                except Exception:
-                    pass
-                try:
-                    name = os.path.basename(path)
-                except Exception:
-                    name = path
-                self.progress.emit(total, i, name)
-            self.finished.emit()
-
-    class TrimProgressDialog(QDialog):
-        def __init__(self, parent=None):
-            super().__init__(parent)
-            self.setWindowTitle("트림 처리 중...")
-            self.setModal(True)
-            try:
-                layout = QVBoxLayout(self)
-                self._label_summary = QLabel("대기 중...", self)
-                self._label_file = QLabel("", self)
-                self._bar = QProgressBar(self)
-                self._bar.setRange(0, 100)
-                self._bar.setValue(0)
-                layout.addWidget(self._label_summary)
-                layout.addWidget(self._label_file)
-                layout.addWidget(self._bar)
-            except Exception:
-                pass
-
-        @Slot(int, int, str)
-        def on_progress(self, total: int, index: int, name: str):
-            try:
-                self._label_summary.setText(f"{total}개 중 {index}개 처리 중")
-                self._label_file.setText(name)
-                pct = int(index * 100 / max(1, total))
-                self._bar.setValue(pct)
-            except Exception:
-                pass
+    
 
     def _create_menus(self):
         menu_bar = self.menuBar()
@@ -729,10 +180,6 @@ class ImageViewer(QMainWindow):
 
         # 트림 옵션/실행
         try:
-            self.trim_options_action = QAction("트림 옵션...", self)
-            self.trim_options_action.triggered.connect(self.prompt_trim_options)
-            view_menu.addAction(self.trim_options_action)
-
             self.trim_action = QAction("트림...", self)
             self.trim_action.triggered.connect(self.start_trim_workflow)
             view_menu.addAction(self.trim_action)
@@ -747,56 +194,41 @@ class ImageViewer(QMainWindow):
         self.fullscreen_action.triggered.connect(self.toggle_fullscreen)
         view_menu.addAction(self.fullscreen_action)
 
-        # 전역 단축키
-        self._shortcut_next = QShortcut(QKeySequence(Qt.Key_Right), self)
+        # 전역 단축키 (윈도우 어디서나 작동하도록 ApplicationShortcut 지정)
+        from PySide6.QtGui import QShortcut as _QShortcut
+        from PySide6.QtCore import Qt as _Qt
+
+        self._shortcut_next = _QShortcut(QKeySequence(Qt.Key_Right), self)
+        self._shortcut_next.setContext(_Qt.ApplicationShortcut)
         self._shortcut_next.activated.connect(self.next_image)
-        self._shortcut_prev = QShortcut(QKeySequence(Qt.Key_Left), self)
+
+        self._shortcut_prev = _QShortcut(QKeySequence(Qt.Key_Left), self)
+        self._shortcut_prev.setContext(_Qt.ApplicationShortcut)
         self._shortcut_prev.activated.connect(self.prev_image)
 
-        self._shortcut_first = QShortcut(QKeySequence(Qt.Key_Home), self)
+        self._shortcut_first = _QShortcut(QKeySequence(Qt.Key_Home), self)
+        self._shortcut_first.setContext(_Qt.ApplicationShortcut)
         self._shortcut_first.activated.connect(self.first_image)
-        self._shortcut_last = QShortcut(QKeySequence(Qt.Key_End), self)
+
+        self._shortcut_last = _QShortcut(QKeySequence(Qt.Key_End), self)
+        self._shortcut_last.setContext(_Qt.ApplicationShortcut)
         self._shortcut_last.activated.connect(self.last_image)
 
-        self._shortcut_zoom_in = QShortcut(QKeySequence(Qt.Key_Up), self)
+        self._shortcut_zoom_in = _QShortcut(QKeySequence(Qt.Key_Up), self)
+        self._shortcut_zoom_in.setContext(_Qt.ApplicationShortcut)
         self._shortcut_zoom_in.activated.connect(lambda: self.zoom_by(1.25))
-        self._shortcut_zoom_out = QShortcut(QKeySequence(Qt.Key_Down), self)
+
+        self._shortcut_zoom_out = _QShortcut(QKeySequence(Qt.Key_Down), self)
+        self._shortcut_zoom_out.setContext(_Qt.ApplicationShortcut)
         self._shortcut_zoom_out.activated.connect(lambda: self.zoom_by(0.8))
 
-        self._shortcut_snap = QShortcut(QKeySequence(Qt.Key_Space), self)
+        self._shortcut_snap = _QShortcut(QKeySequence(Qt.Key_Space), self)
+        self._shortcut_snap.setContext(_Qt.ApplicationShortcut)
         self._shortcut_snap.activated.connect(self.snap_to_global_view)
 
-        self._shortcut_escape = QShortcut(QKeySequence(Qt.Key_Escape), self)
+        self._shortcut_escape = _QShortcut(QKeySequence(Qt.Key_Escape), self)
+        self._shortcut_escape.setContext(_Qt.ApplicationShortcut)
         self._shortcut_escape.activated.connect(self.exit_fullscreen)
-
-    def prompt_trim_options(self):
-        try:
-            from PySide6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QRadioButton, QLabel, QPushButton
-        except Exception:
-            return
-        alg = self._settings.get("trim_algorithm", "mask")
-        dlg = QDialog(self)
-        dlg.setWindowTitle("트림 옵션")
-        v = QVBoxLayout(dlg)
-        v.addWidget(QLabel("트림 알고리즘을 선택하세요:"))
-        r_mask = QRadioButton("Mask 방식")
-        r_stats = QRadioButton("Stats 방식")
-        r_mask.setChecked(alg != "stats")
-        r_stats.setChecked(alg == "stats")
-        v.addWidget(r_mask)
-        v.addWidget(r_stats)
-        btns = QHBoxLayout()
-        ok = QPushButton("확인")
-        cancel = QPushButton("취소")
-        btns.addWidget(ok)
-        btns.addWidget(cancel)
-        v.addLayout(btns)
-        ok.clicked.connect(dlg.accept)
-        cancel.clicked.connect(dlg.reject)
-        if dlg.exec():
-            new_alg = "stats" if r_stats.isChecked() else "mask"
-            self._settings["trim_algorithm"] = new_alg
-            self._save_settings_key("trim_algorithm", new_alg)
 
     # 상태 오버레이 텍스트 갱신용 함수는 _update_status를 사용합니다.
 
@@ -990,7 +422,7 @@ class ImageViewer(QMainWindow):
         self.display_image()
         self.maintain_decode_window(back=0, ahead=5)
 
-    def display_image(self):
+    def display_image(self) -> None:
         if self.current_index == -1:
             return
         image_path = self.image_files[self.current_index]
@@ -1013,7 +445,7 @@ class ImageViewer(QMainWindow):
                 target_h = int(size.height())
         self.loader.request_load(image_path, target_w, target_h, "both")
 
-    def on_image_ready(self, path, image_data, error):
+    def on_image_ready(self, path: str, image_data: Optional[Any], error: Optional[Any]) -> None:
         # Drop late results for items no longer present (e.g., deleted)
         try:
             if path not in self.image_files:
@@ -1021,7 +453,7 @@ class ImageViewer(QMainWindow):
         except Exception:
             pass
         if error:
-            print(f"Error decoding {path}: {error}")
+            logger.error("decode error for %s: %s", path, error)
             try:
                 base = os.path.basename(path)
             except Exception:
@@ -1050,7 +482,7 @@ class ImageViewer(QMainWindow):
         if len(self.pixmap_cache) > self.cache_size:
             self.pixmap_cache.popitem(last=False)
 
-        # 미리보기(트림 등) 중에는 화면 갱신을 건너뛴다
+        # 미리보기(트림 등) 중에는 화면 갱신을 건너뜀
         if getattr(self, '_in_trim_preview', False):
             return
         if path == self.image_files[self.current_index]:
@@ -1094,7 +526,7 @@ class ImageViewer(QMainWindow):
 
 
 
-    def maintain_decode_window(self, back: int = 3, ahead: int = 5):
+    def maintain_decode_window(self, back: int = 3, ahead: int = 5) -> None:
         if not self.image_files:
             return
         n = len(self.image_files)
@@ -1153,18 +585,18 @@ class ImageViewer(QMainWindow):
         # 현재 파일을 휴지통으로 이동(확인 대화상자 표시).
         # UX: 삭제 확정 후 먼저 다른 이미지로 전환하고, 그 다음 실제 삭제를 시도한다.
         if not self.image_files or self.current_index < 0 or self.current_index >= len(self.image_files):
-            print("[delete] abort: no images or invalid index")
+            logger.debug("[delete] abort: no images or invalid index")
             return
         del_path = self.image_files[self.current_index]
         abs_path = os.path.abspath(del_path)
-        print(f"[delete] start: idx={self.current_index}, total={len(self.image_files)}")
+        logger.debug("[delete] start: idx=%s, del_path=%s, abs_path=%s, total=%s", self.current_index, del_path, abs_path, len(self.image_files))
 
         try:
             from PySide6.QtWidgets import QMessageBox, QApplication
         except Exception:
             QMessageBox = None
             QApplication = None
-            print("[delete] QMessageBox/QApplication unavailable")
+            logger.debug("[delete] QMessageBox/QApplication unavailable")
 
         # 확인 다이얼로그
         proceed = True
@@ -1178,9 +610,9 @@ class ImageViewer(QMainWindow):
                 QMessageBox.Yes,
             )
             proceed = (ret == QMessageBox.Yes)
-            print(f"[delete] confirm: proceed={proceed}")
+            logger.debug("[delete] confirm: proceed=%s", proceed)
         if not proceed:
-            print("[delete] user cancelled")
+            logger.debug("[delete] user cancelled")
             return
 
         # 1) 다른 이미지로 전환하여 표시 기준을 바꾼다
@@ -1189,33 +621,33 @@ class ImageViewer(QMainWindow):
                 new_index = self.current_index + 1
             else:
                 new_index = self.current_index - 1
-            print(f"[delete] switch image: {self.current_index} -> {new_index}")
+            logger.debug("[delete] switch image: %s -> %s", self.current_index, new_index)
             self.current_index = new_index
             try:
                 self.display_image()
                 self.maintain_decode_window()
             except Exception as ex:
-                print(f"[delete] switch image error: {ex}")
+                logger.debug("[delete] switch image error: %s", ex)
         else:
-            print("[delete] single image case: will clear view later")
+            logger.debug("[delete] single image case: will clear view later")
 
         # 화면/캐시에서 해당 경로 제거 + 이벤트/GC로 안정화
         try:
             removed = self.pixmap_cache.pop(del_path, None) is not None
-            print(f"[delete] cache pop: removed={removed}")
+            logger.debug("[delete] cache pop: removed=%s", removed)
         except Exception as ex:
-            print(f"[delete] cache pop error: {ex}")
+            logger.debug("[delete] cache pop error: %s", ex)
         try:
             import gc, time as _time
             if 'QApplication' in globals() and QApplication is not None:
                 QApplication.processEvents()
-                print("[delete] processEvents done")
+                logger.debug("[delete] processEvents done")
             gc.collect()
-            print("[delete] gc.collect done")
+            logger.debug("[delete] gc.collect done")
             _time.sleep(0.15)
-            print("[delete] settle sleep done")
+            logger.debug("[delete] settle sleep done")
         except Exception as ex:
-            print(f"[delete] settle phase error: {ex}")
+            logger.debug("[delete] settle phase error: %s", ex)
 
         # 2) 실제 휴지통 이동(재시도 포함)
         try:
@@ -1225,21 +657,21 @@ class ImageViewer(QMainWindow):
                 last_err = None
                 for attempt in range(1, 4):
                     try:
-                        print(f"[delete] trash attempt {attempt}")
+                        logger.debug("[delete] trash attempt %s", attempt)
                         send2trash(abs_path)
                         last_err = None
-                        print("[delete] trash success")
+                        logger.debug("[delete] trash success")
                         break
                     except Exception as ex:
                         last_err = ex
-                        print(f"[delete] trash failed attempt {attempt}: {ex}")
+                        logger.debug("[delete] trash failed attempt %s: %s", attempt, ex)
                         time.sleep(0.2)
                 if last_err is not None:
                     raise last_err
             except Exception:
                 raise
         except Exception as e:
-            print(f"[delete] trash final error: {e}")
+            logger.debug("[delete] trash final error: %s", e)
             if 'QMessageBox' in globals() and QMessageBox is not None:
                 QMessageBox.critical(
                     self,
@@ -1267,40 +699,40 @@ class ImageViewer(QMainWindow):
                 del_pos = self.image_files.index(del_path)
             except ValueError:
                 del_pos = None
-            print(f"[delete] remove list: pos={del_pos}")
+            logger.debug("[delete] remove list: pos=%s", del_pos)
             if del_pos is not None:
                 self.image_files.pop(del_pos)
                 if del_pos <= self.current_index:
                     old_idx = self.current_index
                     self.current_index = max(0, self.current_index - 1)
-                    print(f"[delete] index adjust: {old_idx} -> {self.current_index}")
+                    logger.debug("[delete] index adjust: %s -> %s", old_idx, self.current_index)
         except Exception as ex:
-            print(f"[delete] list pop error, fallback remove: {ex}")
+            logger.debug("[delete] list pop error, fallback remove: %s", ex)
             try:
                 self.image_files.remove(del_path)
-                print("[delete] list remove by value: success")
+                logger.debug("[delete] list remove by value: success")
             except Exception as ex2:
-                print(f"[delete] list remove by value error: {ex2}")
+                logger.debug("[delete] list remove by value error: %s", ex2)
 
         # 4) 최종 표시/상태 갱신
         if not self.image_files:
-            print("[delete] list empty: clearing view")
+            logger.debug("[delete] list empty: clearing view")
             self.current_index = -1
             try:
                 empty = QPixmap(1, 1)
                 empty.fill(Qt.transparent)
                 self.canvas.set_pixmap(empty)
             except Exception as ex:
-                print(f"[delete] clear view error: {ex}")
+                logger.debug("[delete] clear view error: %s", ex)
             self.setWindowTitle("Image Viewer")
             self._update_status()
             return
         try:
-            print(f"[delete] show current: idx={self.current_index}, total={len(self.image_files)}")
+            logger.debug("[delete] show current: idx=%s, total=%s", self.current_index, len(self.image_files))
             self.display_image()
             self.maintain_decode_window()
         except Exception as ex:
-            print(f"[delete] final display error: {ex}")
+            logger.debug("[delete] final display error: %s", ex)
 
     def closeEvent(self, event):
         self.loader.shutdown()
@@ -1452,29 +884,24 @@ class ImageViewer(QMainWindow):
             except Exception:
                 return
 
-            # 1) 트림 알고리즘 선택 (매 실행 시 묻기)
-            alg_box = QMessageBox(self)
-            alg_box.setWindowTitle("트림 방식 선택")
-            alg_box.setText("어떤 방식으로 트림할까요?")
-            alg_mask = alg_box.addButton("Mask", QMessageBox.AcceptRole)
-            alg_stats = alg_box.addButton("Stats", QMessageBox.ActionRole)
-            alg_cancel = alg_box.addButton("취소", QMessageBox.RejectRole)
-            alg_box.setDefaultButton(alg_mask)
-            alg_box.exec()
-            clicked_alg = alg_box.clickedButton()
-            if clicked_alg is alg_cancel or clicked_alg is None:
+            # 0) 트림 민감도 프로파일 선택 (기본/공격적)
+            prof_box = QMessageBox(self)
+            prof_box.setWindowTitle("트림 민감도")
+            prof_box.setText("어떤 프로파일로 트림할까요?")
+            btn_norm = prof_box.addButton("기본", QMessageBox.AcceptRole)
+            btn_agg = prof_box.addButton("공격적", QMessageBox.ActionRole)
+            btn_cancel = prof_box.addButton("취소", QMessageBox.RejectRole)
+            prof_box.setDefaultButton(btn_norm)
+            prof_box.exec()
+            clicked_prof = prof_box.clickedButton()
+            if clicked_prof is btn_cancel or clicked_prof is None:
                 return
-            alg = 'mask' if clicked_alg is alg_mask else 'stats'
-            try:
-                self._save_settings_key("trim_algorithm", alg)
-            except Exception:
-                pass
+            profile = 'aggressive' if clicked_prof is btn_agg else 'normal'
 
-            # 2) 저장 방식 선택 (덮어씌우기/사본/취소)
+            # 1) 저장 모드 선택 (덮어씌우기/사본/취소)
             mode_box = QMessageBox(self)
             mode_box.setWindowTitle("트림")
-            mode_box.setText(("Mask 방식" if alg == "mask" else "Stats 방식") +
-                             "으로 트림하겠습니다.\n(덮어씌우기, 따로 저장, 취소)")
+            mode_box.setText("Stats 방식으로 트림하겠습니다.\n(덮어씌우기, 따로 저장, 취소)")
             overwrite_btn = mode_box.addButton("덮어씌우기", QMessageBox.AcceptRole)
             saveas_btn = mode_box.addButton("사본 저장(_trimmed)", QMessageBox.ActionRole)
             cancel_btn = mode_box.addButton("취소", QMessageBox.RejectRole)
@@ -1493,13 +920,15 @@ class ImageViewer(QMainWindow):
                     QThread = None  # type: ignore
 
                 paths = list(self.image_files)
-                dlg = self.TrimProgressDialog(self)
+                dlg = TrimProgressDialog(self)
 
                 if QThread is None:
                     # 폴백: 동기 처리
-                    worker = self.TrimBatchWorker(paths, alg)
+                    worker = TrimBatchWorker(paths, profile)
+
                     def _on_progress(total, index, name):
                         dlg.on_progress(total, index, name)
+
                     worker.progress.connect(_on_progress)
                     worker.finished.connect(dlg.accept)
                     worker.run()
@@ -1508,26 +937,32 @@ class ImageViewer(QMainWindow):
                     return
 
                 thread = QThread(self)
-                worker = self.TrimBatchWorker(paths, alg)
+                worker = TrimBatchWorker(paths, profile)
                 worker.moveToThread(thread)
                 thread.started.connect(worker.run)
                 worker.progress.connect(dlg.on_progress)
 
-                def _finish():
+                # 종료 시 안전한 정리: worker.finished → thread.quit, thread.finished → cleanup
+                def _on_worker_finished():
                     try:
                         thread.quit()
-                        thread.wait()
                     except Exception:
                         pass
+
+                def _on_thread_finished():
                     try:
                         worker.deleteLater()
                         thread.deleteLater()
                     except Exception:
                         pass
-                    dlg.accept()
+                    try:
+                        dlg.accept()
+                    except Exception:
+                        pass
                     self.maintain_decode_window()
 
-                worker.finished.connect(_finish)
+                worker.finished.connect(_on_worker_finished)
+                thread.finished.connect(_on_thread_finished)
                 thread.start()
                 dlg.exec()
                 return
@@ -1538,7 +973,7 @@ class ImageViewer(QMainWindow):
                 if stop_all:
                     break
                 try:
-                    crop = detect_trim_box_mask(path) if alg == "mask" else detect_trim_box_stats(path)
+                    crop = detect_trim_box_stats(path, profile=profile)
                 except Exception:
                     crop = None
                 if not crop:
@@ -1566,6 +1001,7 @@ class ImageViewer(QMainWindow):
                 # Y/N/A 단축키 동작 추가: 단축키로 버튼 클릭을 트리거
                 try:
                     from PySide6.QtGui import QKeySequence, QShortcut
+
                     sc_y = QShortcut(QKeySequence("Y"), box)
                     sc_n = QShortcut(QKeySequence("N"), box)
                     sc_a = QShortcut(QKeySequence("A"), box)
@@ -1599,8 +1035,30 @@ class ImageViewer(QMainWindow):
                     continue
 
                 try:
+                    # 로그: 덮어쓰기 직전 상태 출력
+                    logger.debug("[trim] overwrite prep: %s", path)
+                    try:
+                        displaying = (
+                            self.current_index >= 0 and
+                            self.current_index < len(self.image_files) and
+                            self.image_files[self.current_index] == path
+                        )
+                    except Exception:
+                        displaying = False
+                    cached = False
+                    try:
+                        cached = (path in self.pixmap_cache)
+                    except Exception:
+                        cached = False
+                    logger.debug("[trim] overwrite start: %s, displaying=%s, cached=%s", path, displaying, cached)
                     apply_trim_to_file(path, crop, overwrite=True)
+                    logger.debug("[trim] overwrite ok: %s", path)
                 except Exception:
+                    try:
+                        import traceback as _tb
+                        logger.debug("[trim] overwrite error: %s\n%s", path, _tb.format_exc())
+                    except Exception:
+                        pass
                     try:
                         QMessageBox.critical(self, "Trim 오류", f"파일 저장 실패: {os.path.basename(path)}")
                     except Exception:

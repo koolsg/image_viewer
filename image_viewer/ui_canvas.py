@@ -1,6 +1,10 @@
 from PySide6.QtCore import Qt, QRectF
 from PySide6.QtGui import QImage, QPixmap, QPainter, QColor
 from PySide6.QtWidgets import QGraphicsView, QGraphicsScene, QGraphicsPixmapItem, QFrame
+from typing import Optional
+from .logger import get_logger
+
+_logger = get_logger("ui_canvas")
 
 
 # NOTE: 이 파일은 기존 main.py의 ImageCanvas 클래스를 그대로 이동했습니다.
@@ -26,6 +30,11 @@ class ImageCanvas(QGraphicsView):
         self._zoom_saved = None
         self._press_zoom_multiplier = 2.0
         self._rotation = 0.0
+        # 우클릭 드래그용 상태
+        self._rc_drag_active = False
+        self._rc_drag_start_view = None
+        self._rc_drag_start_h = 0
+        self._rc_drag_start_v = 0
 
         self.setRenderHints(self.renderHints())
         self.setRenderHint(QPainter.SmoothPixmapTransform, True)
@@ -54,7 +63,7 @@ class ImageCanvas(QGraphicsView):
         except Exception:
             return 1.0
 
-    def set_pixmap(self, pixmap: QPixmap):
+    def set_pixmap(self, pixmap: QPixmap) -> None:
         self._pix_item.setPixmap(pixmap)
         self._pix_item.setOffset(0, 0)
         self._rotation = 0.0
@@ -68,7 +77,7 @@ class ImageCanvas(QGraphicsView):
         self._hq_pixmap = None
         self.apply_current_view()
 
-    def wheelEvent(self, event):
+    def wheelEvent(self, event) -> None:
         if self._pix_item.pixmap().isNull():
             return
         try:
@@ -87,22 +96,87 @@ class ImageCanvas(QGraphicsView):
                     event.accept()
                 else:
                     super().wheelEvent(event)
-        except Exception:
+        except Exception as ex:
+            _logger.debug("wheelEvent fallback due to error: %s", ex)
             try:
                 super().wheelEvent(event)
             except Exception:
                 pass
 
-    def mousePressEvent(self, event):
+    def mousePressEvent(self, event) -> None:
         try:
             btn = event.button() if hasattr(event, "button") else None
-        except Exception:
+            btns = event.buttons() if hasattr(event, "buttons") else None
+        except Exception as ex:
+            _logger.debug("mousePressEvent button read error: %s", ex)
             btn = None
-        if btn == Qt.LeftButton and self._zoom_saved is None:
+            btns = None
+        # 우클릭: 스크롤바가 있다면 수동 패닝 모드 진입 (레거시 동작 유지)
+        if (btn == Qt.RightButton) or (btns is not None and (btns & Qt.RightButton)):
             try:
-                cur_scale = self.get_current_scale_factor()
+                hbar = self.horizontalScrollBar()
+                vbar = self.verticalScrollBar()
+                h_scroll = hbar.maximum() > 0
+                v_scroll = vbar.maximum() > 0
             except Exception:
-                cur_scale = 1.0
+                h_scroll = v_scroll = False
+            if h_scroll or v_scroll:
+                self._rc_drag_active = True
+                try:
+                    if hasattr(event, "position"):
+                        posf = event.position()
+                        view_qpoint = posf.toPoint() if hasattr(posf, "toPoint") else None
+                        if view_qpoint is None:
+                            from PySide6.QtCore import QPoint
+                            view_qpoint = QPoint(int(posf.x()), int(posf.y()))
+                    else:
+                        view_qpoint = event.pos() if hasattr(event, "pos") else None
+                except Exception:
+                    view_qpoint = None
+                self._rc_drag_start_view = view_qpoint
+                self._rc_drag_start_h = hbar.value()
+                self._rc_drag_start_v = vbar.value()
+                try:
+                    event.accept()
+                except Exception:
+                    pass
+                return
+        # 중클릭: 전역 보기로 스냅 (레거시 동작 유지)
+        if (btn == Qt.MiddleButton) or (btns is not None and (btns & Qt.MiddleButton)):
+            parent = self.parent()
+            if hasattr(parent, "snap_to_global_view"):
+                try:
+                    parent.snap_to_global_view()
+                    event.accept()
+                    return
+                except Exception:
+                    pass
+        # 보조 버튼: 확대/축소 (레거시 매핑 유지)
+        xbtn1 = getattr(Qt, 'XButton1', None)
+        xbtn2 = getattr(Qt, 'XButton2', None)
+        if (xbtn1 is not None) and ((btn == xbtn1) or (btns is not None and (btns & xbtn1))):
+            try:
+                self.zoom_by(0.8)
+                event.accept()
+                return
+            except Exception:
+                pass
+        if (xbtn2 is not None) and ((btn == xbtn2) or (btns is not None and (btns & xbtn2))):
+            try:
+                self.zoom_by(1.25)
+                event.accept()
+                return
+            except Exception:
+                pass
+        # 좌클릭: 프레스-줌 (레거시 동작: 커서 기준 확대 및 복원 지원)
+        if (btn == Qt.LeftButton) and self._zoom_saved is None:
+            try:
+                # 현재 프리셋 저장 후 기준 배율 계산
+                self._preset_before_press = getattr(self, "_preset_mode", "fit")
+                baseline = self.get_fit_scale() if self._preset_before_press == "fit" else float(self._zoom)
+            except Exception:
+                self._preset_before_press = getattr(self, "_preset_mode", "fit")
+                baseline = 1.0
             mul = getattr(self, "_press_zoom_multiplier", 2.0)
             try:
                 mul = float(mul)
@@ -110,18 +184,47 @@ class ImageCanvas(QGraphicsView):
                     mul = 2.0
             except Exception:
                 mul = 2.0
-            self._zoom_saved = float(self._zoom)
-            self._zoom = float(cur_scale) * float(mul)
+            self._zoom_saved = float(baseline)
 
-            # 커서를 중심으로 확대
-            view_pt = event.pos() if hasattr(event, "pos") else None
-            scene_pt = self.mapToScene(view_pt.toPoint()) if view_pt is not None else None
+            # 커서 위치 계산 (뷰 좌표 → 씬 → 아이템)
+            view_qpoint = None
+            try:
+                if hasattr(event, "position"):
+                    posf = event.position()
+                    if hasattr(posf, "toPoint"):
+                        view_qpoint = posf.toPoint()
+                    else:
+                        from PySide6.QtCore import QPoint
+                        view_qpoint = QPoint(int(posf.x()), int(posf.y()))
+                elif hasattr(event, "pos"):
+                    view_qpoint = event.pos()
+            except Exception:
+                view_qpoint = None
+
+            scene_pt = self.mapToScene(view_qpoint) if view_qpoint is not None else None
             item_pt = self._pix_item.mapFromScene(scene_pt) if scene_pt is not None else None
-            self.resetTransform()
+
+            # 실제 모드로 전환 후 확대 적용
             self._preset_mode = "actual"
-            if item_pt is not None and view_pt is not None:
-                self._pix_item.setTransformOriginPoint(item_pt)
-            self.scale(self._zoom, self._zoom)
+            self._zoom = max(0.05, min(float(baseline) * float(mul), 20.0))
+            self.apply_current_view()
+
+            # 커서 정렬: 확대 후에도 같은 지점을 커서 아래에 유지 (레거시와 동등)
+            if item_pt is not None and view_qpoint is not None:
+                try:
+                    new_scene_pt = self._pix_item.mapToScene(item_pt)
+                    new_view_pt = self.mapFromScene(new_scene_pt)
+                    delta_x = int(new_view_pt.x() - view_qpoint.x())
+                    delta_y = int(new_view_pt.y() - view_qpoint.y())
+                    hbar = self.horizontalScrollBar()
+                    vbar = self.verticalScrollBar()
+                    hbar.setValue(hbar.value() + delta_x)
+                    vbar.setValue(vbar.value() + delta_y)
+                except Exception:
+                    try:
+                        self.centerOn(new_scene_pt)
+                    except Exception:
+                        pass
             try:
                 parent = self.parent()
                 if hasattr(parent, "_update_status"):
@@ -131,6 +234,33 @@ class ImageCanvas(QGraphicsView):
             return
         try:
             super().mousePressEvent(event)
+        except Exception:
+            pass
+
+    def mouseMoveEvent(self, event):
+        if getattr(self, "_rc_drag_active", False):
+            try:
+                if hasattr(event, "position"):
+                    posf = event.position()
+                    view_qpoint = posf.toPoint() if hasattr(posf, "toPoint") else None
+                    if view_qpoint is None:
+                        from PySide6.QtCore import QPoint
+                        view_qpoint = QPoint(int(posf.x()), int(posf.y()))
+                else:
+                    view_qpoint = event.pos() if hasattr(event, "pos") else None
+                if self._rc_drag_start_view is not None and view_qpoint is not None:
+                    dx = int(view_qpoint.x() - self._rc_drag_start_view.x())
+                    dy = int(view_qpoint.y() - self._rc_drag_start_view.y())
+                    hbar = self.horizontalScrollBar()
+                    vbar = self.verticalScrollBar()
+                    hbar.setValue(int(self._rc_drag_start_h) - dx)
+                    vbar.setValue(int(self._rc_drag_start_v) - dy)
+                event.accept()
+                return
+            except Exception:
+                pass
+        try:
+            super().mouseMoveEvent(event)
         except Exception:
             pass
 
@@ -148,6 +278,13 @@ class ImageCanvas(QGraphicsView):
                 self._preset_before_press = None
             self.apply_current_view()
             return
+        if btn == Qt.RightButton and getattr(self, "_rc_drag_active", False):
+            self._rc_drag_active = False
+            try:
+                event.accept()
+            except Exception:
+                pass
+            return
         try:
             super().mouseReleaseEvent(event)
         except Exception:
@@ -158,16 +295,41 @@ class ImageCanvas(QGraphicsView):
 
     def zoom_by(self, factor: float):
         try:
-            self._zoom *= factor
-            if self._preset_mode != "fit":
+            # Fit 모드에서는 실제 배율 기준으로 전환하여 확대/축소가 보이도록 처리
+            if self._preset_mode == "fit":
+                baseline = self.get_fit_scale()
+                self._preset_mode = "actual"
+                self._zoom = float(baseline) * float(factor)
+                self._zoom = max(0.05, min(20.0, self._zoom))
                 self.apply_current_view()
-            else:
-                self._zoom = max(0.1, min(10.0, self._zoom))
+                return
+            # Actual 모드에서는 현재 배율에 곱하고 적용
+            self._zoom *= float(factor)
+            self._zoom = max(0.05, min(20.0, self._zoom))
+            self.apply_current_view()
         except Exception:
             pass
 
     def reset_zoom(self):
         self._zoom = 1.0
+        self.apply_current_view()
+
+    def rotate_by(self, degrees: float):
+        try:
+            self._rotation = float(self._rotation) + float(degrees)
+        except Exception:
+            try:
+                self._rotation = float(degrees)
+            except Exception:
+                self._rotation = 0.0
+        # -360~360 범위로 정리 (과도 누적 방지)
+        try:
+            while self._rotation <= -360.0:
+                self._rotation += 360.0
+            while self._rotation > 360.0:
+                self._rotation -= 360.0
+        except Exception:
+            pass
         self.apply_current_view()
 
     def apply_current_view(self):
