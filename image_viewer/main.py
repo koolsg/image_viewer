@@ -43,6 +43,24 @@ from .ui_trim import TrimBatchWorker, TrimProgressDialog
 
 logger = get_logger("main")
 
+
+class ViewState:
+    """뷰 관련 상태를 캡슐화합니다."""
+    def __init__(self):
+        self.preset_mode: str = "fit"  # "fit" or "actual"
+        self.zoom: float = 1.0
+        self.hq_downscale: bool = False
+        self.press_zoom_multiplier: float = 2.0
+        self._prev_state = None
+        self._prev_geometry = None
+
+
+class TrimState:
+    """트림 워크플로우 상태를 캡슐화합니다."""
+    def __init__(self):
+        self.is_running: bool = False
+        self.in_preview: bool = False
+
 class ImageViewer(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -52,6 +70,10 @@ class ImageViewer(QMainWindow):
             self.setContentsMargins(0, 0, 0, 0)
         except Exception:
             pass
+
+        # 상태 객체 초기화
+        self.view_state = ViewState()
+        self.trim_state = TrimState()
 
         self.image_files: list[str] = []
         self.current_index = -1
@@ -100,135 +122,7 @@ class ImageViewer(QMainWindow):
         except Exception:
             pass
 
-    
 
-    
-
-    def _create_menus(self):
-        menu_bar = self.menuBar()
-        file_menu = menu_bar.addMenu("파일(&F)")
-
-        open_action = QAction("폴더 열기...(&O)", self)
-        open_action.setShortcut(QKeySequence("Ctrl+O"))
-        open_action.triggered.connect(self.open_folder)
-        file_menu.addAction(open_action)
-
-        exit_action = QAction("끝내기(&X)", self)
-        exit_action.setShortcut(QKeySequence("Alt+F4"))
-        exit_action.triggered.connect(self.close)
-        file_menu.addAction(exit_action)
-
-        view_menu = menu_bar.addMenu("보기(&V)")
-        self.view_group = QActionGroup(self)
-        self.view_group.setExclusive(True)
-
-        self.fit_action = QAction("창에 맞춤(&F)", self, checkable=True)
-        self.fit_action.setShortcut("F")
-        self.fit_action.setChecked(True)
-        self.fit_action.triggered.connect(self.choose_fit)
-        self.view_group.addAction(self.fit_action)
-        view_menu.addAction(self.fit_action)
-
-        self.actual_action = QAction("실제 크기(&A)", self, checkable=True)
-        self.actual_action.setShortcut("1")
-        self.actual_action.setChecked(False)
-        self.actual_action.triggered.connect(self.choose_actual)
-        self.view_group.addAction(self.actual_action)
-        view_menu.addAction(self.actual_action)
-
-        self.hq_downscale_action = QAction("고품질 축소(맞춤 전용)(&Q)", self, checkable=True)
-        self.hq_downscale_action.setChecked(False)
-        self.hq_downscale_action.triggered.connect(self.toggle_hq_downscale)
-        view_menu.addAction(self.hq_downscale_action)
-
-        # 디코딩 전략 토글: 썸네일 모드(fast viewing)
-        self.thumbnail_mode_action = QAction("썸네일 모드(fast viewing)", self, checkable=True)
-        # 메뉴 체크 = 썸네일 모드, 내부 decode_full은 반대
-        self.thumbnail_mode_action.setChecked(not self.decode_full)
-        self.thumbnail_mode_action.triggered.connect(self.toggle_thumbnail_mode)
-        view_menu.addAction(self.thumbnail_mode_action)
-        # 썸네일 모드에서는 고품질 축소 옵션이 의미 없음 → 비활성화
-        self.hq_downscale_action.setEnabled(self.decode_full)
-
-        # 프레스 중 배율: 바로 입력창을 띄우는 단일 항목
-        self.multiplier_action = QAction("프레스 중 배율...", self)
-        self.multiplier_action.triggered.connect(self.prompt_custom_multiplier)
-        view_menu.addAction(self.multiplier_action)
-
-        # 배경색 메뉴
-        bg_menu = view_menu.addMenu("배경색")
-        self.bg_black_action = QAction("검정", self, checkable=True)
-        self.bg_white_action = QAction("흰색", self, checkable=True)
-        self.bg_custom_action = QAction("기타...", self)
-        bg_menu.addAction(self.bg_black_action)
-        bg_menu.addAction(self.bg_white_action)
-        bg_menu.addAction(self.bg_custom_action)
-        self.bg_black_action.triggered.connect(lambda: self.set_background_qcolor(QColor(0, 0, 0)))
-        self.bg_white_action.triggered.connect(lambda: self.set_background_qcolor(QColor(255, 255, 255)))
-        self.bg_custom_action.triggered.connect(self.choose_background_custom)
-        self._sync_bg_checks()
-
-        zoom_in_action = QAction("확대", self)
-        zoom_in_action.setShortcut(QKeySequence.ZoomIn)
-        zoom_in_action.triggered.connect(lambda: self.zoom_by(1.25))
-        view_menu.addAction(zoom_in_action)
-
-        zoom_out_action = QAction("축소", self)
-        zoom_out_action.setShortcut(QKeySequence.ZoomOut)
-        zoom_out_action.triggered.connect(lambda: self.zoom_by(0.75))
-        view_menu.addAction(zoom_out_action)
-
-        # 트림 옵션/실행
-        try:
-            self.trim_action = QAction("트림...", self)
-            self.trim_action.triggered.connect(self.start_trim_workflow)
-            view_menu.addAction(self.trim_action)
-        except Exception:
-            pass
-
-        self.fullscreen_action = QAction("전체 화면", self, checkable=True)
-        self.fullscreen_action.setShortcuts([
-            QKeySequence(Qt.Key_Return),
-            QKeySequence(Qt.Key_Enter),
-        ])
-        self.fullscreen_action.triggered.connect(self.toggle_fullscreen)
-        view_menu.addAction(self.fullscreen_action)
-
-        # 전역 단축키 (윈도우 어디서나 작동하도록 ApplicationShortcut 지정)
-        from PySide6.QtGui import QShortcut as _QShortcut
-        from PySide6.QtCore import Qt as _Qt
-
-        self._shortcut_next = _QShortcut(QKeySequence(Qt.Key_Right), self)
-        self._shortcut_next.setContext(_Qt.ApplicationShortcut)
-        self._shortcut_next.activated.connect(self.next_image)
-
-        self._shortcut_prev = _QShortcut(QKeySequence(Qt.Key_Left), self)
-        self._shortcut_prev.setContext(_Qt.ApplicationShortcut)
-        self._shortcut_prev.activated.connect(self.prev_image)
-
-        self._shortcut_first = _QShortcut(QKeySequence(Qt.Key_Home), self)
-        self._shortcut_first.setContext(_Qt.ApplicationShortcut)
-        self._shortcut_first.activated.connect(self.first_image)
-
-        self._shortcut_last = _QShortcut(QKeySequence(Qt.Key_End), self)
-        self._shortcut_last.setContext(_Qt.ApplicationShortcut)
-        self._shortcut_last.activated.connect(self.last_image)
-
-        self._shortcut_zoom_in = _QShortcut(QKeySequence(Qt.Key_Up), self)
-        self._shortcut_zoom_in.setContext(_Qt.ApplicationShortcut)
-        self._shortcut_zoom_in.activated.connect(lambda: self.zoom_by(1.25))
-
-        self._shortcut_zoom_out = _QShortcut(QKeySequence(Qt.Key_Down), self)
-        self._shortcut_zoom_out.setContext(_Qt.ApplicationShortcut)
-        self._shortcut_zoom_out.activated.connect(lambda: self.zoom_by(0.8))
-
-        self._shortcut_snap = _QShortcut(QKeySequence(Qt.Key_Space), self)
-        self._shortcut_snap.setContext(_Qt.ApplicationShortcut)
-        self._shortcut_snap.activated.connect(self.snap_to_global_view)
-
-        self._shortcut_escape = _QShortcut(QKeySequence(Qt.Key_Escape), self)
-        self._shortcut_escape.setContext(_Qt.ApplicationShortcut)
-        self._shortcut_escape.activated.connect(self.exit_fullscreen)
 
     # 상태 오버레이 텍스트 갱신용 함수는 _update_status를 사용합니다.
 
@@ -329,13 +223,15 @@ class ImageViewer(QMainWindow):
                 try:
                     with open(self._settings_path, "r", encoding="utf-8") as f:
                         data = json.load(f) or {}
-                except Exception:
+                except Exception as e:
+                    logger.warning("failed to load settings for last_parent_dir: %s", e)
                     data = {}
             data["last_parent_dir"] = parent_dir
             with open(self._settings_path, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
-        except Exception:
-            pass
+            logger.debug("last_parent_dir saved: %s", parent_dir)
+        except Exception as e:
+            logger.error("failed to save last_parent_dir: %s", e)
 
     def _save_settings_key(self, key: str, value):
         # 중앙 설정 캐시에 갱신 후 일괄 저장
@@ -343,8 +239,9 @@ class ImageViewer(QMainWindow):
             self._settings[key] = value
             with open(self._settings_path, "w", encoding="utf-8") as f:
                 json.dump(self._settings, f, ensure_ascii=False, indent=2)
-        except Exception:
-            pass
+            logger.debug("settings saved: key=%s, value=%s", key, value)
+        except Exception as e:
+            logger.error("settings save failed: key=%s, error=%s", key, e)
 
     def _load_settings(self):
         try:
@@ -353,7 +250,9 @@ class ImageViewer(QMainWindow):
                     data = json.load(f)
                     if isinstance(data, dict):
                         self._settings = data
-        except Exception:
+                        logger.debug("settings loaded: %s", self._settings_path)
+        except Exception as e:
+            logger.warning("settings load failed: %s", e)
             # 손상 시 무시하고 기본값 사용
             self._settings = {}
 
@@ -483,7 +382,8 @@ class ImageViewer(QMainWindow):
             self.pixmap_cache.popitem(last=False)
 
         # 미리보기(트림 등) 중에는 화면 갱신을 건너뜀
-        if getattr(self, '_in_trim_preview', False):
+        if self.trim_state.in_preview:
+            logger.debug("skipping screen update during trim preview")
             return
         if path == self.image_files[self.current_index]:
             self.update_pixmap(pixmap)
@@ -873,9 +773,10 @@ class ImageViewer(QMainWindow):
     # ---------------- Trim Workflow ----------------
     def start_trim_workflow(self):
         # 재진입/중복 실행 방지
-        if getattr(self, "_trim_running", False):
+        if self.trim_state.is_running:
+            logger.debug("trim workflow already running")
             return
-        self._trim_running = True
+        self.trim_state.is_running = True
         try:
             if not self.image_files:
                 return
@@ -985,12 +886,12 @@ class ImageViewer(QMainWindow):
                     continue
                 prev_pix = self.canvas._pix_item.pixmap() if self.canvas._pix_item else None
                 try:
-                    self._in_trim_preview = True
+                    self.trim_state.in_preview = True
                     self.canvas.set_pixmap(preview)
                     self.canvas._preset_mode = "fit"
                     self.canvas.apply_current_view()
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.error("trim preview display error: %s", e)
 
                 box = QMessageBox(self)
                 box.setWindowTitle("Trim")
@@ -1026,10 +927,11 @@ class ImageViewer(QMainWindow):
                         self.canvas.apply_current_view()
                     else:
                         self.display_image()
-                except Exception:
+                except Exception as e:
+                    logger.error("trim preview restore error: %s", e)
                     self.display_image()
                 finally:
-                    self._in_trim_preview = False
+                    self.trim_state.in_preview = False
 
                 if not accepted:
                     continue
@@ -1076,7 +978,8 @@ class ImageViewer(QMainWindow):
             self.maintain_decode_window()
         finally:
             # 실행 플래그 해제
-            self._trim_running = False
+            self.trim_state.is_running = False
+            logger.debug("trim workflow finished")
 
     def enter_fullscreen(self):
         if self.isFullScreen():
