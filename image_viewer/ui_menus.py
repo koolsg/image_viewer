@@ -55,14 +55,18 @@ def build_menus(viewer: "ImageViewer") -> None:
     viewer.hq_downscale_action.triggered.connect(viewer.toggle_hq_downscale)
     view_menu.addAction(viewer.hq_downscale_action)
 
-    # 디코딩 전락 토글: 썸네일 모드(fast viewing)
+    # 디코딩 전략 토글: 썸네일 모드(fast viewing)
+    from .strategy import ThumbnailStrategy
+    is_thumbnail = isinstance(getattr(viewer, 'decoding_strategy', None), ThumbnailStrategy)
     viewer.thumbnail_mode_action = QAction("썸네일 모드(fast viewing)", viewer, checkable=True)
-    viewer.thumbnail_mode_action.setChecked(not getattr(viewer, 'decode_full', True))
+    viewer.thumbnail_mode_action.setChecked(is_thumbnail)
     viewer.thumbnail_mode_action.triggered.connect(viewer.toggle_thumbnail_mode)
     view_menu.addAction(viewer.thumbnail_mode_action)
 
-    # 썸네일 모드에서는 고품질 축소 옵션이 의미 없음 → 비활성화
-    viewer.hq_downscale_action.setEnabled(getattr(viewer, 'decode_full', True))
+    # 전략에 따라 고품질 축소 옵션 활성화/비활성화
+    strategy = getattr(viewer, 'decoding_strategy', None)
+    if strategy:
+        viewer.hq_downscale_action.setEnabled(strategy.supports_hq_downscale())
 
     # 배율 곱 설정
     viewer.multiplier_action = QAction("배율 곱 설정...", viewer)

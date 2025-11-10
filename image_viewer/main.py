@@ -29,6 +29,7 @@ from image_viewer.trim import (
 )
 from image_viewer.ui_menus import build_menus
 from image_viewer.decoder import decode_image as _decode
+from image_viewer.strategy import DecodingStrategy, ThumbnailStrategy, FullStrategy
 
 
 # --- Top-level function for the Process Pool ---
@@ -79,8 +80,9 @@ class ImageViewer(QMainWindow):
         self.current_index = -1
         self.pixmap_cache: OrderedDict[str, QPixmap] = OrderedDict()
         self.cache_size = 20
-        # 디코딩 전략: True이면 원본 디코딩, False이면 썸네일 모드 (기본: 원본)
-        self.decode_full: bool = True
+        
+        # 디코딩 전략 초기화 (기본: 원본)
+        self.decoding_strategy: DecodingStrategy = FullStrategy()
 
         self.canvas = ImageCanvas(self)
         self.setCentralWidget(self.canvas)
@@ -95,21 +97,26 @@ class ImageViewer(QMainWindow):
         # 설정 전역 캐시(dict) 로드 및 적용
         self._settings: dict = {}
         self._load_settings()
-        # 디코딩 전략 기본값(원본) 및 설정 반영
-        # settings.json 상태 그대로 사용: thumbnail_mode가 있으면 그것만 사용
-        if "thumbnail_mode" in self._settings:
-            self.decode_full = not bool(self._settings.get("thumbnail_mode", False))
+        # 디코딩 전략 로드: settings에서 thumbnail_mode 반영
+        if "thumbnail_mode" in self._settings and self._settings.get("thumbnail_mode", False):
+            self.decoding_strategy = ThumbnailStrategy()
+            logger.debug("decoding strategy: thumbnail (from settings)")
+        else:
+            self.decoding_strategy = FullStrategy()
+            logger.debug("decoding strategy: full (default)")
+        
         # 메뉴 액션과 내부 상태 동기화 (설정 반영 이후에 반드시 동기화)
         try:
+            is_thumbnail = isinstance(self.decoding_strategy, ThumbnailStrategy)
             if hasattr(self, "thumbnail_mode_action"):
-                self.thumbnail_mode_action.setChecked(not self.decode_full)
+                self.thumbnail_mode_action.setChecked(is_thumbnail)
             if hasattr(self, "hq_downscale_action"):
-                self.hq_downscale_action.setEnabled(self.decode_full)
-                if not self.decode_full and self.hq_downscale_action.isChecked():
+                self.hq_downscale_action.setEnabled(self.decoding_strategy.supports_hq_downscale())
+                if not self.decoding_strategy.supports_hq_downscale() and self.hq_downscale_action.isChecked():
                     self.hq_downscale_action.setChecked(False)
                     self.canvas._hq_downscale = False
-        except Exception:
-            pass
+        except Exception as e:
+            logger.error("failed to sync menu state: %s", e)
         # 배경색(기본: 검정) 및 적용
         col = self._settings.get("background_color")
         self._bg_color = QColor(col) if isinstance(col, str) and QColor(col).isValid() else QColor(0, 0, 0)
@@ -174,11 +181,11 @@ class ImageViewer(QMainWindow):
         parts: list[str] = []
         # 현재 디코딩 전략 라벨
         try:
-            strategy = "원본" if self.decode_full else "썸네일"
-            parts.append(f"[{strategy}]")
-        except Exception:
-            pass
-        if not self.decode_full:
+            parts.append(f"[{self.decoding_strategy.get_name()}]")
+        except Exception as e:
+            logger.debug("failed to get strategy name: %s", e)
+        
+        if isinstance(self.decoding_strategy, ThumbnailStrategy):
             # 1) 썸네일 활성: 디코딩 해상도, 그 기준 배율, 원본 해상도
             if dec_w and dec_h:
                 parts.append(f"{dec_w}x{dec_h}")
@@ -335,13 +342,15 @@ class ImageViewer(QMainWindow):
 
         self._update_status("불러오는 중...")
         target_w = target_h = None
-        # 썸네일 기반 다운스케일 디코딩은 맞춤 모드이며, 원본 디코딩이 꺼져있을 때만 사용
-        if self.canvas.is_fit() and not self.decode_full:
+        
+        # 맞춤 모드이고 썸네일 전략일 때 타겟 크기 계산
+        if self.canvas.is_fit():
             screen = self.windowHandle().screen() if self.windowHandle() else QApplication.primaryScreen()
             if screen is not None:
                 size = screen.size()
-                target_w = int(size.width())
-                target_h = int(size.height())
+                target_w, target_h = self.decoding_strategy.get_target_size(int(size.width()), int(size.height()))
+                logger.debug("display_image: target_size=(%s, %s)", target_w, target_h)
+        
         self.loader.request_load(image_path, target_w, target_h, "both")
 
     def on_image_ready(self, path: str, image_data: Optional[Any], error: Optional[Any]) -> None:
@@ -674,15 +683,23 @@ class ImageViewer(QMainWindow):
     # 디코딩 전략 토글: 썸네일 모드 on/off (체크=썸네일)
     def toggle_thumbnail_mode(self):
         is_thumbnail = self.thumbnail_mode_action.isChecked()
-        # 내부 상태는 decode_full의 반대
-        self.decode_full = not is_thumbnail
+        # 전략 전환
+        if is_thumbnail:
+            self.decoding_strategy = ThumbnailStrategy()
+            logger.debug("switched to ThumbnailStrategy")
+        else:
+            self.decoding_strategy = FullStrategy()
+            logger.debug("switched to FullStrategy")
+        
         # 설정 저장: 썸네일 모드 상태만 저장
         self._save_settings_key("thumbnail_mode", is_thumbnail)
-        # 썸네일 모드에서는 고품질 축소 옵션 비활성화 및 해제
-        self.hq_downscale_action.setEnabled(self.decode_full)
-        if not self.decode_full and self.hq_downscale_action.isChecked():
+        
+        # 전략에 따라 고품질 축소 옵션 활성화/비활성화
+        self.hq_downscale_action.setEnabled(self.decoding_strategy.supports_hq_downscale())
+        if not self.decoding_strategy.supports_hq_downscale() and self.hq_downscale_action.isChecked():
             self.hq_downscale_action.setChecked(False)
             self.canvas._hq_downscale = False
+        
         # 현재 캐시를 비워 새 전략으로 비교가 즉시 가능하도록 함
         self.pixmap_cache.clear()
         # 현재 이미지를 재표시 및 프리패치 재요청
