@@ -10,3 +10,19 @@ dependencies = [
     "pyvips[binary]>=3.0.0",
     "send2trash>=1.8",
 ]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+src = ["image_viewer", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "PL", "RUF"]
+
+[tool.ruff.format]
+docstring-code-format = true
+
+[dependency-groups]
+dev = [
+    "ruff>=0.14.4",
+]

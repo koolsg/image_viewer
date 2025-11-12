@@ -1,7 +1,12 @@
 {
-  "last_parent_dir": "D:/downloads/[JP] Kamiki Rei (神木丽) - Nude Pose Book",
+  "last_parent_dir": "D:\\downloads\\XIUREN No.3751 Yang Chen Chen (杨晨晨Yome)",
   "press_zoom_multiplier": 3.0,
   "background_color": "#000000",
   "thumbnail_mode": false,
-  "trim_algorithm": "mask"
+  "trim_algorithm": "mask",
+  "thumbnail_size": 176,
+  "thumbnail_hspacing": 13,
+  "thumbnail_width": 256,
+  "thumbnail_height": 176,
+  "fast_view_enabled": false
 }

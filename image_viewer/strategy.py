@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Optional, Tuple
+
 from .logger import get_logger
 
 _logger = get_logger("strategy")
@@ -9,9 +9,9 @@ class DecodingStrategy(ABC):
     """이미지 디코딩 전략의 추상 기본 클래스."""
 
     @abstractmethod
-    def get_target_size(self, viewport_width: int, viewport_height: int) -> Tuple[Optional[int], Optional[int]]:
+    def get_target_size(self, viewport_width: int, viewport_height: int) -> tuple[int | None, int | None]:
         """뷰포트 크기에 따른 타겟 디코딩 크기를 반환합니다.
-        
+
         Returns:
             (target_width, target_height) tuple. None은 원본 크기를 의미합니다.
         """
@@ -28,26 +28,26 @@ class DecodingStrategy(ABC):
         pass
 
 
-class ThumbnailStrategy(DecodingStrategy):
-    """빠른 뷰잉을 위한 썸네일 전략: 화면 크기 기준 디코딩."""
+class FastViewStrategy(DecodingStrategy):
+    """Fast view(빠른 보기) 모드: viewport 크기에 맞춰 목표 해상도 계산"""
 
     def __init__(self):
-        self.name = "썸네일"
-        _logger.debug("ThumbnailStrategy initialized")
+        self.name = "fast view"
+        _logger.debug("FastViewStrategy initialized")
 
-    def get_target_size(self, viewport_width: int, viewport_height: int) -> Tuple[Optional[int], Optional[int]]:
-        """뷰포트 크기에 맞춰 디코딩합니다."""
+    def get_target_size(self, viewport_width: int, viewport_height: int) -> tuple[int | None, int | None]:
+        """뷰포트 영역에 맞춰 사용할 해상도를 계산."""
         if viewport_width <= 0 or viewport_height <= 0:
             return None, None
-        _logger.debug("ThumbnailStrategy: target size = (%d, %d)", viewport_width, viewport_height)
+        _logger.debug("FastViewStrategy: target size = (%d, %d)", viewport_width, viewport_height)
         return viewport_width, viewport_height
 
     def get_name(self) -> str:
         return self.name
 
     def supports_hq_downscale(self) -> bool:
-        """썸네일 모드에서는 HQ 다운스케일이 의미 없습니다."""
         return False
+
 
 
 class FullStrategy(DecodingStrategy):
@@ -57,7 +57,7 @@ class FullStrategy(DecodingStrategy):
         self.name = "원본"
         _logger.debug("FullStrategy initialized")
 
-    def get_target_size(self, viewport_width: int, viewport_height: int) -> Tuple[Optional[int], Optional[int]]:
+    def get_target_size(self, viewport_width: int, viewport_height: int) -> tuple[int | None, int | None]:
         """원본 크기로 디코딩합니다."""
         _logger.debug("FullStrategy: decoding at full resolution")
         return None, None

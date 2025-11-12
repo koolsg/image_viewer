@@ -1,13 +1,15 @@
 import os
 import threading
+from collections.abc import Callable
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
-from typing import Callable
 
 from PySide6.QtCore import QObject, Signal
 
-
 from .logger import get_logger
+import contextlib
+
 _logger = get_logger("loader")
+
 
 class Loader(QObject):
     """파일 I/O 스케줄링 + 다중 프로세스 디코딩을 관리하는 로더.
@@ -21,6 +23,7 @@ class Loader(QObject):
     def __init__(self, decode_fn: Callable[[str, int | None, int | None, str], tuple]):
         super().__init__()
         self._decode_fn = decode_fn
+        # 프로세스 풀(일반 디코딩)
         self.executor = ProcessPoolExecutor()
         max_io = max(2, min(4, (os.cpu_count() or 2)))
         self.io_pool = ThreadPoolExecutor(max_workers=max_io)
@@ -29,13 +32,29 @@ class Loader(QObject):
         self._next_id = 1
         self._latest_id: dict[str, int] = {}
         self._lock = threading.Lock()
+        _logger.debug("Loader init: process_pool=on, io_workers=%s", max_io)
 
-    def _submit_decode(self, file_path: str, target_width: int | None, target_height: int | None, size: str = "both", req_id: int | None = None):
+    def _submit_decode(
+        self,
+        file_path: str,
+        target_width: int | None,
+        target_height: int | None,
+        size: str = "both",
+        req_id: int | None = None,
+    ):
         try:
+            _logger.debug(
+                "submit_decode: path=%s id=%s size=%s target=(%s,%s)",
+                file_path,
+                req_id,
+                size,
+                target_width,
+                target_height,
+            )
             future = self.executor.submit(self._decode_fn, file_path, target_width, target_height, size)
             try:
-                setattr(future, "_req_id", req_id)
-                setattr(future, "_path", file_path)
+                future._req_id = req_id
+                future._path = file_path
             except Exception:
                 pass
             future.add_done_callback(self.on_decode_finished)
@@ -66,31 +85,48 @@ class Loader(QObject):
         with self._lock:
             self._pending.discard(path)
             if path in self._ignored:
+                _logger.debug("decode_finished ignored: path=%s id=%s (in ignored)", path, req_id)
                 return
             latest = self._latest_id.get(path)
             if latest is not None and req_id is not None and req_id != latest:
+                _logger.debug("decode_finished stale: path=%s id=%s latest=%s (dropped)", path, req_id, latest)
                 return
+        try:
+            shape = getattr(data, "shape", None)
+            _logger.debug("decode_finished emit: path=%s id=%s shape=%s err=%s", path, req_id, shape, error)
+        except Exception:
+            _logger.debug("decode_finished emit: path=%s id=%s err=%s", path, req_id, error)
         self.image_decoded.emit(path, data, error)
 
     def request_load(self, path, target_width: int | None = None, target_height: int | None = None, size: str = "both"):
         with self._lock:
-            if path in self._pending or path in self._ignored:
+            if path in self._ignored:
+                _logger.debug("request_load skip(ignored): path=%s", path)
                 return
-            self._pending.add(path)
+            # pending이어도 새로운 req_id로 재요청 허용 (이전 결과는 stale로 드랍)
+            if path not in self._pending:
+                self._pending.add(path)
             req_id = self._next_id
             self._next_id += 1
             self._latest_id[path] = req_id
-        _logger.debug("request_load path=%s id=%s", path, req_id)
+            pending_count = len(self._pending)
+        _logger.debug(
+            "request_load queued: path=%s id=%s size=%s target=(%s,%s) pending=%s",
+            path,
+            req_id,
+            size,
+            target_width,
+            target_height,
+            pending_count,
+        )
         self.io_pool.submit(self._submit_decode, path, target_width, target_height, size, req_id)
 
     def ignore_path(self, path: str):
         with self._lock:
             self._ignored.add(path)
             self._pending.discard(path)
-            try:
+            with contextlib.suppress(Exception):
                 self._latest_id.pop(path, None)
-            except Exception:
-                pass
 
     def unignore_path(self, path: str):
         with self._lock:
@@ -102,4 +138,3 @@ class Loader(QObject):
             self.io_pool.shutdown(wait=False, cancel_futures=True)  # type: ignore
         except TypeError:
             self.io_pool.shutdown(wait=False)
-

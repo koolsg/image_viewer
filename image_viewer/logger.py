@@ -1,15 +1,19 @@
 import logging
-import sys
-from typing import Optional
-
-
 import os
+import sys
+
 
 def setup_logger(level: int = logging.INFO, name: str = "image_viewer") -> logging.Logger:
+    """Create or update the project logger.
+
+    - Respects env overrides IMAGE_VIEWER_LOG_LEVEL/IMAGE_VIEWER_LOG_CATS on every call
+      (so late CLI parsing can still take effect).
+    - Ensures there is exactly one StreamHandler on the base logger and updates
+      its formatter/filters instead of bailing out early.
+    """
     logger = logging.getLogger(name)
-    if logger.handlers:
-        return logger
-    # 환경변수 우선 적용
+
+    # Resolve level from env (override default)
     env_level = (os.getenv("IMAGE_VIEWER_LOG_LEVEL") or "").strip().lower()
     if env_level:
         level_map = {
@@ -20,41 +24,43 @@ def setup_logger(level: int = logging.INFO, name: str = "image_viewer") -> loggi
             "critical": logging.CRITICAL,
         }
         level = level_map.get(env_level, level)
-
     logger.setLevel(level)
 
-    handler = logging.StreamHandler(stream=sys.stderr)
+    # Get or create single stream handler
+    if logger.handlers:
+        handler = logger.handlers[0]
+    else:
+        handler = logging.StreamHandler(stream=sys.stderr)
+        logger.addHandler(handler)
+
+    # Formatter (idempotent)
     fmt = logging.Formatter(
         fmt="[%(asctime)s] %(levelname)s %(name)s: %(message)s",
         datefmt="%H:%M:%S",
     )
     handler.setFormatter(fmt)
 
-    # 카테고리 필터 (쉼표 구분)
+    # Update category filter from env
+    # Clear previous filters and apply a new one if cats provided
+    handler.filters.clear()
     cats = (os.getenv("IMAGE_VIEWER_LOG_CATS") or "").strip()
     if cats:
         allowed = {c.strip() for c in cats.split(",") if c.strip()}
 
         class _CategoryFilter(logging.Filter):
             def filter(self, record: logging.LogRecord) -> bool:
-                # record.name 예: image_viewer.main, image_viewer.loader
-                name = record.name
-                # 루트 이름 제거
-                if name.startswith(f"{name.split('.')[0]}"):
-                    pass
-                # child 이름 추출
-                parts = name.split(".")
-                suffix = parts[-1] if parts else name
+                # record.name like: image_viewer.main, image_viewer.loader
+                parts = (record.name or "").split(".")
+                suffix = parts[-1] if parts else record.name
                 return suffix in allowed
 
         handler.addFilter(_CategoryFilter())
 
-    logger.addHandler(handler)
+    # Do not propagate beyond the project logger
     logger.propagate = False
     return logger
 
 
-def get_logger(name: Optional[str] = None) -> logging.Logger:
+def get_logger(name: str | None = None) -> logging.Logger:
     base = setup_logger()
     return base if not name else base.getChild(name)
-

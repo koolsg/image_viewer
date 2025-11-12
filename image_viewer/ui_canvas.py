@@ -1,13 +1,21 @@
-from PySide6.QtCore import Qt, QRectF
-from PySide6.QtGui import QImage, QPixmap, QPainter, QColor
-from PySide6.QtWidgets import QGraphicsView, QGraphicsScene, QGraphicsPixmapItem, QFrame
-from typing import Optional
+# NOTE: This file contains the ImageCanvas class moved from main.py.
+import numpy as np
+from PySide6.QtCore import QPoint, QRectF, Qt
+from PySide6.QtGui import QColor, QFont, QImage, QPainter, QPixmap
+from PySide6.QtWidgets import QFrame, QGraphicsPixmapItem, QGraphicsScene, QGraphicsView
+
 from .logger import get_logger
+
+try:
+    import pyvips  # type: ignore
+except Exception:
+    pyvips = None  # type: ignore
+from math import pow
+import contextlib
 
 _logger = get_logger("ui_canvas")
 
 
-# NOTE: 이 파일은 기존 main.py의 ImageCanvas 클래스를 그대로 이동했습니다.
 class ImageCanvas(QGraphicsView):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -30,7 +38,7 @@ class ImageCanvas(QGraphicsView):
         self._zoom_saved = None
         self._press_zoom_multiplier = 2.0
         self._rotation = 0.0
-        # 우클릭 드래그용 상태
+        # Right-click drag state
         self._rc_drag_active = False
         self._rc_drag_start_view = None
         self._rc_drag_start_h = 0
@@ -42,7 +50,7 @@ class ImageCanvas(QGraphicsView):
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
 
-    # 이하 메서드들은 기존 main.py의 구현을 참조합니다.
+    # The following methods reference the implementation in main.py.
     def get_fit_scale(self) -> float:
         pix = self._pix_item.pixmap()
         if pix.isNull():
@@ -87,21 +95,40 @@ class ImageCanvas(QGraphicsView):
                 self.zoom_by(factor)
             else:
                 angle = event.angleDelta().y()
-                parent = self.parent()
-                if angle > 0 and hasattr(parent, "prev_image"):
-                    parent.prev_image()
+                viewer = self.window()
+                if angle > 0 and hasattr(viewer, "prev_image"):
+                    viewer.prev_image()
                     event.accept()
-                elif angle < 0 and hasattr(parent, "next_image"):
-                    parent.next_image()
+                elif angle < 0 and hasattr(viewer, "next_image"):
+                    viewer.next_image()
                     event.accept()
                 else:
                     super().wheelEvent(event)
         except Exception as ex:
             _logger.debug("wheelEvent fallback due to error: %s", ex)
-            try:
+            with contextlib.suppress(Exception):
                 super().wheelEvent(event)
+
+    def keyPressEvent(self, event) -> None:
+        try:
+            key = event.key() if hasattr(event, "key") else None
+        except Exception:
+            key = None
+        if key in (Qt.Key_Left, Qt.Key_Right):
+            viewer = self.window()
+            try:
+                if key == Qt.Key_Left and hasattr(viewer, "prev_image"):
+                    viewer.prev_image()
+                    event.accept()
+                    return
+                if key == Qt.Key_Right and hasattr(viewer, "next_image"):
+                    viewer.next_image()
+                    event.accept()
+                    return
             except Exception:
                 pass
+        with contextlib.suppress(Exception):
+            super().keyPressEvent(event)
 
     def mousePressEvent(self, event) -> None:
         try:
@@ -111,7 +138,7 @@ class ImageCanvas(QGraphicsView):
             _logger.debug("mousePressEvent button read error: %s", ex)
             btn = None
             btns = None
-        # 우클릭: 스크롤바가 있다면 수동 패닝 모드 진입 (레거시 동작 유지)
+        # Right-click: Enter manual panning mode if scrollbar exists (legacy behavior)
         if (btn == Qt.RightButton) or (btns is not None and (btns & Qt.RightButton)):
             try:
                 hbar = self.horizontalScrollBar()
@@ -125,9 +152,12 @@ class ImageCanvas(QGraphicsView):
                 try:
                     if hasattr(event, "position"):
                         posf = event.position()
-                        view_qpoint = posf.toPoint() if hasattr(posf, "toPoint") else None
+                        view_qpoint = (
+                            posf.toPoint() if hasattr(posf, "toPoint") else None
+                        )
                         if view_qpoint is None:
-                            from PySide6.QtCore import QPoint
+                            # QPoint imported at module top
+
                             view_qpoint = QPoint(int(posf.x()), int(posf.y()))
                     else:
                         view_qpoint = event.pos() if hasattr(event, "pos") else None
@@ -136,32 +166,34 @@ class ImageCanvas(QGraphicsView):
                 self._rc_drag_start_view = view_qpoint
                 self._rc_drag_start_h = hbar.value()
                 self._rc_drag_start_v = vbar.value()
-                try:
+                with contextlib.suppress(Exception):
                     event.accept()
-                except Exception:
-                    pass
                 return
         # 중클릭: 전역 보기로 스냅 (레거시 동작 유지)
         if (btn == Qt.MiddleButton) or (btns is not None and (btns & Qt.MiddleButton)):
-            parent = self.parent()
-            if hasattr(parent, "snap_to_global_view"):
+            viewer = self.window()
+            if hasattr(viewer, "snap_to_global_view"):
                 try:
-                    parent.snap_to_global_view()
+                    viewer.snap_to_global_view()
                     event.accept()
                     return
                 except Exception:
                     pass
         # 보조 버튼: 확대/축소 (레거시 매핑 유지)
-        xbtn1 = getattr(Qt, 'XButton1', None)
-        xbtn2 = getattr(Qt, 'XButton2', None)
-        if (xbtn1 is not None) and ((btn == xbtn1) or (btns is not None and (btns & xbtn1))):
+        xbtn1 = getattr(Qt, "XButton1", None)
+        xbtn2 = getattr(Qt, "XButton2", None)
+        if (xbtn1 is not None) and (
+            (btn == xbtn1) or (btns is not None and (btns & xbtn1))
+        ):
             try:
                 self.zoom_by(0.8)
                 event.accept()
                 return
             except Exception:
                 pass
-        if (xbtn2 is not None) and ((btn == xbtn2) or (btns is not None and (btns & xbtn2))):
+        if (xbtn2 is not None) and (
+            (btn == xbtn2) or (btns is not None and (btns & xbtn2))
+        ):
             try:
                 self.zoom_by(1.25)
                 event.accept()
@@ -173,7 +205,11 @@ class ImageCanvas(QGraphicsView):
             try:
                 # 현재 프리셋 저장 후 기준 배율 계산
                 self._preset_before_press = getattr(self, "_preset_mode", "fit")
-                baseline = self.get_fit_scale() if self._preset_before_press == "fit" else float(self._zoom)
+                baseline = (
+                    self.get_fit_scale()
+                    if self._preset_before_press == "fit"
+                    else float(self._zoom)
+                )
             except Exception:
                 self._preset_before_press = getattr(self, "_preset_mode", "fit")
                 baseline = 1.0
@@ -191,18 +227,16 @@ class ImageCanvas(QGraphicsView):
             try:
                 if hasattr(event, "position"):
                     posf = event.position()
-                    if hasattr(posf, "toPoint"):
-                        view_qpoint = posf.toPoint()
-                    else:
-                        from PySide6.QtCore import QPoint
-                        view_qpoint = QPoint(int(posf.x()), int(posf.y()))
+                    view_qpoint = posf.toPoint() if hasattr(posf, "toPoint") else QPoint(int(posf.x()), int(posf.y()))
                 elif hasattr(event, "pos"):
                     view_qpoint = event.pos()
             except Exception:
                 view_qpoint = None
 
             scene_pt = self.mapToScene(view_qpoint) if view_qpoint is not None else None
-            item_pt = self._pix_item.mapFromScene(scene_pt) if scene_pt is not None else None
+            item_pt = (
+                self._pix_item.mapFromScene(scene_pt) if scene_pt is not None else None
+            )
 
             # 실제 모드로 전환 후 확대 적용
             self._preset_mode = "actual"
@@ -221,10 +255,8 @@ class ImageCanvas(QGraphicsView):
                     hbar.setValue(hbar.value() + delta_x)
                     vbar.setValue(vbar.value() + delta_y)
                 except Exception:
-                    try:
+                    with contextlib.suppress(Exception):
                         self.centerOn(new_scene_pt)
-                    except Exception:
-                        pass
             try:
                 parent = self.parent()
                 if hasattr(parent, "_update_status"):
@@ -232,10 +264,8 @@ class ImageCanvas(QGraphicsView):
             except Exception:
                 pass
             return
-        try:
+        with contextlib.suppress(Exception):
             super().mousePressEvent(event)
-        except Exception:
-            pass
 
     def mouseMoveEvent(self, event):
         if getattr(self, "_rc_drag_active", False):
@@ -244,7 +274,8 @@ class ImageCanvas(QGraphicsView):
                     posf = event.position()
                     view_qpoint = posf.toPoint() if hasattr(posf, "toPoint") else None
                     if view_qpoint is None:
-                        from PySide6.QtCore import QPoint
+                        # QPoint imported at module top
+
                         view_qpoint = QPoint(int(posf.x()), int(posf.y()))
                 else:
                     view_qpoint = event.pos() if hasattr(event, "pos") else None
@@ -259,10 +290,8 @@ class ImageCanvas(QGraphicsView):
                 return
             except Exception:
                 pass
-        try:
+        with contextlib.suppress(Exception):
             super().mouseMoveEvent(event)
-        except Exception:
-            pass
 
     def mouseReleaseEvent(self, event):
         try:
@@ -280,15 +309,11 @@ class ImageCanvas(QGraphicsView):
             return
         if btn == Qt.RightButton and getattr(self, "_rc_drag_active", False):
             self._rc_drag_active = False
-            try:
+            with contextlib.suppress(Exception):
                 event.accept()
-            except Exception:
-                pass
             return
-        try:
+        with contextlib.suppress(Exception):
             super().mouseReleaseEvent(event)
-        except Exception:
-            pass
 
     def is_fit(self) -> bool:
         return self._preset_mode == "fit"
@@ -350,34 +375,35 @@ class ImageCanvas(QGraphicsView):
                 self._apply_hq_fit()
             else:
                 self.fitInView(self._pix_item, Qt.KeepAspectRatio)
-        else:
-            if abs(self._zoom - 1.0) > 1e-6:
-                self.scale(self._zoom, self._zoom)
+        elif abs(self._zoom - 1.0) > 1e-6:
+            self.scale(self._zoom, self._zoom)
         try:
-            parent = self.parent()
-            if hasattr(parent, "_update_status"):
-                parent._update_status()
+            viewer = self.window()
+            if hasattr(viewer, "_update_status"):
+                viewer._update_status()
         except Exception:
             pass
 
     def drawForeground(self, painter, rect):
         try:
-            parent = self.parent()
-            title = getattr(parent, "_overlay_title", "")
-            info = getattr(parent, "_overlay_info", "")
+            # ImageViewer는 QStackedWidget 안에 위치할 수 있으므로 parent() 대신 window()에서 오버레이 정보를 읽는다.
+            viewer = self.window()
+            title = getattr(viewer, "_overlay_title", "")
+            info = getattr(viewer, "_overlay_info", "")
             if not title and not info:
                 return
             painter.save()
             painter.resetTransform()
-            bg = getattr(parent, "_bg_color", None)
-            from math import pow
+            bg = getattr(viewer, "_bg_color", None)
 
             def rel_lum(c: QColor) -> float:
                 r = c.red() / 255.0
                 g = c.green() / 255.0
                 b = c.blue() / 255.0
+
                 def f(u):
                     return pow((u + 0.055) / 1.055, 2.4) if u > 0.04045 else (u / 12.92)
+
                 rL, gL, bL = f(r), f(g), f(b)
                 return 0.2126 * rL + 0.7152 * gL + 0.0722 * bL
 
@@ -391,7 +417,7 @@ class ImageCanvas(QGraphicsView):
             margin = 8
             x = margin
             y = margin + 14
-            from PySide6.QtGui import QFont
+
             font = QFont()
             font.setPointSize(10)
             painter.setFont(font)
@@ -415,7 +441,11 @@ class ImageCanvas(QGraphicsView):
         scale = min(sx, sy)
         tw, th = max(1, int(pw * scale)), max(1, int(ph * scale))
 
-        if self._hq_pixmap is not None and self._hq_pixmap.width() == tw and self._hq_pixmap.height() == th:
+        if (
+            self._hq_pixmap is not None
+            and self._hq_pixmap.width() == tw
+            and self._hq_pixmap.height() == th
+        ):
             self._pix_item.setPixmap(self._hq_pixmap)
             self.fitInView(self._pix_item, Qt.KeepAspectRatio)
             return
@@ -424,24 +454,32 @@ class ImageCanvas(QGraphicsView):
             qimg = pix.toImage().convertToFormat(QImage.Format_RGB888)
             width, height = qimg.width(), qimg.height()
             bpl = qimg.bytesPerLine()
-            import numpy as np
+            # numpy imported at module top
+
             buf = qimg.bits().tobytes()
             if len(buf) < bpl * height:
                 self.fitInView(self._pix_item, Qt.KeepAspectRatio)
                 return
-            arr = np.frombuffer(buf, dtype=np.uint8).reshape((height, bpl))[:, : (width * 3)]
+            arr = np.frombuffer(buf, dtype=np.uint8).reshape((height, bpl))[
+                :, : (width * 3)
+            ]
             arr = arr.reshape((height, width, 3))
             arr = np.ascontiguousarray(arr)
             try:
-                import pyvips  # type: ignore
+                # pyvips imported at module top (optional)
+                pass
             except Exception:
                 self.fitInView(self._pix_item, Qt.KeepAspectRatio)
                 return
             try:
-                vips_img = pyvips.Image.new_from_memory(arr.tobytes(), width, height, 3, "uchar")
+                vips_img = pyvips.Image.new_from_memory(
+                    arr.tobytes(), width, height, 3, "uchar"
+                )
                 scale_x = tw / width
                 scale_y = th / height
-                vips_resized = vips_img.resize(scale_x, kernel="lanczos3", vscale=scale_y)
+                vips_resized = pyvips_img.resize(
+                    scale_x, kernel="lanczos3", vscale=scale_y
+                )
                 mem = vips_resized.write_to_memory()
                 arr2 = np.frombuffer(mem, dtype=np.uint8).reshape(
                     vips_resized.height, vips_resized.width, vips_resized.bands
