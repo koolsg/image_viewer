@@ -51,7 +51,7 @@ class TrimProgressDialog(QDialog):
 
     def showEvent(self, event) -> None:  # type: ignore[override]
         super().showEvent(event)
-        # 화면 정중앙 배치(가능한 경우만)
+        # Center on screen (only if possible)
         try:
             screen = QApplication.primaryScreen()
             if screen is not None:
@@ -59,7 +59,7 @@ class TrimProgressDialog(QDialog):
                 center = geo.center()
                 self.move(center - self.rect().center())
         except Exception:
-            # 위치 계산 실패는 무시(기본 배치)
+            # Ignore positioning failure (use default placement)
             pass
 
     @Slot(int, int, str)

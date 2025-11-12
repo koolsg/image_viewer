@@ -116,11 +116,8 @@ def build_menus(viewer: "ImageViewer") -> None:
     view_menu.addSeparator()
     view_menu.addAction(viewer.explorer_mode_action)
 
-    # Fullscreen
+    # Fullscreen (no shortcut - Enter now toggles View/Explorer Mode instead)
     viewer.fullscreen_action = QAction("Fullscreen", viewer, checkable=True)
-    viewer.fullscreen_action.setShortcuts(
-        [QKeySequence(Qt.Key_Return), QKeySequence(Qt.Key_Enter)]
-    )
     viewer.fullscreen_action.triggered.connect(viewer.toggle_fullscreen)
     view_menu.addAction(viewer.fullscreen_action)
 
@@ -141,10 +138,6 @@ def build_menus(viewer: "ImageViewer") -> None:
         viewer._shortcut_last = QShortcut(QKeySequence(Qt.Key_End), viewer)
         viewer._shortcut_last.setContext(Qt.WindowShortcut)
         viewer._shortcut_last.activated.connect(viewer.last_image)
-
-        viewer._shortcut_escape = QShortcut(QKeySequence(Qt.Key_Escape), viewer)
-        viewer._shortcut_escape.setContext(Qt.WindowShortcut)
-        viewer._shortcut_escape.activated.connect(viewer.exit_fullscreen)
 
         viewer._shortcut_space = QShortcut(QKeySequence(Qt.Key_Space), viewer)
         viewer._shortcut_space.setContext(Qt.WindowShortcut)

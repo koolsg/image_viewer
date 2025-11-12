@@ -23,7 +23,7 @@ def start_trim_workflow(viewer) -> None:
     Args:
         viewer: The ImageViewer instance
     """
-    # 재진입/중복 실행 방지
+    # Prevent re-entry/duplicate execution
     if viewer.trim_state.is_running:
         _logger.debug("trim workflow already running")
         return
@@ -32,13 +32,13 @@ def start_trim_workflow(viewer) -> None:
         if not viewer.image_files:
             return
 
-        # 0) 트림 민감도 프로파일 선택 (기본/공격적)
+        # 0) Select trim sensitivity profile (Normal/Aggressive)
         prof_box = QMessageBox(viewer)
-        prof_box.setWindowTitle("트림 민감도")
-        prof_box.setText("어떤 프로파일로 트림할까요?")
-        btn_norm = prof_box.addButton("기본", QMessageBox.ButtonRole.AcceptRole)
-        btn_agg = prof_box.addButton("공격적", QMessageBox.ButtonRole.ActionRole)
-        btn_cancel = prof_box.addButton("취소", QMessageBox.ButtonRole.RejectRole)
+        prof_box.setWindowTitle("Trim Sensitivity")
+        prof_box.setText("Which profile to use for trimming?")
+        btn_norm = prof_box.addButton("Normal", QMessageBox.ButtonRole.AcceptRole)
+        btn_agg = prof_box.addButton("Aggressive", QMessageBox.ButtonRole.ActionRole)
+        btn_cancel = prof_box.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
         prof_box.setDefaultButton(btn_norm)
         prof_box.exec()
         clicked_prof = prof_box.clickedButton()
@@ -46,19 +46,19 @@ def start_trim_workflow(viewer) -> None:
             return
         profile = "aggressive" if clicked_prof is btn_agg else "normal"
 
-        # 1) 저장 모드 선택 (덮어씌우기/사본/취소)
+        # 1) Select save mode (Overwrite/Save Copy/Cancel)
         mode_box = QMessageBox(viewer)
-        mode_box.setWindowTitle("트림")
+        mode_box.setWindowTitle("Trim")
         mode_box.setText(
-            "Stats 방식으로 트림하겠습니다.\n(덮어씌우기, 따로 저장, 취소)"
+            "Trimming will be done using the Stats method.\n(Overwrite, Save as Copy, Cancel)"
         )
         overwrite_btn = mode_box.addButton(
-            "덮어씌우기", QMessageBox.ButtonRole.AcceptRole
+            "Overwrite", QMessageBox.ButtonRole.AcceptRole
         )
         saveas_btn = mode_box.addButton(
-            "사본 저장(_trimmed)", QMessageBox.ButtonRole.ActionRole
+            "Save Copy (_trimmed)", QMessageBox.ButtonRole.ActionRole
         )
-        cancel_btn = mode_box.addButton("취소", QMessageBox.ButtonRole.RejectRole)
+        cancel_btn = mode_box.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
         mode_box.setDefaultButton(overwrite_btn)
         mode_box.exec()
         clicked = mode_box.clickedButton()
@@ -67,11 +67,11 @@ def start_trim_workflow(viewer) -> None:
         overwrite = clicked is overwrite_btn
 
         if not overwrite:
-            # 사본 저장: 백그라운드 스레드 일괄 처리 + 진행 대화상자
+            # Save as copy: batch process in a background thread + progress dialog
             paths = list(viewer.image_files)
             dlg = TrimProgressDialog(viewer)
 
-            # 동기 처리
+            # Synchronous processing
             worker = TrimBatchWorker(paths, profile)
 
             def _on_progress(total: int, index: int, name: str):
@@ -84,7 +84,7 @@ def start_trim_workflow(viewer) -> None:
             viewer.maintain_decode_window()
             return
 
-        # 덮어씌우기: 파일별 승인(미리보기 + Y/N/A 단축키)
+        # Overwrite: per-file approval (preview + Y/N/A shortcuts)
         stop_all = False
         for path in list(viewer.image_files):
             if stop_all:
@@ -111,13 +111,13 @@ def start_trim_workflow(viewer) -> None:
 
             box = QMessageBox(viewer)
             box.setWindowTitle("Trim")
-            box.setText("트림할까요? (Y/N)")
+            box.setText("Trim this image? (Y/N)")
             yes = box.addButton("Accept (Y)", QMessageBox.ButtonRole.YesRole)
             no = box.addButton("Reject (N)", QMessageBox.ButtonRole.NoRole)
             abort_btn = box.addButton(
                 "Abort (A)", QMessageBox.ButtonRole.RejectRole
             )
-            # Y/N/A 단축키 동작 추가: 단축키로 버튼 클릭을 트리거
+            # Add Y/N/A shortcuts: trigger button clicks with shortcuts
             try:
                 sc_y = QShortcut(QKeySequence("Y"), box)
                 sc_n = QShortcut(QKeySequence("N"), box)
@@ -136,7 +136,7 @@ def start_trim_workflow(viewer) -> None:
             else:
                 accepted = clicked_btn is yes
 
-            # 원래 뷰 복귀
+            # Restore original view
             try:
                 if prev_pix and not prev_pix.isNull():
                     viewer.canvas.set_pixmap(prev_pix)
@@ -152,7 +152,7 @@ def start_trim_workflow(viewer) -> None:
             if not accepted:
                 continue
 
-            # 로그: 덮어쓰기 직전 상태 출력
+            # Log: print state just before overwriting
             _logger.debug("[trim] overwrite prep: %s", path)
             displaying = False
             cached = False
@@ -183,12 +183,12 @@ def start_trim_workflow(viewer) -> None:
                 )
                 QMessageBox.critical(
                     viewer,
-                    "Trim 오류",
-                    f"파일 저장 실패: {path}",
+                    "Trim Error",
+                    f"Failed to save file: {path}",
                 )
                 continue
 
-            # 캐시 무효화 및 필요시 재표시
+            # Invalidate cache and redisplay if necessary
             with contextlib.suppress(Exception):
                 viewer.pixmap_cache.pop(path, None)
             if (
@@ -200,6 +200,6 @@ def start_trim_workflow(viewer) -> None:
 
         viewer.maintain_decode_window()
     finally:
-        # 실행 플래그 해제
+        # Release the execution flag
         viewer.trim_state.is_running = False
         _logger.debug("trim workflow finished")

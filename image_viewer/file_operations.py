@@ -19,8 +19,8 @@ def delete_current_file(viewer) -> None:
     Args:
         viewer: The ImageViewer instance
     """
-    # 현재 파일을 휴지통으로 이동(확인 대화상자 표시).
-    # UX: 삭제 확정 후 먼저 다른 이미지로 전환하고, 그 다음 실제 삭제를 시도한다.
+    # Move the current file to the trash (with a confirmation dialog).
+    # UX: After confirming deletion, switch to another image first, then attempt the actual deletion.
     if (
         not viewer.image_files
         or viewer.current_index < 0
@@ -38,13 +38,13 @@ def delete_current_file(viewer) -> None:
         len(viewer.image_files),
     )
 
-    # 확인 다이얼로그
+    # Confirmation dialog
     proceed = True
     base = os.path.basename(del_path)
     ret = QMessageBox.question(
         viewer,
-        "휴지통으로 이동",
-        f"이 파일을 휴지통으로 이동하시겠습니까?\n{base}",
+        "Move to Trash",
+        f"Are you sure you want to move this file to the trash?\n{base}",
         QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         QMessageBox.StandardButton.Yes,
     )
@@ -54,7 +54,7 @@ def delete_current_file(viewer) -> None:
         _logger.debug("[delete] user cancelled")
         return
 
-    # 1) 다른 이미지로 전환하여 표시 기준을 바꾼다
+    # 1) Switch to another image to change the display reference
     if len(viewer.image_files) > 1:
         if viewer.current_index < len(viewer.image_files) - 1:
             new_index = viewer.current_index + 1
@@ -72,7 +72,7 @@ def delete_current_file(viewer) -> None:
     else:
         _logger.debug("[delete] single image case: will clear view later")
 
-    # 화면/캐시에서 해당 경로 제거 + 이벤트/GC로 안정화
+    # Remove the path from the screen/cache + stabilize with events/GC
     try:
         removed = viewer.pixmap_cache.pop(del_path, None) is not None
         _logger.debug("[delete] cache pop: removed=%s", removed)
@@ -88,7 +88,7 @@ def delete_current_file(viewer) -> None:
     except Exception as ex:
         _logger.debug("[delete] settle phase error: %s", ex)
 
-    # 2) 실제 휴지통 이동(재시도 포함)
+    # 2) Actual move to trash (with retries)
     try:
         try:
             last_err = None
@@ -113,25 +113,25 @@ def delete_current_file(viewer) -> None:
         _logger.debug("[delete] trash final error: %s", e)
         QMessageBox.critical(
             viewer,
-            "이동 실패",
+            "Move Failed",
             (
-                "휴지통으로 이동 중 오류가 발생했습니다.\n"
-                "send2trash 설치 및 경로를 확인해 주세요.\n\n"
-                f"오류: {e}\n"
-                f"원본경로: {del_path}\n"
-                f"절대경로: {abs_path}\n"
+                "An error occurred while moving the file to the trash.\n"
+                "Please check your send2trash installation and the path.\n\n"
+                f"Error: {e}\n"
+                f"Original Path: {del_path}\n"
+                f"Absolute Path: {abs_path}\n"
             ),
         )
         return
 
-    # 삭제 성공 확인 후에만, 재요청/완료 신호를 확실히 무시하도록 ignore 적용
+    # After confirming successful deletion, apply ignore to reliably ignore re-requests/completion signals
     try:
         if hasattr(viewer, "loader"):
             viewer.loader.ignore_path(del_path)
     except Exception:
         pass
 
-    # 3) 목록에서 제거하고 인덱스 정리
+    # 3) Remove from the list and clean up the index
     try:
         try:
             del_pos = viewer.image_files.index(del_path)
@@ -154,7 +154,7 @@ def delete_current_file(viewer) -> None:
         except Exception as ex2:
             _logger.debug("[delete] list remove by value error: %s", ex2)
 
-    # 4) 최종 표시/상태 갱신
+    # 4) Final display/status update
     if not viewer.image_files:
         _logger.debug("[delete] list empty: clearing view")
         viewer.current_index = -1

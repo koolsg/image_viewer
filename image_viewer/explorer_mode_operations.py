@@ -35,19 +35,19 @@ def _update_ui_for_mode(viewer) -> None:
     else:
         _setup_explorer_mode(viewer)
 
-    # 메뉴 동기화
+    # Sync menu
     if hasattr(viewer, "explorer_mode_action"):
         viewer.explorer_mode_action.setChecked(not viewer.explorer_state.view_mode)
 
 
 def _setup_view_mode(viewer) -> None:
-    """Setup View Mode: show only canvas.
+    """Setup View Mode: show only canvas in fullscreen.
     
     Args:
         viewer: The ImageViewer instance
     """
     try:
-        # Explorer Grid 로더 연결 해제(점프 후 UI 부하 차단)
+        # Disconnect Explorer Grid loader (to prevent UI load after jump)
         try:
             grid = getattr(viewer.explorer_state, "_explorer_grid", None)
             if grid is not None:
@@ -94,6 +94,14 @@ def _setup_view_mode(viewer) -> None:
                 except Exception as e2:
                     _logger.error("failed to recreate canvas: %s", e2)
 
+        # View Mode always enters fullscreen
+        try:
+            if not viewer.isFullScreen():
+                viewer.enter_fullscreen()
+                _logger.debug("View Mode: entered fullscreen")
+        except Exception as e:
+            _logger.warning("failed to enter fullscreen in view mode: %s", e)
+
     except Exception as e:
         _logger.error("failed to setup view mode: %s", e)
 
@@ -107,6 +115,14 @@ def _setup_explorer_mode(viewer) -> None:
     try:
         from image_viewer.ui_explorer_grid import ThumbnailGridWidget
         from image_viewer.ui_explorer_tree import FolderTreeWidget
+
+        # Explorer Mode exits fullscreen
+        try:
+            if viewer.isFullScreen():
+                viewer.exit_fullscreen()
+                _logger.debug("Explorer Mode: exited fullscreen")
+        except Exception as e:
+            _logger.warning("failed to exit fullscreen in explorer mode: %s", e)
 
         current_widget = viewer.centralWidget()
         stacked_widget = None
@@ -124,11 +140,11 @@ def _setup_explorer_mode(viewer) -> None:
             viewer.setCentralWidget(stacked_widget)
             _logger.debug("created stacked widget for mode switching")
 
-        # 이미 Page 1이 있으면 그대로 재사용(그리드/트리/썸네일 캐시 보존)
+        # If Page 1 already exists, reuse it (preserve grid/tree/thumbnail cache)
         if stacked_widget.count() > 1:
             try:
                 stacked_widget.widget(1)
-                # 기존 grid 참조가 있으면 로더만 재연결
+                # If there's an existing grid reference, just reconnect the loader
                 grid = getattr(viewer.explorer_state, "_explorer_grid", None)
                 if grid is not None:
                     with contextlib.suppress(Exception):
@@ -139,7 +155,7 @@ def _setup_explorer_mode(viewer) -> None:
             _logger.debug("switched to existing Explorer page")
             return
 
-        # 최초 생성 경로
+        # Initial creation path
         from PySide6.QtWidgets import QSplitter
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -151,7 +167,7 @@ def _setup_explorer_mode(viewer) -> None:
         except Exception as ex:
             _logger.debug("failed to attach thumb_loader: %s", ex)
 
-        # 설정 적용
+        # Apply settings
         try:
             if any(
                 viewer._settings_manager.has(key)
@@ -188,20 +204,20 @@ def _setup_explorer_mode(viewer) -> None:
         splitter.addWidget(grid)
         splitter.setSizes([300, 700])
 
-        # 신호 연결
+        # Connect signals
         tree.folder_selected.connect(
             lambda p: _on_explorer_folder_selected(viewer, p, grid)
         )
         grid.image_selected.connect(lambda p: _on_explorer_image_selected(viewer, p))
 
-        # Page 1 추가 및 전환
+        # Add Page 1 and switch to it
         stacked_widget.addWidget(splitter)
         stacked_widget.setCurrentIndex(1)
 
         viewer.explorer_state._explorer_tree = tree
         viewer.explorer_state._explorer_grid = grid
 
-        # 현재 폴더 자동 로드
+        # Auto-load current folder
         if viewer.image_files:
             current_dir = str(Path(viewer.image_files[0]).parent)
             tree.set_root_path(current_dir)
@@ -237,12 +253,12 @@ def _on_explorer_image_selected(viewer, image_path: str) -> None:
         image_path: Selected image path
     """
     try:
-        # View Mode로 전환하고 해당 이미지 표시
+        # Switch to View Mode and display the image
         if not viewer.explorer_state.view_mode:
             viewer.explorer_state.view_mode = True
             _update_ui_for_mode(viewer)
 
-        # 포커스 보장: 화살표/단축키 즉시 동작
+        # Ensure focus for immediate arrow key/shortcut response
         try:
             viewer.setFocus(Qt.FocusReason.OtherFocusReason)
             if hasattr(viewer, "canvas") and viewer.canvas is not None:
@@ -250,7 +266,7 @@ def _on_explorer_image_selected(viewer, image_path: str) -> None:
         except Exception:
             pass
 
-        # jump 거리 계산(디버깅용)
+        # Calculate jump distance (for debugging)
         try:
             cur_idx = viewer.current_index
             tgt_idx = (
@@ -267,11 +283,11 @@ def _on_explorer_image_selected(viewer, image_path: str) -> None:
         except Exception:
             pass
 
-        # image_path로 이미지 표시
+        # Display image by image_path
         if image_path in viewer.image_files:
             viewer.current_index = viewer.image_files.index(image_path)
         else:
-            # 새 폴더인 경우 먼저 폴더를 열기
+            # If it's a new folder, open it first
             new_folder = str(Path(image_path).parent)
             _logger.debug("explorer select: open_folder_at %s", new_folder)
             open_folder_at(viewer, new_folder)
@@ -284,7 +300,7 @@ def _on_explorer_image_selected(viewer, image_path: str) -> None:
             image_path,
         )
         viewer.display_image()
-        # 전환 직후 과도한 프리페치 방지
+        # Prevent excessive prefetching right after switching
         viewer.maintain_decode_window(back=0, ahead=1)
         _logger.debug("explorer image selected done: %s", image_path)
     except Exception as e:
@@ -305,7 +321,7 @@ def open_folder_at(viewer, folder_path: str) -> None:
             _logger.warning("not a directory: %s", folder_path)
             return
 
-        # 세션 상태 정리: Viewer/Thumbnail 로더 모두 대기/무시 목록 초기화
+        # Clear session state: Reset pending/ignore lists for both Viewer and Thumbnail loaders
         try:
             if hasattr(viewer, "loader"):
                 viewer.loader._ignored.clear()
@@ -326,7 +342,7 @@ def open_folder_at(viewer, folder_path: str) -> None:
         viewer.pixmap_cache.clear()
         viewer.current_index = -1
 
-        # 이미지 목록 재구성
+        # Rebuild image list
         files = []
         for name in os.listdir(folder_path):
             p = os.path.join(folder_path, name)
@@ -358,7 +374,7 @@ def open_folder_at(viewer, folder_path: str) -> None:
         viewer.setWindowTitle(
             f"Image Viewer - {os.path.basename(viewer.image_files[viewer.current_index])}"
         )
-        # 초기 프리패치도 경량화
+        # Lightweight initial prefetch
         viewer.maintain_decode_window(back=0, ahead=3)
 
         _logger.debug(

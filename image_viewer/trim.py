@@ -5,10 +5,10 @@ import pyvips  # type: ignore
 
 
 def detect_trim_box_stats(path: str, profile: str | None = None) -> tuple[int, int, int, int] | None:
-    """간단한 통계 기반 트림 박스 검출.
+    """Detects a trim box based on simple statistics.
 
-    이미지의 외곽 배경을 감안해 컨텐츠 최소 경계 사각형을 반환.
-    실패 시 None.
+    Returns the minimum bounding box of the content, considering the outer background of the image.
+    Returns None on failure.
     """
     try:
         img = pyvips.Image.new_from_file(path, access="sequential")
@@ -18,7 +18,7 @@ def detect_trim_box_stats(path: str, profile: str | None = None) -> tuple[int, i
         mem = img.write_to_memory()
         arr = np.frombuffer(mem, dtype=np.uint8).reshape(img.height, img.width, img.bands)
         gray = arr[..., :3].mean(axis=2)
-        # 간단 임계값: 흰색 배경 가정
+        # Simple threshold: assumes a white background
         thresh = 250 if profile == "aggressive" else 245
         mask = gray < thresh
         if not mask.any():

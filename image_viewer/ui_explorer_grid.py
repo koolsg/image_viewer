@@ -122,24 +122,24 @@ class ThumbnailGridWidget(QScrollArea):
         try:
             self._disk_cache_dir.mkdir(parents=True, exist_ok=True)
             p = self._get_disk_thumb_path(image_path)
-            # PNG로 저장(무손실, 품질 옵션 불필요)
+            # Save as PNG (lossless, no quality option needed)
             pixmap.save(str(p), "PNG")
         except Exception as ex:
             _logger.debug("disk cache save error for %s: %s", image_path, ex)
 
     def _touch_lru(self, image_path: str, pixmap: QPixmap) -> None:
         try:
-            # 갱신 시 order 이동
+            # Move order on update
             if image_path in self._thumb_cache:
                 try:
                     self._thumb_cache.move_to_end(image_path)
                 except Exception:
-                    # OrderedDict가 아니면 재삽입
+                    # Re-insert if not OrderedDict
                     self._thumb_cache.pop(image_path, None)
                     self._thumb_cache[image_path] = pixmap
             else:
                 self._thumb_cache[image_path] = pixmap
-            # 용량 초과 시 FIFO 제거
+            # Remove FIFO if capacity is exceeded
             while len(self._thumb_cache) > self._max_thumb_cache:
                 try:
                     self._thumb_cache.popitem(last=False)
@@ -150,11 +150,11 @@ class ThumbnailGridWidget(QScrollArea):
 
     # Public API --------------------------------------------------------------
     def set_loader(self, loader) -> None:
-        """Loader 인스턴스 연결 및 시그널 바인딩.
-        loader가 None이면 기존 연결을 해제한다.
+        """Connect a Loader instance and bind its signals.
+        If loader is None, disconnects the existing one.
         """
         try:
-            # 기존 연결 해제
+            # Disconnect existing connection
             try:
                 if self._loader is not None:
                     self._loader.image_decoded.disconnect(self._on_thumbnail_ready)
@@ -171,11 +171,11 @@ class ThumbnailGridWidget(QScrollArea):
             _logger.debug("error setting loader: %s", ex)
 
     def load_folder(self, folder_path: str) -> None:
-        """폴더 내 이미지들을 비동기 로딩하여 그리드로 표시"""
+        """Asynchronously load images from a folder and display them in a grid."""
         try:
             self._clear_grid()
 
-            # 폴더 내 이미지 수집
+            # Collect images from the folder
             images: list[str] = []
             try:
                 folder = Path(folder_path)
@@ -197,7 +197,7 @@ class ThumbnailGridWidget(QScrollArea):
                 _logger.debug("no images found in: %s", folder_path)
                 return
 
-            # 동적 열 계산 및 버튼 생성
+            # Dynamically calculate columns and create buttons
             self._image_paths = images
             cols = self._compute_columns()
             max_row = -1
@@ -216,17 +216,17 @@ class ThumbnailGridWidget(QScrollArea):
                 self._layout.addWidget(btn, row, col)
                 self._thumb_buttons[image_path] = btn
 
-                # 캐시에 있으면 즉시, 아니면 요청
+                # If in cache, use immediately; otherwise, request
                 if image_path in self._thumb_cache:
                     self._set_button_icon(btn, self._thumb_cache[image_path])
                 else:
                     self._request_thumbnail(image_path)
 
-            # 하단 스트레치
+            # Bottom stretch
             if max_row >= 0:
                 self._layout.setRowStretch(max_row + 1, 1)
 
-            # 안전 재배치(뷰 크기 변화 대응)
+            # Safe relayout (to handle view size changes)
             self._relayout()
 
             _logger.debug("grid loaded: folder=%s, images=%d", folder_path, len(images))
@@ -234,7 +234,7 @@ class ThumbnailGridWidget(QScrollArea):
             _logger.error("failed to load_folder: %s", ex)
 
     def set_thumbnail_size_wh(self, width: int, height: int) -> None:
-        """썸네일 가로/세로 크기 설정(픽셀)"""
+        """Set thumbnail width/height in pixels."""
         try:
             w = max(32, min(1024, int(width)))
             h = max(32, min(1024, int(height)))
@@ -248,11 +248,11 @@ class ThumbnailGridWidget(QScrollArea):
             _logger.debug("set_thumbnail_size_wh failed: %s", ex)
 
     def set_thumbnail_size(self, size: int) -> None:
-        """정사각형 크기 설정과의 하위 호환 API"""
+        """Backward compatibility API for setting square size."""
         self.set_thumbnail_size_wh(size, size)
 
     def set_horizontal_spacing(self, spacing: int) -> None:
-        """수평 간격 설정"""
+        """Set horizontal spacing."""
         try:
             spacing = max(0, min(64, int(spacing)))
             try:
@@ -280,7 +280,7 @@ class ThumbnailGridWidget(QScrollArea):
         try:
             w = self.viewport().width()
             if w <= 0:
-                return 4  # 초기 안전값
+                return 4  # Initial safe value
             m = self._layout.contentsMargins()
             try:
                 hs = self._layout.horizontalSpacing()
@@ -299,7 +299,7 @@ class ThumbnailGridWidget(QScrollArea):
     def _relayout(self) -> None:
         try:
             cols = self._compute_columns()
-            # 모든 아이템 제거(위젯은 보존)
+            # Remove all items (preserving widgets)
             while self._layout.count() > 0:
                 self._layout.takeAt(0)
             max_row = -1
@@ -326,10 +326,10 @@ class ThumbnailGridWidget(QScrollArea):
 
     def _request_thumbnail(self, image_path: str) -> None:
         try:
-            # 1) 디스크 캐시 먼저 확인
+            # 1) Check disk cache first
             pix = self._load_disk_thumb(image_path)
             if pix is not None and not pix.isNull():
-                # 그리드가 보일 때만 버튼과 LRU 갱신(보이지 않으면 클릭 UX와 무관)
+                # Update button and LRU only if the grid is visible (irrelevant to click UX if not)
                 if self.isVisible():
                     if image_path in self._thumb_buttons:
                         self._set_button_icon(self._thumb_buttons[image_path], pix)
@@ -337,7 +337,7 @@ class ThumbnailGridWidget(QScrollArea):
                 _logger.debug("thumbnail from disk cache: %s", image_path)
                 return
 
-            # 2) 로더 요청
+            # 2) Request from loader
             if not self._loader:
                 _logger.debug(
                     "loader not set, skipping thumbnail request for %s", image_path
@@ -360,18 +360,18 @@ class ThumbnailGridWidget(QScrollArea):
                 return
             if image_data is None:
                 return
-            # numpy 배열을 QImage/QPixmap으로 변환
+            # Convert numpy array to QImage/QPixmap
             try:
                 height, width, _ = image_data.shape
                 bytes_per_line = 3 * width
                 q_image = QImage(
                     image_data.data, width, height, bytes_per_line, QImage.Format_RGB888
                 )
-                # 디스크 저장은 워커 스레드에서 비동기로 수행
+                # Save to disk asynchronously in a worker thread
                 self._save_disk_thumb_qimage_async(path, q_image)
                 pixmap = QPixmap.fromImage(q_image)
                 if not pixmap.isNull() and self.isVisible():
-                    # LRU 업데이트 + 버튼 반영은 보일 때만
+                    # Update LRU + button only when visible
                     self._touch_lru(path, pixmap)
                     if path in self._thumb_buttons:
                         btn = self._thumb_buttons[path]

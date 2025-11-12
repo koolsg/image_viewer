@@ -24,7 +24,7 @@ def _load_env_file(env_path: str = ".env") -> None:
                 if k and v and k not in os.environ:
                     os.environ[k] = v
     except (OSError, UnicodeError) as e:
-        # .env 로드 실패는 치명적이지 않음
+        # .env load failure is not critical
         _logger.debug("env load skipped: %s", e)
 
 

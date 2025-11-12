@@ -12,10 +12,10 @@ _logger = get_logger("loader")
 
 
 class Loader(QObject):
-    """파일 I/O 스케줄링 + 다중 프로세스 디코딩을 관리하는 로더.
+    """Loader that manages file I/O scheduling and multi-process decoding.
 
-    decode_fn은 (path, target_width, target_height, size) -> (path, array|None, error|None)
-    형태의 픽클 가능한 최상위 함수를 받아야 한다.
+    The decode_fn must be a pickleable top-level function of the form:
+    (path, target_width, target_height, size) -> (path, array|None, error|None)
     """
 
     image_decoded = Signal(str, object, object)  # path, numpy_array, error
@@ -23,7 +23,7 @@ class Loader(QObject):
     def __init__(self, decode_fn: Callable[[str, int | None, int | None, str], tuple]):
         super().__init__()
         self._decode_fn = decode_fn
-        # 프로세스 풀(일반 디코딩)
+        # Process pool (for general decoding)
         self.executor = ProcessPoolExecutor()
         max_io = max(2, min(4, (os.cpu_count() or 2)))
         self.io_pool = ThreadPoolExecutor(max_workers=max_io)
@@ -103,7 +103,7 @@ class Loader(QObject):
             if path in self._ignored:
                 _logger.debug("request_load skip(ignored): path=%s", path)
                 return
-            # pending이어도 새로운 req_id로 재요청 허용 (이전 결과는 stale로 드랍)
+            # Allow re-request with a new req_id even if pending (previous result will be dropped as stale)
             if path not in self._pending:
                 self._pending.add(path)
             req_id = self._next_id

@@ -169,7 +169,7 @@ class ImageCanvas(QGraphicsView):
                 with contextlib.suppress(Exception):
                     event.accept()
                 return
-        # 중클릭: 전역 보기로 스냅 (레거시 동작 유지)
+        # Middle-click: Snap to global view (maintaining legacy behavior)
         if (btn == Qt.MiddleButton) or (btns is not None and (btns & Qt.MiddleButton)):
             viewer = self.window()
             if hasattr(viewer, "snap_to_global_view"):
@@ -179,7 +179,7 @@ class ImageCanvas(QGraphicsView):
                     return
                 except Exception:
                     pass
-        # 보조 버튼: 확대/축소 (레거시 매핑 유지)
+        # Auxiliary buttons: Zoom in/out (maintaining legacy mapping)
         xbtn1 = getattr(Qt, "XButton1", None)
         xbtn2 = getattr(Qt, "XButton2", None)
         if (xbtn1 is not None) and (
@@ -200,10 +200,10 @@ class ImageCanvas(QGraphicsView):
                 return
             except Exception:
                 pass
-        # 좌클릭: 프레스-줌 (레거시 동작: 커서 기준 확대 및 복원 지원)
+        # Left-click: Press-to-zoom (legacy behavior: zoom at cursor and restore)
         if (btn == Qt.LeftButton) and self._zoom_saved is None:
             try:
-                # 현재 프리셋 저장 후 기준 배율 계산
+                # Save current preset and calculate baseline scale
                 self._preset_before_press = getattr(self, "_preset_mode", "fit")
                 baseline = (
                     self.get_fit_scale()
@@ -222,7 +222,7 @@ class ImageCanvas(QGraphicsView):
                 mul = 2.0
             self._zoom_saved = float(baseline)
 
-            # 커서 위치 계산 (뷰 좌표 → 씬 → 아이템)
+            # Calculate cursor position (view coords -> scene -> item)
             view_qpoint = None
             try:
                 if hasattr(event, "position"):
@@ -238,12 +238,12 @@ class ImageCanvas(QGraphicsView):
                 self._pix_item.mapFromScene(scene_pt) if scene_pt is not None else None
             )
 
-            # 실제 모드로 전환 후 확대 적용
+            # Switch to actual mode and apply zoom
             self._preset_mode = "actual"
             self._zoom = max(0.05, min(float(baseline) * float(mul), 20.0))
             self.apply_current_view()
 
-            # 커서 정렬: 확대 후에도 같은 지점을 커서 아래에 유지 (레거시와 동등)
+            # Align cursor: keep the same point under the cursor after zooming (equivalent to legacy)
             if item_pt is not None and view_qpoint is not None:
                 try:
                     new_scene_pt = self._pix_item.mapToScene(item_pt)
@@ -347,7 +347,7 @@ class ImageCanvas(QGraphicsView):
                 self._rotation = float(degrees)
             except Exception:
                 self._rotation = 0.0
-        # -360~360 범위로 정리 (과도 누적 방지)
+        # Normalize to -360~360 range (to prevent excessive accumulation)
         try:
             while self._rotation <= -360.0:
                 self._rotation += 360.0
@@ -386,7 +386,7 @@ class ImageCanvas(QGraphicsView):
 
     def drawForeground(self, painter, rect):
         try:
-            # ImageViewer는 QStackedWidget 안에 위치할 수 있으므로 parent() 대신 window()에서 오버레이 정보를 읽는다.
+            # Since ImageViewer can be inside a QStackedWidget, read overlay info from window() instead of parent().
             viewer = self.window()
             title = getattr(viewer, "_overlay_title", "")
             info = getattr(viewer, "_overlay_info", "")

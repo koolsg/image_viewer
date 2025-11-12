@@ -33,8 +33,9 @@ from image_viewer.ui_menus import build_menus
 from image_viewer.ui_settings import SettingsDialog
 
 # --- CLI logging options -----------------------------------------------------
-# Qt가 알 수 없는 옵션으로 종료되는 걸 막기 위해, 우리가 사용하는 옵션만 선제적으로 파싱해
-# 환경변수(IMAGE_VIEWER_LOG_LEVEL, IMAGE_VIEWER_LOG_CATS)에 반영하고 sys.argv에서 제거한다.
+# To prevent Qt from exiting due to unknown options, we preemptively parse
+# our own options, reflect them in environment variables (IMAGE_VIEWER_LOG_LEVEL,
+# IMAGE_VIEWER_LOG_CATS), and remove them from sys.argv.
 
 
 def _apply_cli_logging_options() -> None:
@@ -72,7 +73,7 @@ def _apply_cli_logging_options() -> None:
             _os.environ["IMAGE_VIEWER_LOG_CATS"] = cats
         _sys.argv[:] = rest
     except Exception:
-        # 로깅 설정 실패는 앱 실행을 막지 않는다.
+        # Failing to set up logging should not prevent the app from running.
         pass
 
 
@@ -209,13 +210,13 @@ class ImageViewer(QMainWindow):
         idx = self.current_index + 1
         total = len(self.image_files)
 
-        # 상태 파츠 생성
+        # Create status parts
         parts = self._build_status_parts()
 
         if extra:
             parts.append(str(extra))
 
-        # 오버레이 정보 설정
+        # Set overlay information
         self._overlay_title = fname
         if parts:
             self._overlay_info = f"({idx}/{total})  {'  '.join(parts)}"
@@ -260,7 +261,7 @@ class ImageViewer(QMainWindow):
     def update_pixmap(self, pixmap: QPixmap):
         if pixmap and not pixmap.isNull():
             self.canvas.set_pixmap(pixmap)
-            # 상태는 내부 로직으로 구성되므로 별도 정보 없이 갱신만 호출
+            # The status is constructed from internal logic, so just call update without extra info
             self._update_status()
         else:
             self._update_status("Image load failed")
@@ -274,18 +275,18 @@ class ImageViewer(QMainWindow):
         elif key == Qt.Key.Key_Left:
             self.prev_image()
         elif key == Qt.Key.Key_A:
-            # 좌측 90도 회전
+            # Rotate 90 degrees to the left
             with contextlib.suppress(Exception):
                 self.canvas.rotate_by(-90)
         elif key == Qt.Key.Key_D:
-            # 우측 90도 회전
+            # Rotate 90 degrees to the right
             with contextlib.suppress(Exception):
                 self.canvas.rotate_by(90)
         elif key == Qt.Key.Key_Delete:
             self.delete_current_file()
         elif key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
-            # 전체 화면 토글: 전체 화면 상태에서 Enter/Return으로 빠져나오기 포함
-            self.toggle_fullscreen()
+            # Toggle between View Mode <-> Explorer Mode
+            self.toggle_view_mode()
         else:
             super().keyPressEvent(event)
 
@@ -310,15 +311,15 @@ class ImageViewer(QMainWindow):
         except Exception:
             pass
 
-    # 탐색
+    # Navigation
     def next_image(self):
         if not self.image_files:
             return
         n = len(self.image_files)
         if self.current_index >= n - 1:
-            # 마지막이면 아무 작업도 하지 않음(랩어라운드 금지)
+            # If it's the last image, do nothing (no wraparound)
             return
-        # 현재 이미지가 로딩 중이면 무시
+        # If the current image is still loading, ignore the input
         if self.current_index >= 0 and self.current_index < len(self.image_files):
             current_path = self.image_files[self.current_index]
             if current_path not in self.pixmap_cache:
@@ -332,9 +333,9 @@ class ImageViewer(QMainWindow):
         if not self.image_files:
             return
         if self.current_index <= 0:
-            # 첫 번째면 아무 작업도 하지 않음(랩어라운드 금지)
+            # If it's the first image, do nothing (no wraparound)
             return
-        # 현재 이미지가 로딩 중이면 무시
+        # If the current image is still loading, ignore the input
         if self.current_index >= 0 and self.current_index < len(self.image_files):
             current_path = self.image_files[self.current_index]
             if current_path not in self.pixmap_cache:
@@ -366,7 +367,7 @@ class ImageViewer(QMainWindow):
         self.loader.shutdown()
         event.accept()
 
-    # 보기 명령
+    # View commands
     def toggle_fit(self):
         self.choose_fit()
 
@@ -401,10 +402,10 @@ class ImageViewer(QMainWindow):
             if self.canvas.is_fit():
                 self.canvas.apply_current_view()
 
-    # 디코딩 전략 토글: 썸네일 모드 on/off (체크=썸네일)
+    # Toggle decoding strategy: thumbnail mode on/off (checked = thumbnail)
     def toggle_fast_view(self):
         is_fast_view = self.fast_view_action.isChecked()
-        # 전략 전환
+        # Switch strategy
         if is_fast_view:
             self.decoding_strategy = FastViewStrategy()
             logger.debug("switched to FastViewStrategy")
@@ -412,10 +413,10 @@ class ImageViewer(QMainWindow):
             self.decoding_strategy = FullStrategy()
             logger.debug("switched to FullStrategy")
 
-        # 설정 저장: 썸네일 모드 상태만 저장
+        # Save setting: only save the thumbnail mode state
         self._save_settings_key("fast_view_enabled", is_fast_view)
 
-        # 전략에 따라 고품질 축소 옵션 활성화/비활성화
+        # Enable/disable high-quality downscale option based on the strategy
         self.hq_downscale_action.setEnabled(
             self.decoding_strategy.supports_hq_downscale()
         )
@@ -426,9 +427,9 @@ class ImageViewer(QMainWindow):
             self.hq_downscale_action.setChecked(False)
             self.canvas._hq_downscale = False
 
-        # 현재 캐시를 비워 새 전략으로 비교가 즉시 가능하도록 함
+        # Clear the current cache to allow immediate comparison with the new strategy
         self.pixmap_cache.clear()
-        # 현재 이미지를 재표시 및 프리패치 재요청
+        # Redisplay the current image and re-request prefetching
         self.display_image()
         self.maintain_decode_window()
 
@@ -438,7 +439,7 @@ class ImageViewer(QMainWindow):
         else:
             self.choose_actual()
 
-    # 배경색 설정/동기화
+    # Set/sync background color
     def _apply_background(self):
         with contextlib.suppress(Exception):
             self.canvas.setBackgroundBrush(self._bg_color)
@@ -477,13 +478,13 @@ class ImageViewer(QMainWindow):
 
     def choose_background_custom(self):
         try:
-            col = QColorDialog.getColor(self._bg_color, self, "배경색 선택")
+            col = QColorDialog.getColor(self._bg_color, self, "Select Background Color")
         except Exception:
             col = None
         if col and col.isValid():
             self.set_background_qcolor(col)
 
-    # 설정: 프레스 줌 배율
+    # Settings: Press zoom multiplier
     def set_press_zoom_multiplier(self, value: float):
         try:
             v = float(value)
@@ -501,8 +502,8 @@ class ImageViewer(QMainWindow):
         current = getattr(self.canvas, "_press_zoom_multiplier", 2.0)
         val, ok = QInputDialog.getDouble(
             self,
-            "프레스 줌 배율",
-            "배율을 입력하세요 (1.0-10.0):",
+            "Press Zoom Multiplier",
+            "Enter multiplier (1.0-10.0):",
             float(current),
             0.1,
             10.0,
@@ -554,16 +555,16 @@ class ImageViewer(QMainWindow):
 
     # --------------- Explorer Mode ----------------
     def toggle_view_mode(self) -> None:
-        """View Mode <-> Explorer Mode 전환"""
+        """Toggle between View Mode <-> Explorer Mode"""
         toggle_view_mode(self)
 
     def _update_ui_for_mode(self) -> None:
-        """모드 변경에 따라 UI 재구성"""
+        """Reconfigure UI based on the current mode"""
         from image_viewer.explorer_mode_operations import _update_ui_for_mode
         _update_ui_for_mode(self)
 
     def _setup_view_mode(self) -> None:
-        """View Mode 설정: 중앙 캔버스만 표시"""
+        """Set up View Mode: show only the central canvas"""
         from image_viewer.explorer_mode_operations import _setup_view_mode
         _setup_view_mode(self)
 
@@ -617,17 +618,17 @@ class ImageViewer(QMainWindow):
             logger.debug("apply_thumbnail_settings failed: %s", e)
 
     def _on_explorer_folder_selected(self, folder_path: str, grid) -> None:
-        """탐색기에서 폴더 선택 시"""
+        """Handle folder selection in the explorer."""
         from image_viewer.explorer_mode_operations import _on_explorer_folder_selected
         _on_explorer_folder_selected(self, folder_path, grid)
 
     def _on_explorer_image_selected(self, image_path: str) -> None:
-        """탐색기에서 이미지 선택 시"""
+        """Handle image selection in the explorer."""
         from image_viewer.explorer_mode_operations import _on_explorer_image_selected
         _on_explorer_image_selected(self, image_path)
 
     def open_folder_at(self, folder_path: str) -> None:
-        """특정 폴더를 직접 열기 (탐색기 모드에서 사용)"""
+        """Open a specific folder directly (used in explorer mode)."""
         open_folder_at(self, folder_path)
 
 
