@@ -1,5 +1,6 @@
 from PySide6.QtWidgets import (
     QDialog,
+    QDoubleSpinBox,
     QFormLayout,
     QHBoxLayout,
     QLabel,
@@ -55,8 +56,16 @@ class SettingsDialog(QDialog):
 
         self._pages.addWidget(self._page_thumb)
 
-        # Placeholder Page: View (for future expansion)
+        # Placeholder Page: View (for mouse + view tweaks)
         self._page_view = QWidget()
+        view_form = QFormLayout(self._page_view)
+
+        self._spin_press_zoom = QDoubleSpinBox()
+        self._spin_press_zoom.setRange(1.0, 10.0)
+        self._spin_press_zoom.setSingleStep(0.1)
+        self._spin_press_zoom.setDecimals(2)
+        view_form.addRow(QLabel("Left-click zoom multiplier"), self._spin_press_zoom)
+
         self._pages.addWidget(self._page_view)
 
         # Navigation behavior
@@ -70,6 +79,7 @@ class SettingsDialog(QDialog):
         self._spin_thumb_w.valueChanged.connect(self._on_thumb_changed)
         self._spin_thumb_h.valueChanged.connect(self._on_thumb_changed)
         self._spin_hspacing.valueChanged.connect(self._on_thumb_changed)
+        self._spin_press_zoom.valueChanged.connect(self._on_view_changed)
 
     def _init_values(self):
         try:
@@ -88,17 +98,16 @@ class SettingsDialog(QDialog):
                     hspacing = hs
 
             # Fallback to persisted settings (back-compat: thumbnail_size)
-            width = int(
-                self._viewer._settings.get("thumbnail_width", self._viewer._settings.get("thumbnail_size", width))
-            )
-            height = int(
-                self._viewer._settings.get("thumbnail_height", self._viewer._settings.get("thumbnail_size", height))
-            )
-            hspacing = int(self._viewer._settings.get("thumbnail_hspacing", hspacing))
+            width = int(self._viewer._settings_manager.get("thumbnail_width"))
+            height = int(self._viewer._settings_manager.get("thumbnail_height"))
+            hspacing = int(self._viewer._settings_manager.get("thumbnail_hspacing"))
 
             self._spin_thumb_w.setValue(width)
             self._spin_thumb_h.setValue(height)
             self._spin_hspacing.setValue(hspacing)
+            self._spin_press_zoom.setValue(
+                float(self._viewer._settings_manager.get("press_zoom_multiplier"))
+            )
         except Exception as ex:
             _logger.debug("init settings failed: %s", ex)
 
@@ -111,3 +120,10 @@ class SettingsDialog(QDialog):
                 self._viewer.apply_thumbnail_settings(width=width, height=height, hspacing=hspacing)
         except Exception as ex:
             _logger.debug("apply settings failed: %s", ex)
+
+    def _on_view_changed(self, *_):
+        try:
+            if hasattr(self._viewer, "set_press_zoom_multiplier"):
+                self._viewer.set_press_zoom_multiplier(float(self._spin_press_zoom.value()))
+        except Exception as ex:
+            _logger.debug("apply view settings failed: %s", ex)

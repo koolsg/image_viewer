@@ -10,8 +10,8 @@ try:
     import pyvips  # type: ignore
 except Exception:
     pyvips = None  # type: ignore
-from math import pow
 import contextlib
+from math import pow
 
 _logger = get_logger("ui_canvas")
 
@@ -36,7 +36,7 @@ class ImageCanvas(QGraphicsView):
         self._hq_downscale = False
         self._hq_pixmap = None
         self._zoom_saved = None
-        self._press_zoom_multiplier = 2.0
+        self._press_zoom_multiplier = 3.0
         self._rotation = 0.0
         # Right-click drag state
         self._rc_drag_active = False

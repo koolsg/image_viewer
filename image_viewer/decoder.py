@@ -1,8 +1,8 @@
 import contextlib
 import os
+from typing import Any
 
 import numpy as np
-from typing import Any
 
 # --- Optional .env support to load LIBVIPS_BIN for Windows child processes ---
 from image_viewer.logger import get_logger

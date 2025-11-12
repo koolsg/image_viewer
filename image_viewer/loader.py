@@ -1,3 +1,4 @@
+import contextlib
 import os
 import threading
 from collections.abc import Callable
@@ -6,7 +7,6 @@ from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from PySide6.QtCore import QObject, Signal
 
 from .logger import get_logger
-import contextlib
 
 _logger = get_logger("loader")
 
