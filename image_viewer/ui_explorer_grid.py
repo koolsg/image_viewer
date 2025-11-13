@@ -233,6 +233,25 @@ class ThumbnailGridWidget(QScrollArea):
         except Exception as ex:
             _logger.error("failed to load_folder: %s", ex)
 
+    def resume_pending_thumbnails(self) -> None:
+        """Re-issue thumbnail requests for items that are still empty."""
+        try:
+            if not self._image_paths:
+                return
+            for path in self._image_paths:
+                btn = self._thumb_buttons.get(path)
+                if btn is None:
+                    continue
+                try:
+                    icon = btn.icon()
+                except Exception:
+                    icon = None
+                has_icon = icon is not None and not icon.isNull()
+                if not has_icon:
+                    self._request_thumbnail(path)
+        except Exception as ex:
+            _logger.debug("resume_pending_thumbnails failed: %s", ex)
+
     def set_thumbnail_size_wh(self, width: int, height: int) -> None:
         """Set thumbnail width/height in pixels."""
         try:

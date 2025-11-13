@@ -40,38 +40,19 @@ from image_viewer.ui_settings import SettingsDialog
 
 def _apply_cli_logging_options() -> None:
     try:
+        import argparse
         import os as _os
         import sys as _sys
 
-        level = None
-        cats = None
-        rest = [_sys.argv[0]]
-        i = 1
-        while i < len(_sys.argv):
-            a = _sys.argv[i]
-            if a.startswith("--log-level="):
-                level = a.split("=", 1)[1].strip()
-                i += 1
-                continue
-            if a == "--log-level" and i + 1 < len(_sys.argv):
-                level = _sys.argv[i + 1].strip()
-                i += 2
-                continue
-            if a.startswith("--log-cats="):
-                cats = a.split("=", 1)[1].strip()
-                i += 1
-                continue
-            if a == "--log-cats" and i + 1 < len(_sys.argv):
-                cats = _sys.argv[i + 1].strip()
-                i += 2
-                continue
-            rest.append(a)
-            i += 1
-        if level:
-            _os.environ["IMAGE_VIEWER_LOG_LEVEL"] = level
-        if cats:
-            _os.environ["IMAGE_VIEWER_LOG_CATS"] = cats
-        _sys.argv[:] = rest
+        parser = argparse.ArgumentParser(description='Image Viewer', add_help=False)
+        parser.add_argument('--log-level', help='Set log level')
+        parser.add_argument('--log-cats', help='Set log categories')
+        args, remaining = parser.parse_known_args()
+        if args.log_level:
+            _os.environ["IMAGE_VIEWER_LOG_LEVEL"] = args.log_level
+        if args.log_cats:
+            _os.environ["IMAGE_VIEWER_LOG_CATS"] = args.log_cats
+        _sys.argv[:] = [_sys.argv[0]] + remaining
     except Exception:
         # Failing to set up logging should not prevent the app from running.
         pass

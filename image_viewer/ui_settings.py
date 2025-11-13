@@ -6,8 +6,10 @@ from PySide6.QtWidgets import (
     QLabel,
     QListWidget,
     QListWidgetItem,
+    QPushButton,
     QSpinBox,
     QStackedWidget,
+    QVBoxLayout,
     QWidget,
 )
 
@@ -33,7 +35,12 @@ class SettingsDialog(QDialog):
         root.addWidget(self._nav)
 
         self._pages = QStackedWidget()
-        root.addWidget(self._pages, 1)
+
+        pages_container = QWidget()
+        pages_layout = QVBoxLayout(pages_container)
+        pages_layout.setContentsMargins(0, 0, 0, 0)
+        pages_layout.addWidget(self._pages, 1)
+        root.addWidget(pages_container, 1)
 
         # Page: Thumbnail
         self._page_thumb = QWidget()
@@ -68,18 +75,33 @@ class SettingsDialog(QDialog):
 
         self._pages.addWidget(self._page_view)
 
+        button_row = QHBoxLayout()
+        button_row.addStretch()
+        self._btn_apply = QPushButton("Apply && Save")
+        self._btn_cancel = QPushButton("Cancel")
+        self._btn_apply.setEnabled(False)
+        button_row.addWidget(self._btn_apply)
+        button_row.addWidget(self._btn_cancel)
+        pages_layout.addLayout(button_row)
+
         # Navigation behavior
         self._nav.currentRowChanged.connect(self._pages.setCurrentIndex)
         self._nav.setCurrentRow(0)
 
         # Initialize from settings/grid
         self._init_values()
+        self._initial_settings = self._collect_settings()
+        self._dirty = False
 
-        # Apply on change immediately
-        self._spin_thumb_w.valueChanged.connect(self._on_thumb_changed)
-        self._spin_thumb_h.valueChanged.connect(self._on_thumb_changed)
-        self._spin_hspacing.valueChanged.connect(self._on_thumb_changed)
-        self._spin_press_zoom.valueChanged.connect(self._on_view_changed)
+        # Track changes
+        self._spin_thumb_w.valueChanged.connect(self._on_setting_changed)
+        self._spin_thumb_h.valueChanged.connect(self._on_setting_changed)
+        self._spin_hspacing.valueChanged.connect(self._on_setting_changed)
+        self._spin_press_zoom.valueChanged.connect(self._on_setting_changed)
+
+        # Button handlers
+        self._btn_apply.clicked.connect(self._on_apply_clicked)
+        self._btn_cancel.clicked.connect(self.reject)
 
     def _init_values(self):
         try:
@@ -111,19 +133,35 @@ class SettingsDialog(QDialog):
         except Exception as ex:
             _logger.debug("init settings failed: %s", ex)
 
-    def _on_thumb_changed(self, *_):
+    def _collect_settings(self) -> dict[str, float | int]:
+        return {
+            "thumbnail_width": int(self._spin_thumb_w.value()),
+            "thumbnail_height": int(self._spin_thumb_h.value()),
+            "thumbnail_hspacing": int(self._spin_hspacing.value()),
+            "press_zoom_multiplier": float(self._spin_press_zoom.value()),
+        }
+
+    def _on_setting_changed(self, *_):
         try:
-            width = int(self._spin_thumb_w.value())
-            height = int(self._spin_thumb_h.value())
-            hspacing = int(self._spin_hspacing.value())
+            current = self._collect_settings()
+            self._dirty = current != self._initial_settings
+            self._btn_apply.setEnabled(self._dirty)
+        except Exception as ex:
+            _logger.debug("settings change tracking failed: %s", ex)
+
+    def _on_apply_clicked(self):
+        try:
+            settings = self._collect_settings()
             if hasattr(self._viewer, "apply_thumbnail_settings"):
-                self._viewer.apply_thumbnail_settings(width=width, height=height, hspacing=hspacing)
+                self._viewer.apply_thumbnail_settings(
+                    width=settings["thumbnail_width"],
+                    height=settings["thumbnail_height"],
+                    hspacing=settings["thumbnail_hspacing"],
+                )
+            if hasattr(self._viewer, "set_press_zoom_multiplier"):
+                self._viewer.set_press_zoom_multiplier(settings["press_zoom_multiplier"])
+            self._initial_settings = settings
+            self._dirty = False
+            self.accept()
         except Exception as ex:
             _logger.debug("apply settings failed: %s", ex)
-
-    def _on_view_changed(self, *_):
-        try:
-            if hasattr(self._viewer, "set_press_zoom_multiplier"):
-                self._viewer.set_press_zoom_multiplier(float(self._spin_press_zoom.value()))
-        except Exception as ex:
-            _logger.debug("apply view settings failed: %s", ex)

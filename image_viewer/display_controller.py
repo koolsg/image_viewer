@@ -87,6 +87,10 @@ class DisplayController:
             )
             self.display_image()
             self.maintain_decode_window(back=0, ahead=5)
+            try:
+                viewer.enter_fullscreen()
+            except Exception:
+                pass
             _logger.debug(
                 "folder opened: %s, images=%d", dir_path, len(viewer.image_files)
             )

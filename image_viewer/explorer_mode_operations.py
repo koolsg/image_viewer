@@ -149,6 +149,7 @@ def _setup_explorer_mode(viewer) -> None:
                 if grid is not None:
                     with contextlib.suppress(Exception):
                         grid.set_loader(viewer.thumb_loader)
+                        grid.resume_pending_thumbnails()
             except Exception:
                 pass
             stacked_widget.setCurrentIndex(1)
@@ -222,6 +223,8 @@ def _setup_explorer_mode(viewer) -> None:
             current_dir = str(Path(viewer.image_files[0]).parent)
             tree.set_root_path(current_dir)
             grid.load_folder(current_dir)
+            with contextlib.suppress(Exception):
+                grid.resume_pending_thumbnails()
 
         _logger.debug("switched to Explorer Mode")
     except Exception as e:
