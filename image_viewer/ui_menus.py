@@ -116,7 +116,7 @@ def build_menus(viewer: "ImageViewer") -> None:
     view_menu.addSeparator()
     view_menu.addAction(viewer.explorer_mode_action)
 
-    # Fullscreen (no shortcut - Enter now toggles View/Explorer Mode instead)
+    # Fullscreen toggle (no default shortcut; use menu or Esc)
     viewer.fullscreen_action = QAction("Fullscreen", viewer, checkable=True)
     viewer.fullscreen_action.triggered.connect(viewer.toggle_fullscreen)
     view_menu.addAction(viewer.fullscreen_action)

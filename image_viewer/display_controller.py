@@ -33,6 +33,30 @@ class DisplayController:
         if not dir_path:
             return
 
+        # If currently in Explorer mode, reuse the explorer workflow: open folder,
+        # refresh tree/grid, and stop (no automatic fullscreen or image display).
+        is_explorer_mode = not getattr(viewer.explorer_state, "view_mode", True)
+        if is_explorer_mode:
+            try:
+                viewer.open_folder_at(dir_path)
+            except Exception:
+                return
+            tree = getattr(viewer.explorer_state, "_explorer_tree", None)
+            grid = getattr(viewer.explorer_state, "_explorer_grid", None)
+            try:
+                if tree is not None:
+                    tree.set_root_path(dir_path)
+            except Exception:
+                pass
+            try:
+                if grid is not None:
+                    grid.load_folder(dir_path)
+                    with contextlib.suppress(Exception):
+                        grid.resume_pending_thumbnails()
+            except Exception:
+                pass
+            return
+
         try:
             if hasattr(viewer, "loader"):
                 try:
@@ -88,7 +112,8 @@ class DisplayController:
             self.display_image()
             self.maintain_decode_window(back=0, ahead=5)
             try:
-                viewer.enter_fullscreen()
+                if getattr(viewer.explorer_state, "view_mode", True):
+                    viewer.enter_fullscreen()
             except Exception:
                 pass
             _logger.debug(

@@ -94,14 +94,6 @@ def _setup_view_mode(viewer) -> None:
                 except Exception as e2:
                     _logger.error("failed to recreate canvas: %s", e2)
 
-        # View Mode always enters fullscreen
-        try:
-            if not viewer.isFullScreen():
-                viewer.enter_fullscreen()
-                _logger.debug("View Mode: entered fullscreen")
-        except Exception as e:
-            _logger.warning("failed to enter fullscreen in view mode: %s", e)
-
     except Exception as e:
         _logger.error("failed to setup view mode: %s", e)
 
@@ -115,14 +107,6 @@ def _setup_explorer_mode(viewer) -> None:
     try:
         from image_viewer.ui_explorer_grid import ThumbnailGridWidget
         from image_viewer.ui_explorer_tree import FolderTreeWidget
-
-        # Explorer Mode exits fullscreen
-        try:
-            if viewer.isFullScreen():
-                viewer.exit_fullscreen()
-                _logger.debug("Explorer Mode: exited fullscreen")
-        except Exception as e:
-            _logger.warning("failed to exit fullscreen in explorer mode: %s", e)
 
         current_widget = viewer.centralWidget()
         stacked_widget = None
@@ -303,6 +287,8 @@ def _on_explorer_image_selected(viewer, image_path: str) -> None:
             image_path,
         )
         viewer.display_image()
+        with contextlib.suppress(Exception):
+            viewer.enter_fullscreen()
         # Prevent excessive prefetching right after switching
         viewer.maintain_decode_window(back=0, ahead=1)
         _logger.debug("explorer image selected done: %s", image_path)

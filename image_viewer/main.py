@@ -95,7 +95,7 @@ class ImageViewer(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Image Viewer")
-        self.resize(1024, 768)
+        #self.resize(1024, 768)
 
         self.view_state = ViewState()
         self.trim_state = TrimState()
@@ -265,9 +265,14 @@ class ImageViewer(QMainWindow):
                 self.canvas.rotate_by(90)
         elif key == Qt.Key.Key_Delete:
             self.delete_current_file()
-        elif key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
-            # Toggle between View Mode <-> Explorer Mode
+        elif key == Qt.Key.Key_F5:
+            was_view_mode = getattr(self.explorer_state, "view_mode", True)
             self.toggle_view_mode()
+            if was_view_mode:
+                with contextlib.suppress(Exception):
+                    self.exit_fullscreen()
+        elif key == Qt.Key.Key_F11:
+            self.toggle_fullscreen()
         else:
             super().keyPressEvent(event)
 
@@ -499,27 +504,26 @@ class ImageViewer(QMainWindow):
         start_trim_workflow(self)
 
     def enter_fullscreen(self):
-        if self.isFullScreen():
-            return
         self._prev_state = self.windowState()
-        try:
-            self._prev_geometry = self.saveGeometry()
-        except Exception:
+        if self._prev_state & Qt.WindowState.WindowMaximized:
             self._prev_geometry = None
+        else:
+            try:
+                self._prev_geometry = self.saveGeometry()
+            except Exception:
+                self._prev_geometry = None
         self.menuBar().setVisible(False)
-        self.setWindowState(self._prev_state | Qt.WindowFullScreen)
+        self.setWindowState(Qt.WindowState.WindowFullScreen)
         if hasattr(self, "fullscreen_action"):
             self.fullscreen_action.setChecked(True)
         self.canvas.apply_current_view()
 
     def exit_fullscreen(self):
-        if not self.isFullScreen():
-            return
         self.setUpdatesEnabled(False)
-        prev = getattr(self, "_prev_state", Qt.WindowMaximized)
-        self.setWindowState(prev & ~Qt.WindowFullScreen)
+        prev_state = getattr(self, "_prev_state", Qt.WindowState.WindowMaximized)
         geom = getattr(self, "_prev_geometry", None)
-        if geom and not (prev & Qt.WindowMaximized):
+        self.setWindowState(prev_state)
+        if geom and not (prev_state & Qt.WindowState.WindowMaximized):
             with contextlib.suppress(Exception):
                 self.restoreGeometry(geom)
         self.menuBar().setVisible(True)
@@ -615,10 +619,65 @@ class ImageViewer(QMainWindow):
 
 if __name__ == "__main__":
     from multiprocessing import freeze_support
+    from pathlib import Path
+    import argparse
 
     freeze_support()
 
+    # Parse optional start path (image file or folder) after logging options were
+    # already stripped out by _apply_cli_logging_options().
+    try:
+        parser = argparse.ArgumentParser(add_help=False)
+        parser.add_argument("start_path", nargs="?", help="Image file or folder to open")
+        args, _ = parser.parse_known_args()
+        start_path_str = args.start_path
+    except Exception:
+        start_path_str = None
+
+    start_path = Path(start_path_str) if start_path_str else None
+
     app = QApplication(sys.argv)
     viewer = ImageViewer()
-    viewer.showMaximized()
+
+    # Case 1: started with an image file → open its folder and show that image in
+    # View mode, fullscreen.
+    if start_path and start_path.is_file():
+        folder = start_path.parent
+        try:
+            viewer.open_folder_at(str(folder))
+            target = str(start_path)
+            if target in viewer.image_files:
+                viewer.current_index = viewer.image_files.index(target)
+                viewer.display_image()
+        except Exception:
+            # Fall back to just showing the window if something goes wrong.
+            pass
+        viewer.show()
+        try:
+            viewer.enter_fullscreen()
+        except Exception:
+            pass
+
+    # Case 2: started with a folder path → open it and start in Explorer mode.
+    elif start_path and start_path.is_dir():
+        try:
+            viewer.open_folder_at(str(start_path))
+        except Exception:
+            pass
+        try:
+            viewer.explorer_state.view_mode = False
+            viewer._update_ui_for_mode()
+        except Exception:
+            pass
+        viewer.showMaximized()
+
+    # Case 3: no path → normal launch: Explorer mode, maximized window.
+    else:
+        try:
+            viewer.explorer_state.view_mode = False
+            viewer._update_ui_for_mode()
+        except Exception:
+            pass
+        viewer.showMaximized()
+
     sys.exit(app.exec())
