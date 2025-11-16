@@ -653,17 +653,13 @@ if __name__ == "__main__":
             # Fall back to just showing the window if something goes wrong.
             pass
         viewer.show()
-        try:
+        with contextlib.suppress(Exception):
             viewer.enter_fullscreen()
-        except Exception:
-            pass
 
     # Case 2: started with a folder path → open it and start in Explorer mode.
     elif start_path and start_path.is_dir():
-        try:
+        with contextlib.suppress(Exception):
             viewer.open_folder_at(str(start_path))
-        except Exception:
-            pass
         try:
             viewer.explorer_state.view_mode = False
             viewer._update_ui_for_mode()
