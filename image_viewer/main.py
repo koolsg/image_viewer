@@ -70,8 +70,6 @@ class ViewState:
         self.zoom: float = 1.0
         self.hq_downscale: bool = False
         self.press_zoom_multiplier: float = 2.0
-        self._prev_state = None
-        self._prev_geometry = None
 
 
 class TrimState:
@@ -248,9 +246,25 @@ class ImageViewer(QMainWindow):
             self._update_status("Image load failed")
 
     def keyPressEvent(self, event):
-        if not self.image_files:
-            return
         key = event.key()
+
+        # F5 and F11 work even without images
+        if key == Qt.Key.Key_F5:
+            was_view_mode = getattr(self.explorer_state, "view_mode", True)
+            self.toggle_view_mode()
+            if was_view_mode:
+                with contextlib.suppress(Exception):
+                    self.exit_fullscreen()
+            return
+        elif key == Qt.Key.Key_F11:
+            self.toggle_fullscreen()
+            return
+
+        # Other keys require images to be loaded
+        if not self.image_files:
+            super().keyPressEvent(event)
+            return
+
         if key == Qt.Key.Key_Right:
             self.next_image()
         elif key == Qt.Key.Key_Left:
@@ -265,14 +279,6 @@ class ImageViewer(QMainWindow):
                 self.canvas.rotate_by(90)
         elif key == Qt.Key.Key_Delete:
             self.delete_current_file()
-        elif key == Qt.Key.Key_F5:
-            was_view_mode = getattr(self.explorer_state, "view_mode", True)
-            self.toggle_view_mode()
-            if was_view_mode:
-                with contextlib.suppress(Exception):
-                    self.exit_fullscreen()
-        elif key == Qt.Key.Key_F11:
-            self.toggle_fullscreen()
         else:
             super().keyPressEvent(event)
 
@@ -504,32 +510,22 @@ class ImageViewer(QMainWindow):
         start_trim_workflow(self)
 
     def enter_fullscreen(self):
-        self._prev_state = self.windowState()
-        if self._prev_state & Qt.WindowState.WindowMaximized:
-            self._prev_geometry = None
-        else:
-            try:
-                self._prev_geometry = self.saveGeometry()
-            except Exception:
-                self._prev_geometry = None
+        # Save current geometry before entering fullscreen
+        self._normal_geometry = self.geometry()
         self.menuBar().setVisible(False)
-        self.setWindowState(Qt.WindowState.WindowFullScreen)
+        self.showFullScreen()
         if hasattr(self, "fullscreen_action"):
             self.fullscreen_action.setChecked(True)
         self.canvas.apply_current_view()
 
     def exit_fullscreen(self):
-        self.setUpdatesEnabled(False)
-        prev_state = getattr(self, "_prev_state", Qt.WindowState.WindowMaximized)
-        geom = getattr(self, "_prev_geometry", None)
-        self.setWindowState(prev_state)
-        if geom and not (prev_state & Qt.WindowState.WindowMaximized):
-            with contextlib.suppress(Exception):
-                self.restoreGeometry(geom)
+        # Exit fullscreen and restore previous geometry
+        self.showNormal()
+        if hasattr(self, "_normal_geometry") and not self._normal_geometry.isNull():
+            self.setGeometry(self._normal_geometry)
         self.menuBar().setVisible(True)
         if hasattr(self, "fullscreen_action"):
             self.fullscreen_action.setChecked(False)
-        self.setUpdatesEnabled(True)
         self.canvas.apply_current_view()
 
     def toggle_fullscreen(self):
