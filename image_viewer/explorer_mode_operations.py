@@ -146,6 +146,11 @@ def _setup_explorer_mode(viewer) -> None:
         splitter = QSplitter(Qt.Orientation.Horizontal)
         tree = FolderTreeWidget()
         grid = ThumbnailGridWidget()
+        try:
+            cache_name = str(viewer._settings_manager.get("thumbnail_cache_name", "image_viewer_thumbs"))
+            grid.set_disk_cache_folder_name(cache_name)
+        except Exception:
+            pass
 
         try:
             grid.set_loader(viewer.thumb_loader)

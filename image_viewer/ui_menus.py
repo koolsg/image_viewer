@@ -111,15 +111,30 @@ def build_menus(viewer: "ImageViewer") -> None:
     # Explorer mode
     viewer.explorer_mode_action = QAction("Explorer Mode(&E)", viewer, checkable=True)
     viewer.explorer_mode_action.setChecked(False)
-    viewer.explorer_mode_action.setShortcut("F5")
+    viewer.explorer_mode_action.setShortcut("F9")
     viewer.explorer_mode_action.triggered.connect(viewer.toggle_view_mode)
     view_menu.addSeparator()
     view_menu.addAction(viewer.explorer_mode_action)
 
+    viewer.refresh_explorer_action = QAction("Refresh Explorer", viewer)
+    viewer.refresh_explorer_action.setShortcut("F5")
+    viewer.refresh_explorer_action.triggered.connect(viewer.refresh_explorer)
+    view_menu.addAction(viewer.refresh_explorer_action)
+
     # Fullscreen toggle (no default shortcut; use menu or Esc)
     viewer.fullscreen_action = QAction("Fullscreen", viewer, checkable=True)
+    viewer.fullscreen_action.setShortcut("F11")
     viewer.fullscreen_action.triggered.connect(viewer.toggle_fullscreen)
     view_menu.addAction(viewer.fullscreen_action)
+
+    # Tools menu
+    try:
+        tools_menu = menu_bar.addMenu("Tools")
+        viewer.convert_webp_action = QAction("Convert to WebP...", viewer)
+        viewer.convert_webp_action.triggered.connect(viewer.open_convert_dialog)
+        tools_menu.addAction(viewer.convert_webp_action)
+    except Exception as ex:
+        _logger.debug("tools menu unavailable: %s", ex)
 
     # Keyboard shortcuts (QShortcut: window-wide, similar to ApplicationShortcut)
     try:

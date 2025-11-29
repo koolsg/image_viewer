@@ -2,7 +2,6 @@
 import gc
 import os
 import time as _time
-import traceback as _tb
 
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import QApplication, QMessageBox

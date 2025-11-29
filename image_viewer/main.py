@@ -1,26 +1,17 @@
+import contextlib
 import os
 import sys
 from collections import OrderedDict
+from pathlib import Path
 from typing import Any
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QImageReader, QPixmap
-from PySide6.QtWidgets import (
-    QApplication,
-    QColorDialog,
-    QInputDialog,
-    QMainWindow,
-)
-
-# Load from separated modules
-_pkg_root = os.path.dirname(os.path.dirname(__file__))
-if _pkg_root not in sys.path:
-    sys.path.append(_pkg_root)
-import contextlib
+from PySide6.QtWidgets import QApplication, QColorDialog, QInputDialog, QMainWindow
 
 from image_viewer.decoder import decode_image
 from image_viewer.display_controller import DisplayController
-from image_viewer.explorer_mode_operations import toggle_view_mode, open_folder_at
+from image_viewer.explorer_mode_operations import open_folder_at, toggle_view_mode
 from image_viewer.file_operations import delete_current_file
 from image_viewer.loader import Loader
 from image_viewer.logger import get_logger
@@ -29,6 +20,7 @@ from image_viewer.status_overlay import StatusOverlayBuilder
 from image_viewer.strategy import DecodingStrategy, FastViewStrategy, FullStrategy
 from image_viewer.trim_operations import start_trim_workflow
 from image_viewer.ui_canvas import ImageCanvas
+from image_viewer.ui_convert_webp import WebPConvertDialog
 from image_viewer.ui_menus import build_menus
 from image_viewer.ui_settings import SettingsDialog
 
@@ -44,9 +36,9 @@ def _apply_cli_logging_options() -> None:
         import os as _os
         import sys as _sys
 
-        parser = argparse.ArgumentParser(description='Image Viewer', add_help=False)
-        parser.add_argument('--log-level', help='Set log level')
-        parser.add_argument('--log-cats', help='Set log categories')
+        parser = argparse.ArgumentParser(description="Image Viewer", add_help=False)
+        parser.add_argument("--log-level", help="Set log level")
+        parser.add_argument("--log-cats", help="Set log categories")
         args, remaining = parser.parse_known_args()
         if args.log_level:
             _os.environ["IMAGE_VIEWER_LOG_LEVEL"] = args.log_level
@@ -60,6 +52,7 @@ def _apply_cli_logging_options() -> None:
 
 _apply_cli_logging_options()
 logger = get_logger("main")
+_BASE_DIR = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
 
 
 class ViewState:
@@ -93,13 +86,24 @@ class ImageViewer(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Image Viewer")
-        #self.resize(1024, 768)
+        # self.resize(1024, 768)
 
         self.view_state = ViewState()
         self.trim_state = TrimState()
         self.explorer_state = ExplorerState()
         self.image_files: list[str] = []
         self.current_index = -1
+        # Menu/action placeholders (populated in build_menus)
+        self.view_group = None
+        self.fit_action = None
+        self.actual_action = None
+        self.hq_downscale_action = None
+        self.fast_view_action = None
+        self.bg_black_action = None
+        self.bg_white_action = None
+        self.fullscreen_action = None
+        self.refresh_explorer_action = None
+        self.convert_webp_action = None
         self.pixmap_cache: OrderedDict[str, QPixmap] = OrderedDict()
         self.cache_size = 20
         self.decode_full = False
@@ -112,7 +116,7 @@ class ImageViewer(QMainWindow):
         self.loader.image_decoded.connect(self.on_image_ready)
         self.thumb_loader = Loader(decode_image)
 
-        self._settings_path = os.path.join(os.path.dirname(__file__), "settings.json")
+        self._settings_path = (_BASE_DIR / "settings.json").as_posix()
         self._settings_manager = SettingsManager(self._settings_path)
         self._settings: dict[str, Any] = self._settings_manager.data
         self._bg_color = self._settings_manager.determine_startup_background()
@@ -136,6 +140,7 @@ class ImageViewer(QMainWindow):
 
         self._overlay_title = ""
         self._overlay_info = "Ready"
+        self._convert_dialog: WebPConvertDialog | None = None
 
     def _get_file_dimensions(self, file_path: str) -> tuple[int | None, int | None]:
         """Get the original dimensions of a file."""
@@ -234,6 +239,54 @@ class ImageViewer(QMainWindow):
     def display_image(self) -> None:
         self._display_controller.display_image()
 
+    def open_convert_dialog(self) -> None:
+        try:
+            # Prefer current folder if available
+            start_folder = None
+            try:
+                if self.image_files and self.current_index >= 0:
+                    start_folder = Path(self.image_files[self.current_index]).parent
+            except Exception:
+                start_folder = None
+            if self._convert_dialog is None:
+                self._convert_dialog = WebPConvertDialog(self, start_folder=start_folder)
+            elif start_folder:
+                self._convert_dialog.folder_edit.setText(str(start_folder))
+            self._convert_dialog.show()
+            self._convert_dialog.raise_()
+            self._convert_dialog.activateWindow()
+        except Exception as ex:
+            logger.error("failed to open convert dialog: %s", ex)
+
+    def refresh_explorer(self) -> None:
+        """Refresh explorer view by reloading current folder."""
+        try:
+            if getattr(self.explorer_state, "view_mode", True):
+                return
+            grid = getattr(self.explorer_state, "_explorer_grid", None)
+            tree = getattr(self.explorer_state, "_explorer_tree", None)
+            current_folder = None
+            if grid and hasattr(grid, "get_current_folder"):
+                current_folder = grid.get_current_folder()
+            if not current_folder:
+                try:
+                    if tree and hasattr(tree, "current_path"):
+                        current_folder = tree.current_path()
+                except Exception:
+                    current_folder = None
+            if not current_folder:
+                return
+            if tree and hasattr(tree, "set_root_path"):
+                with contextlib.suppress(Exception):
+                    tree.set_root_path(current_folder)
+            if grid:
+                with contextlib.suppress(Exception):
+                    grid.load_folder(current_folder)
+                    grid.resume_pending_thumbnails()
+            logger.debug("explorer refreshed: %s", current_folder)
+        except Exception as ex:
+            logger.debug("refresh_explorer failed: %s", ex)
+
     def on_image_ready(self, path, image_data, error):
         self._display_controller.on_image_ready(path, image_data, error)
 
@@ -248,8 +301,11 @@ class ImageViewer(QMainWindow):
     def keyPressEvent(self, event):
         key = event.key()
 
-        # F5 and F11 work even without images
+        # F9 toggles view/explorer, F5 refreshes explorer, F11 fullscreen
         if key == Qt.Key.Key_F5:
+            self.refresh_explorer()
+            return
+        elif key == Qt.Key.Key_F9:
             was_view_mode = getattr(self.explorer_state, "view_mode", True)
             self.toggle_view_mode()
             if was_view_mode:
@@ -409,13 +465,8 @@ class ImageViewer(QMainWindow):
         self._save_settings_key("fast_view_enabled", is_fast_view)
 
         # Enable/disable high-quality downscale option based on the strategy
-        self.hq_downscale_action.setEnabled(
-            self.decoding_strategy.supports_hq_downscale()
-        )
-        if (
-            not self.decoding_strategy.supports_hq_downscale()
-            and self.hq_downscale_action.isChecked()
-        ):
+        self.hq_downscale_action.setEnabled(self.decoding_strategy.supports_hq_downscale())
+        if not self.decoding_strategy.supports_hq_downscale() and self.hq_downscale_action.isChecked():
             self.hq_downscale_action.setChecked(False)
             self.canvas._hq_downscale = False
 
@@ -542,11 +593,13 @@ class ImageViewer(QMainWindow):
     def _update_ui_for_mode(self) -> None:
         """Reconfigure UI based on the current mode"""
         from image_viewer.explorer_mode_operations import _update_ui_for_mode
+
         _update_ui_for_mode(self)
 
     def _setup_view_mode(self) -> None:
         """Set up View Mode: show only the central canvas"""
         from image_viewer.explorer_mode_operations import _setup_view_mode
+
         _setup_view_mode(self)
 
     def open_settings(self):
@@ -561,6 +614,7 @@ class ImageViewer(QMainWindow):
         width: int | None = None,
         height: int | None = None,
         hspacing: int | None = None,
+        cache_name: str | None = None,
     ) -> None:
         try:
             grid = getattr(self.explorer_state, "_explorer_grid", None)
@@ -570,23 +624,11 @@ class ImageViewer(QMainWindow):
                 self._save_settings_key("thumbnail_height", int(height))
             if grid:
                 try:
-                    if hasattr(grid, "set_thumbnail_size_wh") and (
-                        width is not None or height is not None
-                    ):
-                        w = int(
-                            width if width is not None else grid.get_thumbnail_size()[0]
-                        )
-                        h = int(
-                            height
-                            if height is not None
-                            else grid.get_thumbnail_size()[1]
-                        )
+                    if hasattr(grid, "set_thumbnail_size_wh") and (width is not None or height is not None):
+                        w = int(width if width is not None else grid.get_thumbnail_size()[0])
+                        h = int(height if height is not None else grid.get_thumbnail_size()[1])
                         grid.set_thumbnail_size_wh(w, h)
-                    elif (
-                        hasattr(grid, "set_thumbnail_size")
-                        and width is not None
-                        and height is not None
-                    ):
+                    elif hasattr(grid, "set_thumbnail_size") and width is not None and height is not None:
                         # Fallback: square
                         grid.set_thumbnail_size(int(width))
                 except Exception:
@@ -595,17 +637,23 @@ class ImageViewer(QMainWindow):
                 self._save_settings_key("thumbnail_hspacing", int(hspacing))
                 if grid and hasattr(grid, "set_horizontal_spacing"):
                     grid.set_horizontal_spacing(int(hspacing))
+            if cache_name:
+                self._save_settings_key("thumbnail_cache_name", cache_name)
+                if grid and hasattr(grid, "set_disk_cache_folder_name"):
+                    grid.set_disk_cache_folder_name(cache_name)
         except Exception as e:
             logger.debug("apply_thumbnail_settings failed: %s", e)
 
     def _on_explorer_folder_selected(self, folder_path: str, grid) -> None:
         """Handle folder selection in the explorer."""
         from image_viewer.explorer_mode_operations import _on_explorer_folder_selected
+
         _on_explorer_folder_selected(self, folder_path, grid)
 
     def _on_explorer_image_selected(self, image_path: str) -> None:
         """Handle image selection in the explorer."""
         from image_viewer.explorer_mode_operations import _on_explorer_image_selected
+
         _on_explorer_image_selected(self, image_path)
 
     def open_folder_at(self, folder_path: str) -> None:
@@ -613,30 +661,32 @@ class ImageViewer(QMainWindow):
         open_folder_at(self, folder_path)
 
 
-if __name__ == "__main__":
-    from multiprocessing import freeze_support
-    from pathlib import Path
+def run(argv: list[str] | None = None) -> int:
+    """Application entrypoint (packaging-friendly)."""
     import argparse
+    from multiprocessing import freeze_support
 
     freeze_support()
+
+    if argv is None:
+        argv = sys.argv
 
     # Parse optional start path (image file or folder) after logging options were
     # already stripped out by _apply_cli_logging_options().
     try:
         parser = argparse.ArgumentParser(add_help=False)
         parser.add_argument("start_path", nargs="?", help="Image file or folder to open")
-        args, _ = parser.parse_known_args()
+        args, _ = parser.parse_known_args(argv[1:])
         start_path_str = args.start_path
     except Exception:
         start_path_str = None
 
     start_path = Path(start_path_str) if start_path_str else None
 
-    app = QApplication(sys.argv)
+    app = QApplication(argv)
     viewer = ImageViewer()
 
-    # Case 1: started with an image file → open its folder and show that image in
-    # View mode, fullscreen.
+    # Case 1: started with an image file → open its folder and show that image in View mode, fullscreen.
     if start_path and start_path.is_file():
         folder = start_path.parent
         try:
@@ -672,4 +722,10 @@ if __name__ == "__main__":
             pass
         viewer.showMaximized()
 
-    sys.exit(app.exec())
+    return app.exec()
+
+
+if __name__ == "__main__":
+    from multiprocessing import freeze_support
+    freeze_support()
+    sys.exit(run())

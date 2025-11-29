@@ -53,8 +53,8 @@ class Loader(QObject):
             )
             future = self.executor.submit(self._decode_fn, file_path, target_width, target_height, size)
             try:
-                future._req_id = req_id
-                future._path = file_path
+                future._req_id = req_id  # type: ignore[attr-defined]
+                future._path = file_path  # type: ignore[attr-defined]
             except Exception:
                 pass
             future.add_done_callback(self.on_decode_finished)

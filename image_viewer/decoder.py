@@ -1,39 +1,20 @@
 import contextlib
 import os
+from pathlib import Path
 from typing import Any
 
 import numpy as np
 
-# --- Optional .env support to load LIBVIPS_BIN for Windows child processes ---
 from image_viewer.logger import get_logger
 
 _logger = get_logger("decoder")
 
-
-def _load_env_file(env_path: str = ".env") -> None:
-    try:
-        if not os.path.exists(env_path):
-            return
-        with open(env_path, encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line or line.startswith("#") or "=" not in line:
-                    continue
-                k, v = line.split("=", 1)
-                k, v = k.strip(), v.strip()
-                if k and v and k not in os.environ:
-                    os.environ[k] = v
-    except (OSError, UnicodeError) as e:
-        # .env load failure is not critical
-        _logger.debug("env load skipped: %s", e)
-
-
-_load_env_file()
-_LIBVIPS_BIN = os.environ.get("LIBVIPS_BIN")
-if _LIBVIPS_BIN and os.name == "nt":
-    # Best-effort only; decoding will report import errors if any
+# Locate bundled libvips (for frozen exe/_MEIPASS and source tree)
+_BASE_DIR = Path(getattr(os.sys, "_MEIPASS", Path(__file__).resolve().parent))
+_LIBVIPS_DIR = _BASE_DIR / "libvips"
+if os.name == "nt" and _LIBVIPS_DIR.exists():
     with contextlib.suppress(Exception):
-        os.add_dll_directory(_LIBVIPS_BIN)
+        os.add_dll_directory(str(_LIBVIPS_DIR))
 
 
 _pyvips: Any | None = None

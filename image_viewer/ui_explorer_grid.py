@@ -1,12 +1,15 @@
-"""Image thumbnail grid widget (for file explorer mode)"""
+"""Image thumbnail grid widget (for file explorer mode)."""
 
+import contextlib
 import hashlib
 import os
+import threading
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
 from pathlib import Path
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QFileSystemWatcher, Qt, QTimer, Signal
 from PySide6.QtGui import QIcon, QImage, QImageWriter, QPixmap
 from PySide6.QtWidgets import QGridLayout, QPushButton, QScrollArea, QWidget
 
@@ -32,10 +35,14 @@ class ThumbnailGridWidget(QScrollArea):
 
         self._thumb_buttons: dict[str, QPushButton] = {}
         self._thumb_cache: OrderedDict[str, QPixmap] = OrderedDict()
-        # Maximum LRU cache items
+        # Maximum in-memory thumbnail cache items (LRU)
         self._max_thumb_cache: int = 512
-        # Disk cache root (project local)
-        self._disk_cache_dir: Path = Path(".cache/image_viewer_thumbs")
+        # Disk cache folder name (inside per-folder .cache)
+        self._disk_cache_folder_name: str = "image_viewer_thumbs"
+        self._current_folder: str | None = None
+        # Disk cache budgets
+        self._max_disk_bytes: int = 200 * 1024 * 1024  # 200 MB default cap
+        self._max_disk_files: int = 5000
         # Worker for thumbnail saving (disk I/O offloading)
         self._io_pool = ThreadPoolExecutor(max_workers=2)
         # Default thumbnail size (width x height)
@@ -45,6 +52,11 @@ class ThumbnailGridWidget(QScrollArea):
         self._button_h = self._thumb_size[1] + 20
         # Currently displayed image path list (for layout recalculation)
         self._image_paths: list[str] = []
+        # Cached file metadata for tooltips: path -> (size_bytes, mtime_ts)
+        self._file_stats: dict[str, tuple[int, float]] = {}
+        # Friendly size thresholds
+        self._kb = 1024
+        self._mb = 1024 * 1024
         self._image_extensions = {
             ".jpg",
             ".jpeg",
@@ -56,18 +68,31 @@ class ThumbnailGridWidget(QScrollArea):
             ".tiff",
         }
         self._loader = None  # Loader instance (lazy setup)
+        self._watcher = QFileSystemWatcher(self)
+        self._watcher_timer = None
+        self._watcher_delay_ms = 400
+        with contextlib.suppress(Exception):
+            self._watcher.directoryChanged.connect(self._on_directory_changed)
 
         _logger.debug("ThumbnailGridWidget initialized")
 
     def _save_disk_thumb_qimage_async(self, image_path: str, q_image: QImage) -> None:
         try:
             q_copy = q_image.copy()
+            disk_dir = self._get_disk_dir(image_path)
             p = self._get_disk_thumb_path(image_path)
-            tmp = p.with_suffix(p.suffix + ".part")
-            self._disk_cache_dir.mkdir(parents=True, exist_ok=True)
+            tmp = p.with_suffix(p.suffix + f".{threading.get_ident()}.part")
+            disk_dir.mkdir(parents=True, exist_ok=True)
 
             def _job():
                 try:
+                    # Ensure enough budget before writing
+                    est = self._estimate_qimage_bytes(q_copy)
+                    self._enforce_disk_budget(disk_dir, extra_bytes=est)
+
+                    if p.exists():
+                        return
+
                     writer = QImageWriter(str(tmp), b"JPG")
                     writer.setQuality(85)
                     ok = writer.write(q_copy)
@@ -78,7 +103,15 @@ class ThumbnailGridWidget(QScrollArea):
                         except Exception:
                             return
                     # Atomic replacement: replace partial file with final file
-                    os.replace(str(tmp), str(p))
+                    try:
+                        os.replace(str(tmp), str(p))
+                    except PermissionError as ex_perm:
+                        # If another thread already wrote it, skip quietly
+                        if p.exists():
+                            return
+                        raise ex_perm
+                    # Enforce budget after write as well (covers underestimated cases)
+                    self._enforce_disk_budget(disk_dir)
                 except Exception as ex:
                     try:
                         if tmp.exists():
@@ -94,16 +127,65 @@ class ThumbnailGridWidget(QScrollArea):
             _logger.debug("schedule disk save error for %s: %s", image_path, ex)
 
     # ---- Cache helpers ------------------------------------------------------
+    def set_disk_cache_folder_name(self, name: str) -> None:
+        try:
+            cleaned = name.strip() or "image_viewer_thumbs"
+            self._disk_cache_folder_name = cleaned
+        except Exception:
+            self._disk_cache_folder_name = "image_viewer_thumbs"
+
+    def get_current_folder(self) -> str | None:
+        return self._current_folder
+
+    # Watcher handling -------------------------------------------------------
+    def _on_directory_changed(self, path: str) -> None:
+        try:
+            if self._watcher_timer is not None:
+                self._watcher_timer.stop()
+            if self._watcher_timer is None:
+                self._watcher_timer = self._create_watcher_timer()
+            self._watcher_timer.start(self._watcher_delay_ms)
+        except Exception as ex:
+            _logger.debug("directory change debounce failed: %s", ex)
+
+    def _create_watcher_timer(self):
+        timer = QTimer(self)
+        timer.setSingleShot(True)
+        timer.timeout.connect(self._refresh_current_folder)
+        return timer
+
+    def _refresh_current_folder(self) -> None:
+        try:
+            if not self._current_folder:
+                return
+            self.load_folder(self._current_folder)
+            self.resume_pending_thumbnails()
+            _logger.debug("auto-refreshed folder: %s", self._current_folder)
+        except Exception as ex:
+            _logger.debug("refresh current folder failed: %s", ex)
+
+    def _get_disk_dir(self, image_path: str) -> Path:
+        try:
+            parent = Path(image_path).resolve().parent
+        except Exception:
+            parent = Path(".")
+        return parent / ".cache" / self._disk_cache_folder_name
+
     def _get_disk_thumb_path(self, image_path: str) -> Path:
         try:
             abs_path = os.path.abspath(image_path)
             w, h = self._thumb_size
-            key = f"{abs_path}|{w}x{h}".encode()
+            try:
+                stat = os.stat(abs_path)
+                stamp = f"{int(stat.st_mtime)}|{stat.st_size}"
+            except Exception:
+                stamp = "unknown"
+            key = f"{abs_path}|{w}x{h}|{stamp}".encode()
             digest = hashlib.sha1(key).hexdigest()
-            return self._disk_cache_dir / f"{digest}.jpg"
+            return self._get_disk_dir(image_path) / f"{digest}.jpg"
         except Exception:
             safe = image_path.replace(os.sep, "_").replace(":", "_")
-            return self._disk_cache_dir / f"fallback_{safe}.jpg"
+            return self._get_disk_dir(image_path) / f"fallback_{safe}.jpg"
 
     def _load_disk_thumb(self, image_path: str) -> QPixmap | None:
         try:
@@ -120,7 +202,7 @@ class ThumbnailGridWidget(QScrollArea):
 
     def _save_disk_thumb(self, image_path: str, pixmap: QPixmap) -> None:
         try:
-            self._disk_cache_dir.mkdir(parents=True, exist_ok=True)
+            self._get_disk_dir(image_path).mkdir(parents=True, exist_ok=True)
             p = self._get_disk_thumb_path(image_path)
             # Save as PNG (lossless, no quality option needed)
             pixmap.save(str(p), "PNG")
@@ -148,6 +230,88 @@ class ThumbnailGridWidget(QScrollArea):
         except Exception as ex:
             _logger.debug("lru touch error: %s", ex)
 
+    def _estimate_qimage_bytes(self, q_image: QImage) -> int:
+        try:
+            return int(q_image.sizeInBytes())
+        except Exception:
+            try:
+                return int(q_image.width() * q_image.height() * 4)
+            except Exception:
+                return 0
+
+    def _enforce_disk_budget(self, disk_dir: Path, extra_bytes: int = 0) -> None:
+        """Remove oldest cached thumbnails until under size/file caps."""
+        try:
+            if not disk_dir.exists():
+                return
+            files = list(disk_dir.glob("*.jpg"))
+            if not files:
+                return
+            total_size = 0
+            meta: list[tuple[float, int, Path]] = []
+            for f in files:
+                try:
+                    stat = f.stat()
+                    meta.append((stat.st_mtime, stat.st_size, f))
+                    total_size += stat.st_size
+                except Exception:
+                    continue
+            total_size += max(0, extra_bytes)
+            # Evict while over budget
+            meta.sort(key=lambda t: t[0])  # oldest first
+            while meta and (
+                total_size > self._max_disk_bytes or len(meta) > self._max_disk_files
+            ):
+                _, size, path = meta.pop(0)
+                try:
+                    path.unlink(missing_ok=True)  # type: ignore[arg-type]
+                    total_size -= size
+                except Exception as ex:
+                    _logger.debug("disk cache eviction failed for %s: %s", path, ex)
+        except Exception as ex:
+            _logger.debug("enforce disk budget failed: %s", ex)
+
+    def _format_tooltip(
+        self, image_path: str, width: int | None = None, height: int | None = None
+    ) -> str:
+        """Build a human-readable tooltip: name, resolution (if known), size, mtime."""
+        name = Path(image_path).name
+        size_str = "Size: unknown"
+        mtime_str = "Modified: unknown"
+        size: int | None
+        mtime: float | None
+        size, mtime = self._file_stats.get(image_path, (None, None))
+        try:
+            if isinstance(size, int):
+                if size >= self._mb:
+                    size_str = f"Size: {size / self._mb:.1f} MB"
+                elif size >= self._kb:
+                    size_str = f"Size: {size / self._kb:.1f} KB"
+                else:
+                    size_str = f"Size: {size} bytes"
+        except Exception:
+            pass
+        try:
+            if isinstance(mtime, (int, float)):
+                ts = datetime.fromtimestamp(mtime)
+                mtime_str = f"Modified: {ts.strftime('%Y-%m-%d %H:%M')}"
+        except Exception:
+            pass
+        res_str = ""
+        if (
+            isinstance(width, int)
+            and isinstance(height, int)
+            and width > 0
+            and height > 0
+        ):
+            res_str = f"{width} x {height}"
+        lines = [name]
+        if res_str:
+            lines.append(res_str)
+        lines.append(size_str)
+        lines.append(mtime_str)
+        return "\n".join(lines)
+
     # Public API --------------------------------------------------------------
     def set_loader(self, loader) -> None:
         """Connect a Loader instance and bind its signals.
@@ -174,6 +338,14 @@ class ThumbnailGridWidget(QScrollArea):
         """Asynchronously load images from a folder and display them in a grid."""
         try:
             self._clear_grid()
+            self._current_folder = folder_path
+            # Reset watcher to this folder
+            try:
+                with contextlib.suppress(Exception):
+                    self._watcher.removePaths(self._watcher.directories())
+                self._watcher.addPath(str(Path(folder_path).resolve()))
+            except Exception as ex:
+                _logger.debug("watcher setup failed: %s", ex)
 
             # Collect images from the folder
             images: list[str] = []
@@ -199,6 +371,14 @@ class ThumbnailGridWidget(QScrollArea):
 
             # Dynamically calculate columns and create buttons
             self._image_paths = images
+            # Preload file stats for tooltips
+            self._file_stats.clear()
+            for p in images:
+                try:
+                    st = os.stat(p)
+                    self._file_stats[p] = (int(st.st_size), float(st.st_mtime))
+                except Exception:
+                    continue
             cols = self._compute_columns()
             max_row = -1
             for idx, image_path in enumerate(images):
@@ -208,7 +388,11 @@ class ThumbnailGridWidget(QScrollArea):
 
                 btn = QPushButton()
                 btn.setFixedSize(self._button_w, self._button_h)
-                btn.setToolTip(Path(image_path).name)
+                # Initial tooltip uses file metadata; resolution is added when thumbnail is decoded.
+                try:
+                    btn.setToolTip(self._format_tooltip(image_path))
+                except Exception:
+                    btn.setToolTip(Path(image_path).name)
                 btn.clicked.connect(
                     lambda checked=False, p=image_path: self._on_image_clicked(p)
                 )
@@ -395,6 +579,8 @@ class ThumbnailGridWidget(QScrollArea):
                     if path in self._thumb_buttons:
                         btn = self._thumb_buttons[path]
                         self._set_button_icon(btn, pixmap)
+                        with contextlib.suppress(Exception):
+                            btn.setToolTip(self._format_tooltip(path, width, height))
                         _logger.debug("thumbnail set: %s", path)
             except Exception as ex:
                 _logger.debug("error converting thumbnail to pixmap/save: %s", ex)
@@ -431,5 +617,6 @@ class ThumbnailGridWidget(QScrollArea):
                     item.widget().deleteLater()
             self._thumb_buttons.clear()
             self._image_paths = []
+            self._current_folder = None
         except Exception as ex:
             _logger.debug("error clearing grid: %s", ex)

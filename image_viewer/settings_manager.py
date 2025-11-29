@@ -25,6 +25,7 @@ class SettingsManager:
         "thumbnail_height": 195,
         "thumbnail_size": 256,
         "thumbnail_hspacing": 10,
+        "thumbnail_cache_name": "image_viewer_thumbs",
     }
 
     def load(self) -> None:

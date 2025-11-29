@@ -1,4 +1,7 @@
 # NOTE: This file contains the ImageCanvas class moved from main.py.
+import logging
+from pathlib import Path
+
 import numpy as np
 from PySide6.QtCore import QPoint, QRectF, Qt
 from PySide6.QtGui import QColor, QFont, QImage, QPainter, QPixmap
@@ -423,6 +426,55 @@ class ImageCanvas(QGraphicsView):
             painter.setFont(font)
             painter.drawText(x, y, title)
             painter.drawText(x, y + 18, info)
+
+            # Debug-only cache summary (View mode): show cached pixmaps and sizes
+            try:
+                debug_enabled = logging.getLogger("image_viewer").isEnabledFor(
+                    logging.DEBUG
+                )
+            except Exception:
+                debug_enabled = False
+            is_view_mode = bool(
+                getattr(getattr(viewer, "explorer_state", None), "view_mode", True)
+            )
+            if debug_enabled and is_view_mode:
+                cache = getattr(viewer, "pixmap_cache", None)
+                if cache:
+                    rows = []
+
+                    def _fmt_size(num: int) -> str:
+                        if num >= 1024 * 1024:
+                            return f"{num / (1024 * 1024):.1f} MB"
+                        if num >= 1024:
+                            return f"{num / 1024:.1f} KB"
+                        return f"{num} B"
+
+                    for path, pix in list(cache.items()):
+                        try:
+                            size_bytes = pix.toImage().sizeInBytes()
+                        except Exception:
+                            try:
+                                size_bytes = max(
+                                    0, pix.width() * pix.height() * 4
+                                )
+                            except Exception:
+                                size_bytes = 0
+                        name = Path(path).name
+                        rows.append((name, size_bytes))
+
+                    if rows:
+                        y_tab = y + 36
+                        painter.drawText(x, y_tab, "Cache (pixmap_cache)")
+                        y_tab += 16
+                        mono = QFont("Consolas")
+                        mono.setPointSize(9)
+                        painter.setFont(mono)
+                        for name, size_bytes in rows:
+                            lines = [name, f"{_fmt_size(size_bytes)}"]
+                            for line in lines:
+                                painter.drawText(x, y_tab, line)
+                                y_tab += 14
+                        painter.setFont(font)
             painter.restore()
         except Exception:
             pass
@@ -477,7 +529,7 @@ class ImageCanvas(QGraphicsView):
                 )
                 scale_x = tw / width
                 scale_y = th / height
-                vips_resized = pyvips_img.resize(
+                vips_resized = vips_img.resize(
                     scale_x, kernel="lanczos3", vscale=scale_y
                 )
                 mem = vips_resized.write_to_memory()

@@ -3,6 +3,8 @@ import os
 import numpy as np
 import pyvips  # type: ignore
 
+from .logger import get_logger
+
 
 def detect_trim_box_stats(path: str, profile: str | None = None) -> tuple[int, int, int, int] | None:
     """Detects a trim box based on simple statistics.
@@ -60,7 +62,5 @@ def apply_trim_to_file(path: str, crop, overwrite: bool, alg: str | None = None)
     image.write_to_file(out_path)
     return out_path
 
-
-from .logger import get_logger
 
 _logger = get_logger("trim")
