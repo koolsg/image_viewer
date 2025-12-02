@@ -424,8 +424,25 @@ class ImageCanvas(QGraphicsView):
             font = QFont()
             font.setPointSize(10)
             painter.setFont(font)
-            painter.drawText(x, y, title)
-            painter.drawText(x, y + 18, info)
+            
+            # Measure text to draw background
+            fm = painter.fontMetrics()
+            title_w = fm.horizontalAdvance(title)
+            info_w = fm.horizontalAdvance(info)
+            line_h = fm.height()
+            
+            box_w = max(title_w, info_w) + 20
+            box_h = (line_h * 2) + 10
+            
+            # Draw semi-transparent background
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(QColor(0, 0, 0, 128))
+            painter.drawRoundedRect(8, 8, box_w, box_h, 6, 6)
+            
+            # Draw text
+            painter.setPen(QColor(255, 255, 255))
+            painter.drawText(18, 8 + line_h, title)
+            painter.drawText(18, 8 + line_h * 2, info)
 
             # Debug-only cache summary (View mode): show cached pixmaps and sizes
             try:

@@ -15,7 +15,7 @@ _logger = get_logger("explorer_mode")
 
 def toggle_view_mode(viewer) -> None:
     """Toggle between View Mode and Explorer Mode.
-    
+
     Args:
         viewer: The ImageViewer instance
     """
@@ -26,7 +26,7 @@ def toggle_view_mode(viewer) -> None:
 
 def _update_ui_for_mode(viewer) -> None:
     """Rebuild UI based on current mode.
-    
+
     Args:
         viewer: The ImageViewer instance
     """
@@ -42,11 +42,17 @@ def _update_ui_for_mode(viewer) -> None:
 
 def _setup_view_mode(viewer) -> None:
     """Setup View Mode: show only canvas in fullscreen.
-    
+
     Args:
         viewer: The ImageViewer instance
     """
     try:
+        # Save current window state before switching to View Mode
+        if not viewer.isFullScreen():
+            viewer.explorer_state._saved_geometry = viewer.geometry()
+            viewer.explorer_state._saved_maximized = viewer.isMaximized()
+            _logger.debug("saved explorer window state: maximized=%s", viewer.explorer_state._saved_maximized)
+
         # Disconnect Explorer Grid loader (to prevent UI load after jump)
         try:
             grid = getattr(viewer.explorer_state, "_explorer_grid", None)
@@ -100,11 +106,27 @@ def _setup_view_mode(viewer) -> None:
 
 def _setup_explorer_mode(viewer) -> None:
     """Setup Explorer Mode: tree + grid layout.
-    
+
     Args:
         viewer: The ImageViewer instance
     """
     try:
+        # Restore saved window state if switching from fullscreen View Mode
+        if viewer.isFullScreen():
+            viewer.showNormal()
+            viewer.menuBar().setVisible(True)
+            if hasattr(viewer, "fullscreen_action"):
+                viewer.fullscreen_action.setChecked(False)
+
+        # Restore previous Explorer window state
+        if hasattr(viewer.explorer_state, "_saved_geometry") and hasattr(viewer.explorer_state, "_saved_maximized"):
+            if viewer.explorer_state._saved_maximized:
+                viewer.showMaximized()
+                _logger.debug("restored explorer window state: maximized")
+            else:
+                viewer.setGeometry(viewer.explorer_state._saved_geometry)
+                _logger.debug("restored explorer window state: normal geometry")
+
         from image_viewer.ui_explorer_grid import ThumbnailGridWidget
         from image_viewer.ui_explorer_tree import FolderTreeWidget
 
@@ -222,7 +244,7 @@ def _setup_explorer_mode(viewer) -> None:
 
 def _on_explorer_folder_selected(viewer, folder_path: str, grid) -> None:
     """Handle folder selection in explorer.
-    
+
     Args:
         viewer: The ImageViewer instance
         folder_path: Selected folder path
@@ -239,7 +261,7 @@ def _on_explorer_folder_selected(viewer, folder_path: str, grid) -> None:
 
 def _on_explorer_image_selected(viewer, image_path: str) -> None:
     """Handle image selection in explorer.
-    
+
     Args:
         viewer: The ImageViewer instance
         image_path: Selected image path
@@ -275,16 +297,22 @@ def _on_explorer_image_selected(viewer, image_path: str) -> None:
         except Exception:
             pass
 
-        # Display image by image_path
-        if image_path in viewer.image_files:
-            viewer.current_index = viewer.image_files.index(image_path)
+        # Display image by image_path (normalize paths for comparison)
+        normalized_path = str(Path(image_path).resolve())
+        normalized_files = [str(Path(f).resolve()) for f in viewer.image_files]
+
+        if normalized_path in normalized_files:
+            viewer.current_index = normalized_files.index(normalized_path)
         else:
             # If it's a new folder, open it first
             new_folder = str(Path(image_path).parent)
             _logger.debug("explorer select: open_folder_at %s", new_folder)
             open_folder_at(viewer, new_folder)
-            if image_path in viewer.image_files:
-                viewer.current_index = viewer.image_files.index(image_path)
+            # Re-normalize after opening folder
+            normalized_path = str(Path(image_path).resolve())
+            normalized_files = [str(Path(f).resolve()) for f in viewer.image_files]
+            if normalized_path in normalized_files:
+                viewer.current_index = normalized_files.index(normalized_path)
 
         _logger.debug(
             "explorer select display: idx=%s path=%s",
@@ -305,7 +333,7 @@ def _on_explorer_image_selected(viewer, image_path: str) -> None:
 
 def open_folder_at(viewer, folder_path: str) -> None:
     """Open a specific folder directly.
-    
+
     Args:
         viewer: The ImageViewer instance
         folder_path: Path to the folder to open

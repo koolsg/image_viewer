@@ -315,6 +315,18 @@ class ImageViewer(QMainWindow):
         elif key == Qt.Key.Key_F11:
             self.toggle_fullscreen()
             return
+        elif key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            # Enter key: toggle between View and Explorer mode
+            is_view_mode = getattr(self.explorer_state, "view_mode", True)
+            if is_view_mode:
+                # In View Mode: switch to Explorer Mode
+                self.toggle_view_mode()
+                return
+            else:
+                # In Explorer Mode: let the grid handle Enter (for image activation)
+                # Don't consume the event, pass it to child widgets
+                super().keyPressEvent(event)
+                return
 
         # Other keys require images to be loaded
         if not self.image_files:
@@ -684,6 +696,8 @@ def run(argv: list[str] | None = None) -> int:
     start_path = Path(start_path_str) if start_path_str else None
 
     app = QApplication(argv)
+    from image_viewer.styles import apply_dark_theme
+    apply_dark_theme(app)
     viewer = ImageViewer()
 
     # Case 1: started with an image file → open its folder and show that image in View mode, fullscreen.
