@@ -19,6 +19,7 @@ from PySide6.QtCore import (
     QPoint,
     QSize,
     Qt,
+    QTimer,
     QUrl,
     Signal,
 )
@@ -38,6 +39,7 @@ from PySide6.QtWidgets import (
     QMenu,
     QMessageBox,
     QStackedLayout,
+    QToolTip,
     QTreeView,
     QVBoxLayout,
     QWidget,
@@ -285,10 +287,10 @@ class ImageFileSystemModel(QFileSystemModel):
             self._thumb_pending.discard(path)
             if error or image_data is None:
                 return
-            height, width, _ = image_data.shape
-            bytes_per_line = 3 * width
+            thumb_height, thumb_width, _ = image_data.shape
+            bytes_per_line = 3 * thumb_width
             q_image = QImage(
-                image_data.data, width, height, bytes_per_line, QImage.Format_RGB888
+                image_data.data, thumb_width, thumb_height, bytes_per_line, QImage.Format_RGB888
             )
             pixmap = QPixmap.fromImage(q_image)
             if pixmap.isNull():
@@ -300,10 +302,21 @@ class ImageFileSystemModel(QFileSystemModel):
                 Qt.SmoothTransformation,
             )
             self._thumb_cache[path] = QIcon(scaled)
+
+            # Read original image resolution (not thumbnail size)
             prev = self._meta.get(path, (None, None, None, None))
+            orig_width = prev[0]
+            orig_height = prev[1]
+            with contextlib.suppress(Exception):
+                reader = QImageReader(path)
+                size = reader.size()
+                if size.isValid():
+                    orig_width = int(size.width())
+                    orig_height = int(size.height())
+
             self._meta[path] = (
-                int(width),
-                int(height),
+                orig_width,
+                orig_height,
                 prev[2],
                 prev[3],
             )
@@ -358,6 +371,72 @@ class ImageFileSystemModel(QFileSystemModel):
             pass
 
 
+# --------------------------- Custom ListView with Better Tooltips ------------
+class _ThumbnailListView(QListView):
+    """Custom QListView with smooth mouse-following tooltips."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setMouseTracking(True)
+        self._last_tooltip_index = QModelIndex()
+        self._last_tooltip_text = ""
+        self._tooltip_timer = QTimer(self)
+        self._tooltip_timer.setSingleShot(True)
+        self._tooltip_timer.timeout.connect(self._show_pending_tooltip)
+        self._pending_tooltip_pos = QPoint()
+        self._pending_tooltip_text = ""
+        self._current_mouse_pos = QPoint()
+
+    def mouseMoveEvent(self, event):
+        """Show tooltip at cursor position when hovering over items."""
+        super().mouseMoveEvent(event)
+        try:
+            self._current_mouse_pos = event.globalPosition().toPoint()
+            index = self.indexAt(event.pos())
+
+            if index.isValid():
+                tooltip = self.model().data(index, Qt.ToolTipRole)
+                if tooltip:
+                    tooltip_str = str(tooltip)
+                    # If same item, update position immediately for smooth following
+                    if index == self._last_tooltip_index and tooltip_str == self._last_tooltip_text:
+                        QToolTip.showText(self._current_mouse_pos, tooltip_str, self)
+                    # If different item, show with slight delay to avoid flicker
+                    elif index != self._last_tooltip_index:
+                        self._last_tooltip_index = index
+                        self._last_tooltip_text = tooltip_str
+                        self._pending_tooltip_pos = self._current_mouse_pos
+                        self._pending_tooltip_text = tooltip_str
+                        self._tooltip_timer.start(100)  # 100ms delay for new items
+            # Mouse left item area
+            elif self._last_tooltip_index.isValid():
+                self._last_tooltip_index = QModelIndex()
+                self._last_tooltip_text = ""
+                self._tooltip_timer.stop()
+                QToolTip.hideText()
+        except Exception:
+            pass
+
+    def _show_pending_tooltip(self):
+        """Show the pending tooltip after timer expires."""
+        try:
+            if self._pending_tooltip_text:
+                QToolTip.showText(self._pending_tooltip_pos, self._pending_tooltip_text, self)
+        except Exception:
+            pass
+
+    def leaveEvent(self, event):
+        """Hide tooltip when mouse leaves the widget."""
+        super().leaveEvent(event)
+        try:
+            self._tooltip_timer.stop()
+            QToolTip.hideText()
+            self._last_tooltip_index = QModelIndex()
+            self._last_tooltip_text = ""
+        except Exception:
+            pass
+
+
 # --------------------------- Main Widget -------------------------------------
 class ThumbnailGridWidget(QWidget):
     """Explorer widget with thumbnail view (icons) and detail view (columns)."""
@@ -388,7 +467,7 @@ class ThumbnailGridWidget(QWidget):
         self._model.setIconProvider(_ImageOnlyIconProvider())
 
         # Thumbnail view (icon grid)
-        self._list = QListView()
+        self._list = _ThumbnailListView()
         self._list.setModel(self._model)
         self._list.setViewMode(QListView.ViewMode.IconMode)
         self._list.setResizeMode(QListView.ResizeMode.Adjust)
