@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import os
-from typing import Any
+from typing import Any, ClassVar
 
 from PySide6.QtGui import QColor
 
@@ -12,12 +12,7 @@ _logger = get_logger("settings")
 
 
 class SettingsManager:
-    def __init__(self, settings_path: str):
-        self.settings_path = settings_path
-        self._settings: dict[str, Any] = {}
-        self.load()
-
-    DEFAULTS: dict[str, Any] = {
+    DEFAULTS: ClassVar[dict[str, Any]] = {
         "background_color": "#000000",
         "fast_view_enabled": False,
         "press_zoom_multiplier": 3.0,
@@ -27,6 +22,11 @@ class SettingsManager:
         "thumbnail_hspacing": 10,
         "thumbnail_cache_name": "image_viewer_thumbs",
     }
+
+    def __init__(self, settings_path: str):
+        self.settings_path = settings_path
+        self._settings: dict[str, Any] = {}
+        self.load()
 
     def load(self) -> None:
         try:

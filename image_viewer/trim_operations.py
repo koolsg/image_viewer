@@ -15,11 +15,11 @@ _logger = get_logger("trim_operations")
 
 def start_trim_workflow(viewer) -> None:
     """Start the trim workflow.
-    
+
     Handles two modes:
     1. Batch save as copies: parallel processing with progress dialog
     2. Overwrite existing: file-by-file confirmation with preview
-    
+
     Args:
         viewer: The ImageViewer instance
     """
@@ -55,7 +55,7 @@ def start_trim_workflow(viewer) -> None:
         overwrite_btn = mode_box.addButton(
             "Overwrite", QMessageBox.ButtonRole.AcceptRole
         )
-        saveas_btn = mode_box.addButton(
+        _saveas_btn = mode_box.addButton(
             "Save Copy (_trimmed)", QMessageBox.ButtonRole.ActionRole
         )
         cancel_btn = mode_box.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
@@ -122,9 +122,9 @@ def start_trim_workflow(viewer) -> None:
                 sc_y = QShortcut(QKeySequence("Y"), box)
                 sc_n = QShortcut(QKeySequence("N"), box)
                 sc_a = QShortcut(QKeySequence("A"), box)
-                sc_y.activated.connect(lambda: yes.click())
-                sc_n.activated.connect(lambda: no.click())
-                sc_a.activated.connect(lambda: abort_btn.click())
+                sc_y.activated.connect(lambda btn=yes: btn.click())
+                sc_n.activated.connect(lambda btn=no: btn.click())
+                sc_a.activated.connect(lambda btn=abort_btn: btn.click())
             except Exception:
                 pass
             box.setDefaultButton(yes)
