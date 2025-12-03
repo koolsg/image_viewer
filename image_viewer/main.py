@@ -621,7 +621,6 @@ class ImageViewer(QMainWindow):
         width: int | None = None,
         height: int | None = None,
         hspacing: int | None = None,
-        cache_name: str | None = None,
     ) -> None:
         try:
             grid = getattr(self.explorer_state, "_explorer_grid", None)
@@ -644,10 +643,6 @@ class ImageViewer(QMainWindow):
                 self._save_settings_key("thumbnail_hspacing", int(hspacing))
                 if grid and hasattr(grid, "set_horizontal_spacing"):
                     grid.set_horizontal_spacing(int(hspacing))
-            if cache_name:
-                self._save_settings_key("thumbnail_cache_name", cache_name)
-                if grid and hasattr(grid, "set_disk_cache_folder_name"):
-                    grid.set_disk_cache_folder_name(cache_name)
         except Exception as e:
             logger.debug("apply_thumbnail_settings failed: %s", e)
 

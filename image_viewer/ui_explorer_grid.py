@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import contextlib
 import ctypes
-import hashlib
 import shutil
 from collections.abc import Iterable
 from ctypes import wintypes
@@ -46,6 +45,7 @@ from PySide6.QtWidgets import (
 )
 
 from .logger import get_logger
+from .thumbnail_cache import ThumbnailCache
 
 _logger = get_logger("ui_explorer_grid")
 
@@ -69,7 +69,7 @@ class ImageFileSystemModel(QFileSystemModel):
         self._thumb_size: tuple[int, int] = (256, 195)
         self._view_mode: str = "thumbnail"
         self._meta: dict[str, tuple[int | None, int | None, int | None, float | None]] = {}
-        self._disk_cache_name: str = "image_viewer_thumbs"
+        self._db_cache: ThumbnailCache | None = None
 
     # --- loader wiring -----------------------------------------------------
     def set_loader(self, loader) -> None:
@@ -320,55 +320,80 @@ class ImageFileSystemModel(QFileSystemModel):
                 prev[2],
                 prev[3],
             )
-            self._save_disk_icon(path, scaled)
+            self._save_disk_icon(path, scaled, orig_width, orig_height)
             idx = self.index(path)
             if idx.isValid():
                 self.dataChanged.emit(idx, idx, [Qt.DecorationRole, Qt.DisplayRole])
         except Exception as exc:
             _logger.debug("thumbnail_ready failed: %s", exc)
 
-    def _disk_dir(self, path: str) -> Path:
-        return Path(path).parent / ".cache" / self._disk_cache_name
-
-    def _disk_path(self, path: str) -> Path:
-        try:
-            stat = Path(path).stat()
-            stamp = f"{int(stat.st_mtime)}_{stat.st_size}"
-        except Exception:
-            stamp = "unknown"
-        base = f"{Path(path).name}_{self._thumb_size[0]}x{self._thumb_size[1]}_{stamp}"
-        digest = hashlib.sha1(base.encode("utf-8")).hexdigest()
-        return self._disk_dir(path) / f"{digest}.png"
+    def _ensure_db_cache(self, path: str) -> None:
+        """Ensure database cache is initialized for the given path's directory."""
+        if self._db_cache is None:
+            cache_dir = Path(path).parent
+            self._db_cache = ThumbnailCache(cache_dir, "SwiftView_thumbs.db")
 
     def _load_disk_icon(self, path: str) -> QIcon | None:
+        """Load thumbnail from SQLite cache."""
         try:
-            p = self._disk_path(path)
-            if not p.exists():
+            self._ensure_db_cache(path)
+            if not self._db_cache:
                 return None
-            pix = QPixmap(str(p))
-            if pix.isNull():
+
+            # Get file stats
+            file_path = Path(path)
+            if not file_path.exists():
                 return None
+            stat = file_path.stat()
+            mtime = stat.st_mtime
+            size = stat.st_size
+
+            # Try to load from cache
+            result = self._db_cache.get(
+                path, mtime, size, self._thumb_size[0], self._thumb_size[1]
+            )
+            if result is None:
+                return None
+
+            pixmap, orig_width, orig_height = result
+
+            # Update metadata
             prev = self._meta.get(path, (None, None, None, None))
-            width = prev[0]
-            height = prev[1]
-            with contextlib.suppress(Exception):
-                reader = QImageReader(path)
-                size = reader.size()
-                if size.isValid():
-                    width = int(size.width())
-                    height = int(size.height())
-            self._meta[path] = (width, height, prev[2], prev[3])
-            return QIcon(pix)
-        except Exception:
+            self._meta[path] = (orig_width, orig_height, prev[2], prev[3])
+
+            return QIcon(pixmap)
+        except Exception as exc:
+            _logger.debug("failed to load thumbnail from cache: %s", exc)
             return None
 
-    def _save_disk_icon(self, path: str, pixmap: QPixmap) -> None:
+    def _save_disk_icon(self, path: str, pixmap: QPixmap, orig_width: int | None, orig_height: int | None) -> None:
+        """Save thumbnail to SQLite cache."""
         try:
-            p = self._disk_path(path)
-            p.parent.mkdir(parents=True, exist_ok=True)
-            pixmap.save(str(p), "PNG")
-        except Exception:
-            pass
+            self._ensure_db_cache(path)
+            if not self._db_cache:
+                return
+
+            # Get file stats
+            file_path = Path(path)
+            if not file_path.exists():
+                return
+            stat = file_path.stat()
+            mtime = stat.st_mtime
+            size = stat.st_size
+
+            # Save to cache
+            self._db_cache.set(
+                path,
+                mtime,
+                size,
+                orig_width,
+                orig_height,
+                self._thumb_size[0],
+                self._thumb_size[1],
+                pixmap,
+            )
+        except Exception as exc:
+            _logger.debug("failed to save thumbnail to cache: %s", exc)
 
 
 # --------------------------- Custom ListView with Better Tooltips ------------
@@ -522,13 +547,6 @@ class ThumbnailGridWidget(QWidget):
 
     def resume_pending_thumbnails(self) -> None:
         return
-
-    def set_disk_cache_folder_name(self, name: str) -> None:
-        try:
-            cleaned = name.strip() or "image_viewer_thumbs"
-            self._model._disk_cache_name = cleaned
-        except Exception:
-            pass
 
     # Public API -----------------------------------------------------------------
     def load_folder(self, folder_path: str) -> None:

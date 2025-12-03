@@ -4,7 +4,6 @@ from PySide6.QtWidgets import (
     QFormLayout,
     QHBoxLayout,
     QLabel,
-    QLineEdit,
     QListWidget,
     QListWidgetItem,
     QPushButton,
@@ -72,12 +71,9 @@ class SettingsDialog(QDialog):
         self._spin_hspacing = QSpinBox()
         self._spin_hspacing.setRange(0, 64)
 
-        self._cache_name = QLineEdit()
-
         form.addRow(QLabel("Thumbnail Width (px)"), self._spin_thumb_w)
         form.addRow(QLabel("Thumbnail Height (px)"), self._spin_thumb_h)
         form.addRow(QLabel("Thumbnail Horizontal Spacing"), self._spin_hspacing)
-        form.addRow(QLabel("Cache folder name (.cache/<name>)"), self._cache_name)
 
         self._pages.addWidget(self._page_thumb)
 
@@ -117,7 +113,6 @@ class SettingsDialog(QDialog):
         self._spin_thumb_h.valueChanged.connect(self._on_setting_changed)
         self._spin_hspacing.valueChanged.connect(self._on_setting_changed)
         self._spin_press_zoom.valueChanged.connect(self._on_setting_changed)
-        self._cache_name.textChanged.connect(self._on_setting_changed)
 
         # Button handlers
         self._btn_apply.clicked.connect(self._on_apply_clicked)
@@ -156,9 +151,6 @@ class SettingsDialog(QDialog):
             self._spin_press_zoom.setValue(
                 float(self._viewer._settings_manager.get("press_zoom_multiplier"))
             )
-            self._cache_name.setText(
-                str(self._viewer._settings_manager.get("thumbnail_cache_name", "image_viewer_thumbs"))
-            )
         except Exception as ex:
             _logger.debug("init settings failed: %s", ex)
 
@@ -169,7 +161,6 @@ class SettingsDialog(QDialog):
             "thumbnail_height": int(self._spin_thumb_h.value()),
             "thumbnail_hspacing": int(self._spin_hspacing.value()),
             "press_zoom_multiplier": float(self._spin_press_zoom.value()),
-            "thumbnail_cache_name": self._cache_name.text().strip(),
         }
 
     def _on_setting_changed(self, *_):
@@ -193,7 +184,6 @@ class SettingsDialog(QDialog):
                     width=settings["thumbnail_width"],
                     height=settings["thumbnail_height"],
                     hspacing=settings["thumbnail_hspacing"],
-                    cache_name=settings["thumbnail_cache_name"],
                 )
             if hasattr(self._viewer, "set_press_zoom_multiplier"):
                 self._viewer.set_press_zoom_multiplier(settings["press_zoom_multiplier"])
