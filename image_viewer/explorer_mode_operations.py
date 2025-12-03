@@ -112,14 +112,7 @@ def _setup_explorer_mode(viewer) -> None:
         viewer: The ImageViewer instance
     """
     try:
-        # Restore saved window state if switching from fullscreen View Mode
-        if viewer.isFullScreen():
-            viewer.showNormal()
-            viewer.menuBar().setVisible(True)
-            if hasattr(viewer, "fullscreen_action"):
-                viewer.fullscreen_action.setChecked(False)
-
-        # Restore previous Explorer window state
+        # Restore previous Explorer window state (fullscreen should already be exited)
         if hasattr(viewer.explorer_state, "_saved_geometry") and hasattr(viewer.explorer_state, "_saved_maximized"):
             if viewer.explorer_state._saved_maximized:
                 viewer.showMaximized()

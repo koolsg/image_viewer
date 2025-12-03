@@ -301,16 +301,9 @@ class ImageViewer(QMainWindow):
     def keyPressEvent(self, event):
         key = event.key()
 
-        # F9 toggles view/explorer, F5 refreshes explorer, F11 fullscreen
+        # F5 refreshes explorer, F11 fullscreen
         if key == Qt.Key.Key_F5:
             self.refresh_explorer()
-            return
-        elif key == Qt.Key.Key_F9:
-            was_view_mode = getattr(self.explorer_state, "view_mode", True)
-            self.toggle_view_mode()
-            if was_view_mode:
-                with contextlib.suppress(Exception):
-                    self.exit_fullscreen()
             return
         elif key == Qt.Key.Key_F11:
             self.toggle_fullscreen()
@@ -319,7 +312,9 @@ class ImageViewer(QMainWindow):
             # Enter key: toggle between View and Explorer mode
             is_view_mode = getattr(self.explorer_state, "view_mode", True)
             if is_view_mode:
-                # In View Mode: switch to Explorer Mode
+                # In View Mode: 1) Exit fullscreen first, 2) Then switch to Explorer Mode
+                if self.isFullScreen():
+                    self.exit_fullscreen()
                 self.toggle_view_mode()
                 return
             else:

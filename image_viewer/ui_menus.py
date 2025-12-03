@@ -111,7 +111,7 @@ def build_menus(viewer: "ImageViewer") -> None:
     # Explorer mode
     viewer.explorer_mode_action = QAction("Explorer Mode(&E)", viewer, checkable=True)
     viewer.explorer_mode_action.setChecked(False)
-    viewer.explorer_mode_action.setShortcut("F9")
+    # No keyboard shortcut - use Enter key in View Mode to switch
     viewer.explorer_mode_action.triggered.connect(viewer.toggle_view_mode)
     view_menu.addSeparator()
     view_menu.addAction(viewer.explorer_mode_action)
