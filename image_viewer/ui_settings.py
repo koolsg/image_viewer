@@ -31,6 +31,7 @@ class SettingsDialog(QDialog):
 
         self._nav = QListWidget()
         self._nav.setFixedWidth(160)
+        self._nav.addItem(QListWidgetItem("Appearance"))
         self._nav.addItem(QListWidgetItem("Thumbnail"))
         self._nav.addItem(QListWidgetItem("View"))
         root.addWidget(self._nav)
@@ -42,6 +43,19 @@ class SettingsDialog(QDialog):
         pages_layout.setContentsMargins(0, 0, 0, 0)
         pages_layout.addWidget(self._pages, 1)
         root.addWidget(pages_container, 1)
+
+        # Page: Appearance
+        from PySide6.QtWidgets import QComboBox
+
+        self._page_appearance = QWidget()
+        appearance_form = QFormLayout(self._page_appearance)
+
+        self._combo_theme = QComboBox()
+        self._combo_theme.addItem("Dark", "dark")
+        self._combo_theme.addItem("Light", "light")
+        appearance_form.addRow(QLabel("Theme"), self._combo_theme)
+
+        self._pages.addWidget(self._page_appearance)
 
         # Page: Thumbnail
         self._page_thumb = QWidget()
@@ -98,6 +112,7 @@ class SettingsDialog(QDialog):
         self._dirty = False
 
         # Track changes
+        self._combo_theme.currentIndexChanged.connect(self._on_setting_changed)
         self._spin_thumb_w.valueChanged.connect(self._on_setting_changed)
         self._spin_thumb_h.valueChanged.connect(self._on_setting_changed)
         self._spin_hspacing.valueChanged.connect(self._on_setting_changed)
@@ -110,6 +125,12 @@ class SettingsDialog(QDialog):
 
     def _init_values(self):
         try:
+            # Theme
+            theme = str(self._viewer._settings_manager.get("theme", "dark"))
+            idx = self._combo_theme.findData(theme)
+            if idx >= 0:
+                self._combo_theme.setCurrentIndex(idx)
+
             width = 256
             height = 195
             hspacing = 10
@@ -141,8 +162,9 @@ class SettingsDialog(QDialog):
         except Exception as ex:
             _logger.debug("init settings failed: %s", ex)
 
-    def _collect_settings(self) -> dict[str, float | int]:
+    def _collect_settings(self) -> dict[str, float | int | str]:
         return {
+            "theme": str(self._combo_theme.currentData()),
             "thumbnail_width": int(self._spin_thumb_w.value()),
             "thumbnail_height": int(self._spin_thumb_h.value()),
             "thumbnail_hspacing": int(self._spin_hspacing.value()),
@@ -161,6 +183,11 @@ class SettingsDialog(QDialog):
     def _on_apply_clicked(self):
         try:
             settings = self._collect_settings()
+
+            # Apply theme
+            if hasattr(self._viewer, "apply_theme"):
+                self._viewer.apply_theme(settings["theme"])
+
             if hasattr(self._viewer, "apply_thumbnail_settings"):
                 self._viewer.apply_thumbnail_settings(
                     width=settings["thumbnail_width"],

@@ -672,6 +672,27 @@ class ImageViewer(QMainWindow):
         """Open a specific folder directly (used in explorer mode)."""
         open_folder_at(self, folder_path)
 
+    def apply_theme(self, theme: str) -> None:
+        """Apply a theme and save to settings.
+
+        Args:
+            theme: Theme name ("dark" or "light")
+        """
+        try:
+            from image_viewer.styles import apply_theme
+
+            app = getattr(self, "_current_app", None)
+            if app is None:
+                from PySide6.QtWidgets import QApplication
+                app = QApplication.instance()
+
+            if app:
+                apply_theme(app, theme)
+                self._save_settings_key("theme", theme)
+                logger.debug("theme applied: %s", theme)
+        except Exception as e:
+            logger.error("failed to apply theme: %s", e)
+
 
 def run(argv: list[str] | None = None) -> int:
     """Application entrypoint (packaging-friendly)."""
@@ -696,9 +717,13 @@ def run(argv: list[str] | None = None) -> int:
     start_path = Path(start_path_str) if start_path_str else None
 
     app = QApplication(argv)
-    from image_viewer.styles import apply_dark_theme
-    apply_dark_theme(app)
     viewer = ImageViewer()
+
+    # Apply theme from settings (default: dark)
+    theme = viewer._settings_manager.get("theme", "dark")
+    from image_viewer.styles import apply_theme
+    apply_theme(app, theme)
+    viewer._current_app = app  # Store app reference for theme switching
 
     # Case 1: started with an image file → open its folder and show that image in View mode, fullscreen.
     if start_path and start_path.is_file():

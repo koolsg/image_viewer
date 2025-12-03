@@ -402,37 +402,8 @@ class ThumbnailGridWidget(QWidget):
         self._list.setAcceptDrops(True)
         self._list.activated.connect(self._on_activated)
         self._list.doubleClicked.connect(self._on_activated)
-        self._list.setStyleSheet(
-            """
-            QListView {
-                outline: 0;
-            }
-            QListView::item {
-                border: 0;
-            }
-            QListView::item:selected {
-                background: transparent;
-                color: palette(text);
-                outline: 20px solid #4A90E2;
-                outline-offset: -10px;
-            }
-            QListView::item:selected:active {
-                background: transparent;
-                color: palette(text);
-                outline: 20px solid #4A90E2;
-                outline-offset: -10px;
-            }
-            QListView::item:selected:!active {
-                background: transparent;
-                color: palette(text);
-            }
-            QListView::item:hover {
-                outline: 1px solid rgba(74, 144, 226, 120);
-                outline-offset: -2px;
-                background: transparent;
-            }
-            """
-        )
+        # Style will be applied by theme system
+        self._list.setObjectName("explorerThumbnailList")
 
         # Detail view (columns)
         self._tree = QTreeView()
@@ -445,25 +416,8 @@ class ThumbnailGridWidget(QWidget):
         self._tree.header().setStretchLastSection(True)
         with contextlib.suppress(Exception):
             self._tree.sortByColumn(0, Qt.AscendingOrder)
-        self._tree.setStyleSheet(
-            """
-            QTreeView::item:selected {
-                background: rgba(74, 144, 226, 80);
-                color: black;
-                border: none;
-                outline: 0;
-            }
-            QTreeView::item:selected:active {
-                background: rgba(74, 144, 226, 110);
-                color: black;
-                border: none;
-                outline: 0;
-            }
-            QTreeView::item:hover {
-                background: rgba(74, 144, 226, 30);
-            }
-            """
-        )
+        # Style will be applied by theme system
+        self._tree.setObjectName("explorerDetailTree")
 
         self._stack = QStackedLayout()
         self._stack.addWidget(self._list)  # index 0 thumbnail

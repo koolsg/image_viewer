@@ -22,6 +22,11 @@ class FolderTreeWidget(QTreeWidget):
         self.itemClicked.connect(self._on_item_clicked)
         self.setMinimumWidth(250)
         self.setMaximumWidth(500)
+        self.setIndentation(16)
+        self.setAnimated(True)
+
+        # Style will be applied by theme system
+        self.setObjectName("explorerFolderTree")
 
         _logger.debug("FolderTreeWidget initialized")
 

@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import QStackedWidget
 
 from .logger import get_logger
@@ -166,6 +167,9 @@ def _setup_explorer_mode(viewer) -> None:
         from PySide6.QtWidgets import QSplitter
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
+        # Style will be applied by theme system
+        splitter.setObjectName("explorerSplitter")
+        splitter.setHandleWidth(1)
         tree = FolderTreeWidget()
         grid = ThumbnailGridWidget()
         try:
@@ -267,19 +271,6 @@ def _on_explorer_image_selected(viewer, image_path: str) -> None:
         image_path: Selected image path
     """
     try:
-        # Switch to View Mode and display the image
-        if not viewer.explorer_state.view_mode:
-            viewer.explorer_state.view_mode = True
-            _update_ui_for_mode(viewer)
-
-        # Ensure focus for immediate arrow key/shortcut response
-        try:
-            viewer.setFocus(Qt.FocusReason.OtherFocusReason)
-            if hasattr(viewer, "canvas") and viewer.canvas is not None:
-                viewer.canvas.setFocus(Qt.FocusReason.OtherFocusReason)
-        except Exception:
-            pass
-
         # Calculate jump distance (for debugging)
         try:
             cur_idx = viewer.current_index
@@ -297,6 +288,7 @@ def _on_explorer_image_selected(viewer, image_path: str) -> None:
         except Exception:
             pass
 
+        # Set current_index BEFORE switching to View Mode
         # Display image by image_path (normalize paths for comparison)
         normalized_path = str(Path(image_path).resolve())
         normalized_files = [str(Path(f).resolve()) for f in viewer.image_files]
@@ -319,7 +311,34 @@ def _on_explorer_image_selected(viewer, image_path: str) -> None:
             viewer.current_index,
             image_path,
         )
+
+        # Switch to View Mode and display the image
+        if not viewer.explorer_state.view_mode:
+            viewer.explorer_state.view_mode = True
+            _update_ui_for_mode(viewer)
+
+        # Clear canvas and show loading state before displaying the selected image
+        if hasattr(viewer, "canvas") and viewer.canvas is not None:
+            try:
+                # Create a blank pixmap to clear old image
+                blank = QPixmap(1, 1)
+                blank.fill(Qt.GlobalColor.black)
+                viewer.canvas.set_pixmap(blank)
+                viewer._update_status("Loading...")
+            except Exception:
+                pass
+
+        # Display the selected image
         viewer.display_image()
+
+        # Ensure focus for immediate arrow key/shortcut response
+        try:
+            viewer.setFocus(Qt.FocusReason.OtherFocusReason)
+            if hasattr(viewer, "canvas") and viewer.canvas is not None:
+                viewer.canvas.setFocus(Qt.FocusReason.OtherFocusReason)
+        except Exception:
+            pass
+
         with contextlib.suppress(Exception):
             viewer.enter_fullscreen()
         # Prevent excessive prefetching right after switching
