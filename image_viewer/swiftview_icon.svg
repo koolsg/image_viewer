@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="256" height="256" viewBox="0 0 256 256" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <!-- Modern gradient -->
+    <linearGradient id="mainGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#6366F1"/>
+      <stop offset="100%" style="stop-color:#4F46E5"/>
+    </linearGradient>
+    <linearGradient id="accentGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#22D3EE"/>
+      <stop offset="100%" style="stop-color:#06B6D4"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Clean rounded square background -->
+  <rect x="16" y="16" width="224" height="224" rx="48" ry="48" fill="url(#mainGradient)"/>
+
+  <!-- Stylized "S" + Arrow combined shape (Swift symbol) -->
+  <path d="M 168 72
+           C 168 72, 120 95, 88 130
+           C 115 115, 145 108, 168 115
+           C 145 125, 110 145, 88 175
+           C 130 155, 175 145, 195 155
+           L 175 135
+           L 200 128
+           L 175 121
+           L 195 100
+           C 175 110, 145 105, 120 115
+           C 145 95, 168 72, 168 72 Z"
+        fill="white" opacity="0.95"/>
+
+  <!-- Speed accent line -->
+  <path d="M 56 128 L 95 128"
+        stroke="url(#accentGradient)" stroke-width="8" stroke-linecap="round"/>
+
+  <!-- Small accent dots -->
+  <circle cx="56" cy="100" r="6" fill="#22D3EE" opacity="0.7"/>
+  <circle cx="56" cy="156" r="6" fill="#22D3EE" opacity="0.7"/>
+</svg>
