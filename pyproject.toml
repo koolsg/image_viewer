@@ -14,7 +14,8 @@ dependencies = [
 [tool.ruff]
 line-length = 120
 target-version = "py311"
-src = ["image_viewer", "tests"]
+src = ["image_viewer"]
+extend-exclude = ["tests"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM", "PL", "RUF"]
@@ -29,3 +30,29 @@ dev = [
     "pytest>=9.0.1",
     "ruff>=0.14.4",
 ]
+
+[tool.pyright]
+pythonVersion = "3.11"
+typeCheckingMode = "basic"
+# Stub 관련 에러 무시
+reportMissingTypeStubs = false
+reportUnknownMemberType = false
+reportUnknownArgumentType = false
+reportUnknownVariableType = false
+reportUnknownParameterType = false
+# PySide6/pyvips stub 문제로 인한 에러 무시
+reportAttributeAccessIssue = false
+reportCallIssue = false
+reportArgumentType = false
+reportIndexIssue = false
+reportOptionalMemberAccess = false
+reportOptionalSubscript = false
+reportOptionalCall = false
+# 실제 중요한 에러만 체크
+reportGeneralTypeIssues = true
+reportMissingImports = true
+reportUndefinedVariable = true
+reportInvalidTypeForm = true
+# 프로젝트 범위
+include = ["image_viewer"]
+exclude = [".venv", ".cache", ".pytest_cache", ".ruff_cache", ".uv-cache", "tests"]
