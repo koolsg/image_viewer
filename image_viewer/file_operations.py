@@ -7,6 +7,7 @@ from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import QApplication, QMessageBox
 from send2trash import send2trash
 
+from .busy_cursor import busy_cursor
 from .logger import get_logger
 
 _logger = get_logger("file_operations")
@@ -88,40 +89,41 @@ def delete_current_file(viewer) -> None:
         _logger.debug("[delete] settle phase error: %s", ex)
 
     # 2) Actual move to trash (with retries)
-    try:
+    with busy_cursor():
         try:
-            last_err = None
-            for attempt in range(1, 4):
-                try:
-                    _logger.debug("[delete] trash attempt %s", attempt)
-                    send2trash(abs_path)
-                    last_err = None
-                    _logger.debug("[delete] trash success")
-                    break
-                except Exception as ex:
-                    last_err = ex
-                    _logger.debug(
-                        "[delete] trash failed attempt %s: %s", attempt, ex
-                    )
-                    _time.sleep(0.2)
-            if last_err is not None:
-                raise last_err
-        except Exception:
-            raise
-    except Exception as e:
-        _logger.debug("[delete] trash final error: %s", e)
-        QMessageBox.critical(
-            viewer,
-            "Move Failed",
-            (
-                "An error occurred while moving the file to the trash.\n"
-                "Please check your send2trash installation and the path.\n\n"
-                f"Error: {e}\n"
-                f"Original Path: {del_path}\n"
-                f"Absolute Path: {abs_path}\n"
-            ),
-        )
-        return
+            try:
+                last_err = None
+                for attempt in range(1, 4):
+                    try:
+                        _logger.debug("[delete] trash attempt %s", attempt)
+                        send2trash(abs_path)
+                        last_err = None
+                        _logger.debug("[delete] trash success")
+                        break
+                    except Exception as ex:
+                        last_err = ex
+                        _logger.debug(
+                            "[delete] trash failed attempt %s: %s", attempt, ex
+                        )
+                        _time.sleep(0.2)
+                if last_err is not None:
+                    raise last_err
+            except Exception:
+                raise
+        except Exception as e:
+            _logger.debug("[delete] trash final error: %s", e)
+            QMessageBox.critical(
+                viewer,
+                "Move Failed",
+                (
+                    "An error occurred while moving the file to the trash.\n"
+                    "Please check your send2trash installation and the path.\n\n"
+                    f"Error: {e}\n"
+                    f"Original Path: {del_path}\n"
+                    f"Absolute Path: {abs_path}\n"
+                ),
+            )
+            return
 
     # After confirming successful deletion, apply ignore to reliably ignore re-requests/completion signals
     try:

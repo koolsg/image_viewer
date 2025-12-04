@@ -9,6 +9,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QImageReader, QPixmap
 from PySide6.QtWidgets import QApplication, QColorDialog, QInputDialog, QMainWindow
 
+from image_viewer.busy_cursor import busy_cursor
 from image_viewer.decoder import decode_image
 from image_viewer.display_controller import DisplayController
 from image_viewer.explorer_mode_operations import open_folder_at, toggle_view_mode
@@ -237,7 +238,8 @@ class ImageViewer(QMainWindow):
         self._display_controller.open_folder()
 
     def display_image(self) -> None:
-        self._display_controller.display_image()
+        with busy_cursor():
+            self._display_controller.display_image()
 
     def open_convert_dialog(self) -> None:
         try:
@@ -380,9 +382,10 @@ class ImageViewer(QMainWindow):
             if current_path not in self.pixmap_cache:
                 logger.debug("next_image: current image still loading, ignoring input")
                 return
-        self.current_index += 1
-        self.display_image()
-        self.maintain_decode_window()
+        with busy_cursor():
+            self.current_index += 1
+            self.display_image()
+            self.maintain_decode_window()
 
     def prev_image(self):
         if not self.image_files:
@@ -396,9 +399,10 @@ class ImageViewer(QMainWindow):
             if current_path not in self.pixmap_cache:
                 logger.debug("prev_image: current image still loading, ignoring input")
                 return
-        self.current_index -= 1
-        self.display_image()
-        self.maintain_decode_window()
+        with busy_cursor():
+            self.current_index -= 1
+            self.display_image()
+            self.maintain_decode_window()
 
     def first_image(self):
         if not self.image_files:
@@ -622,29 +626,30 @@ class ImageViewer(QMainWindow):
         height: int | None = None,
         hspacing: int | None = None,
     ) -> None:
-        try:
-            grid = getattr(self.explorer_state, "_explorer_grid", None)
-            if width is not None:
-                self._save_settings_key("thumbnail_width", int(width))
-            if height is not None:
-                self._save_settings_key("thumbnail_height", int(height))
-            if grid:
-                try:
-                    if hasattr(grid, "set_thumbnail_size_wh") and (width is not None or height is not None):
-                        w = int(width if width is not None else grid.get_thumbnail_size()[0])
-                        h = int(height if height is not None else grid.get_thumbnail_size()[1])
-                        grid.set_thumbnail_size_wh(w, h)
-                    elif hasattr(grid, "set_thumbnail_size") and width is not None and height is not None:
-                        # Fallback: square
-                        grid.set_thumbnail_size(int(width))
-                except Exception:
-                    pass
-            if hspacing is not None:
-                self._save_settings_key("thumbnail_hspacing", int(hspacing))
-                if grid and hasattr(grid, "set_horizontal_spacing"):
-                    grid.set_horizontal_spacing(int(hspacing))
-        except Exception as e:
-            logger.debug("apply_thumbnail_settings failed: %s", e)
+        with busy_cursor():
+            try:
+                grid = getattr(self.explorer_state, "_explorer_grid", None)
+                if width is not None:
+                    self._save_settings_key("thumbnail_width", int(width))
+                if height is not None:
+                    self._save_settings_key("thumbnail_height", int(height))
+                if grid:
+                    try:
+                        if hasattr(grid, "set_thumbnail_size_wh") and (width is not None or height is not None):
+                            w = int(width if width is not None else grid.get_thumbnail_size()[0])
+                            h = int(height if height is not None else grid.get_thumbnail_size()[1])
+                            grid.set_thumbnail_size_wh(w, h)
+                        elif hasattr(grid, "set_thumbnail_size") and width is not None and height is not None:
+                            # Fallback: square
+                            grid.set_thumbnail_size(int(width))
+                    except Exception:
+                        pass
+                if hspacing is not None:
+                    self._save_settings_key("thumbnail_hspacing", int(hspacing))
+                    if grid and hasattr(grid, "set_horizontal_spacing"):
+                        grid.set_horizontal_spacing(int(hspacing))
+            except Exception as e:
+                logger.debug("apply_thumbnail_settings failed: %s", e)
 
     def _on_explorer_folder_selected(self, folder_path: str, grid) -> None:
         """Handle folder selection in the explorer."""

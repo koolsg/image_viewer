@@ -31,6 +31,7 @@ from PySide6.QtGui import (
     QPixmap,
 )
 from PySide6.QtWidgets import (
+    QApplication,
     QFileIconProvider,
     QFileSystemModel,
     QHeaderView,
@@ -44,6 +45,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from .busy_cursor import busy_cursor
 from .logger import get_logger
 from .thumbnail_cache import ThumbnailCache
 
@@ -70,6 +72,7 @@ class ImageFileSystemModel(QFileSystemModel):
         self._view_mode: str = "thumbnail"
         self._meta: dict[str, tuple[int | None, int | None, int | None, float | None]] = {}
         self._db_cache: ThumbnailCache | None = None
+        self._busy_cursor_active: bool = False
 
     # --- loader wiring -----------------------------------------------------
     def set_loader(self, loader) -> None:
@@ -271,6 +274,13 @@ class ImageFileSystemModel(QFileSystemModel):
             return
         if not self._loader or path in self._thumb_pending:
             return
+
+        # Start busy cursor if not already active
+        if not self._busy_cursor_active:
+            QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+            QApplication.processEvents()
+            self._busy_cursor_active = True
+
         self._thumb_pending.add(path)
         try:
             self._loader.request_load(
@@ -286,6 +296,8 @@ class ImageFileSystemModel(QFileSystemModel):
         try:
             self._thumb_pending.discard(path)
             if error or image_data is None:
+                # Check if all thumbnails are done
+                self._check_thumbnail_completion()
                 return
             thumb_height, thumb_width, _ = image_data.shape
             bytes_per_line = 3 * thumb_width
@@ -294,6 +306,8 @@ class ImageFileSystemModel(QFileSystemModel):
             )
             pixmap = QPixmap.fromImage(q_image)
             if pixmap.isNull():
+                # Check if all thumbnails are done
+                self._check_thumbnail_completion()
                 return
             scaled = pixmap.scaled(
                 self._thumb_size[0],
@@ -324,8 +338,23 @@ class ImageFileSystemModel(QFileSystemModel):
             idx = self.index(path)
             if idx.isValid():
                 self.dataChanged.emit(idx, idx, [Qt.DecorationRole, Qt.DisplayRole])
+
+            # Check if all thumbnails are done
+            self._check_thumbnail_completion()
         except Exception as exc:
             _logger.debug("thumbnail_ready failed: %s", exc)
+            # Check if all thumbnails are done even on error
+            self._check_thumbnail_completion()
+
+    def _check_thumbnail_completion(self) -> None:
+        """Check if all pending thumbnails are complete and restore cursor."""
+        try:
+            if self._busy_cursor_active and not self._thumb_pending:
+                QApplication.restoreOverrideCursor()
+                self._busy_cursor_active = False
+                _logger.debug("thumbnail loading complete, cursor restored")
+        except Exception as exc:
+            _logger.debug("_check_thumbnail_completion failed: %s", exc)
 
     def _ensure_db_cache(self, path: str) -> None:
         """Ensure database cache is initialized for the given path's directory."""
@@ -550,44 +579,46 @@ class ThumbnailGridWidget(QWidget):
 
     # Public API -----------------------------------------------------------------
     def load_folder(self, folder_path: str) -> None:
-        try:
-            if not Path(folder_path).is_dir():
-                _logger.warning("not a directory: %s", folder_path)
-                return
-            idx = self._model.setRootPath(folder_path)
-            self._list.setRootIndex(idx)
-            self._tree.setRootIndex(idx)
-            self._current_folder = folder_path
-            self._list.clearSelection()
-            self._tree.clearSelection()
-            # Column sizing for tree
-            with contextlib.suppress(Exception):
-                header = self._tree.header()
-                base_cols = self._model.columnCount() - 1  # resolution column index
-                header.setSectionResizeMode(QHeaderView.ResizeToContents)
-                header.setStretchLastSection(False)
-                header.setDefaultAlignment(
-                    Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter
-                )
-                # Desired order: Name, Type, Size, Resolution, Modified
-                header.moveSection(2, 1)  # Type next to Name
-                header.moveSection(base_cols, 3)  # Resolution before Modified
-                margin = 16
-                for col in range(self._model.columnCount()):
-                    width = max(self._tree.sizeHintForColumn(col), 48)
-                    self._tree.setColumnWidth(col, width + margin)
-        except Exception as exc:
-            _logger.error("failed to load_folder %s: %s", folder_path, exc)
+        with busy_cursor():
+            try:
+                if not Path(folder_path).is_dir():
+                    _logger.warning("not a directory: %s", folder_path)
+                    return
+                idx = self._model.setRootPath(folder_path)
+                self._list.setRootIndex(idx)
+                self._tree.setRootIndex(idx)
+                self._current_folder = folder_path
+                self._list.clearSelection()
+                self._tree.clearSelection()
+                # Column sizing for tree
+                with contextlib.suppress(Exception):
+                    header = self._tree.header()
+                    base_cols = self._model.columnCount() - 1  # resolution column index
+                    header.setSectionResizeMode(QHeaderView.ResizeToContents)
+                    header.setStretchLastSection(False)
+                    header.setDefaultAlignment(
+                        Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter
+                    )
+                    # Desired order: Name, Type, Size, Resolution, Modified
+                    header.moveSection(2, 1)  # Type next to Name
+                    header.moveSection(base_cols, 3)  # Resolution before Modified
+                    margin = 16
+                    for col in range(self._model.columnCount()):
+                        width = max(self._tree.sizeHintForColumn(col), 48)
+                        self._tree.setColumnWidth(col, width + margin)
+            except Exception as exc:
+                _logger.error("failed to load_folder %s: %s", folder_path, exc)
 
     def set_thumbnail_size_wh(self, width: int, height: int) -> None:
-        try:
-            w = max(32, min(1024, int(width)))
-            h = max(32, min(1024, int(height)))
-            self._list.setIconSize(QSize(w, h))
-            self._list.setGridSize(QSize(w + 32, h + 48))
-            self._model.set_thumb_size(w, h)
-        except Exception as exc:
-            _logger.debug("set_thumbnail_size_wh failed: %s", exc)
+        with busy_cursor():
+            try:
+                w = max(32, min(1024, int(width)))
+                h = max(32, min(1024, int(height)))
+                self._list.setIconSize(QSize(w, h))
+                self._list.setGridSize(QSize(w + 32, h + 48))
+                self._model.set_thumb_size(w, h)
+            except Exception as exc:
+                _logger.debug("set_thumbnail_size_wh failed: %s", exc)
 
     def set_thumbnail_size(self, size: int) -> None:
         self.set_thumbnail_size_wh(size, size)
