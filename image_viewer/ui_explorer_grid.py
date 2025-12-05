@@ -3,27 +3,19 @@
 from __future__ import annotations
 
 import contextlib
-import ctypes
-import shutil
-from collections.abc import Iterable
-from ctypes import wintypes
 from pathlib import Path
-from typing import ClassVar
 
 from PySide6.QtCore import (
     QDateTime,
     QDir,
-    QMimeData,
     QModelIndex,
     QPoint,
     QSize,
     Qt,
     QTimer,
-    QUrl,
     Signal,
 )
 from PySide6.QtGui import (
-    QGuiApplication,
     QIcon,
     QImage,
     QImageReader,
@@ -32,9 +24,14 @@ from PySide6.QtGui import (
 )
 from PySide6.QtWidgets import (
     QApplication,
+    QDialog,
+    QDialogButtonBox,
     QFileIconProvider,
     QFileSystemModel,
+    QFontMetrics,
     QHeaderView,
+    QLabel,
+    QLineEdit,
     QListView,
     QMenu,
     QMessageBox,
@@ -45,6 +42,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from . import file_operations
 from .busy_cursor import busy_cursor
 from .logger import get_logger
 from .thumbnail_cache import ThumbnailCache
@@ -732,84 +730,152 @@ class ThumbnailGridWidget(QWidget):
         paths = self.selected_paths()
         if not paths:
             return
+
+        file_operations.copy_files_to_clipboard(paths)
+
+        # Update UI state
         self._clipboard_paths = paths
         self._clipboard_mode = "copy"
-        self._set_clipboard_urls(paths)
-        _logger.debug("copy %d paths", len(paths))
 
     def cut_selected(self) -> None:
         paths = self.selected_paths()
         if not paths:
             return
+
+        file_operations.cut_files_to_clipboard(paths)
+
+        # Update UI state
         self._clipboard_paths = paths
         self._clipboard_mode = "cut"
-        self._set_clipboard_urls(paths)
-        _logger.debug("cut %d paths", len(paths))
 
     def paste_into_current(self) -> None:
         if not self._current_folder or not self._clipboard_paths:
             return
-        dest_dir = Path(self._current_folder)
-        if not dest_dir.is_dir():
-            return
-        mode = self._clipboard_mode or "copy"
-        for src in list(self._clipboard_paths):
-            try:
-                src_path = Path(src)
-                if not src_path.exists():
-                    continue
-                target = self._unique_dest(dest_dir, src_path.name)
-                if mode == "cut":
-                    shutil.move(str(src_path), target)
-                else:
-                    shutil.copy2(str(src_path), target)
-            except Exception as exc:
-                _logger.warning("paste failed for %s: %s", src, exc)
-        if mode == "cut":
+
+        success_count, _failed = file_operations.paste_files(
+            self._current_folder, self._clipboard_paths, self._clipboard_mode or "copy"
+        )
+
+        # Update UI state
+        if self._clipboard_mode == "cut" and success_count > 0:
             self._clipboard_paths = []
             self._clipboard_mode = None
-        _logger.debug("paste complete: %s items -> %s", mode, dest_dir)
 
     def delete_selected(self) -> None:
         paths = self.selected_paths()
         if not paths:
             return
-        confirm = QMessageBox.question(
-            self,
-            "Delete",
-            f"Delete {len(paths)} item(s)?\nThey will be moved to Recycle Bin when possible.",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
-        )
-        if confirm != QMessageBox.StandardButton.Yes:
-            return
-        for p in paths:
-            try:
-                self._send_to_recycle_bin(p)
-            except Exception as exc:
-                _logger.warning("delete failed for %s: %s", p, exc)
-        _logger.debug("delete requested for %d items", len(paths))
+
+        file_operations.delete_files_to_recycle_bin(paths, self)
 
     def rename_first_selected(self) -> None:
-        indexes = (
-            self._list.selectedIndexes()
-            if self._view_mode == "thumbnail"
-            else self._tree.selectionModel().selectedRows()
-        )
+        """Rename the first selected file using a dialog with dynamic width."""
+        if self._view_mode == "thumbnail":
+            indexes = self._list.selectedIndexes()
+        else:
+            indexes = self._tree.selectionModel().selectedRows()
+
         if not indexes:
             return
-        idx = indexes[0]
-        # close editors before switching modes to avoid "editing failed"
-        with contextlib.suppress(Exception):
-            self.closePersistentEditor(idx)
-        self.edit(idx)
 
-    # Clipboard helpers ---------------------------------------------------------
-    def _set_clipboard_urls(self, paths: Iterable[str]) -> None:
-        mime = QMimeData()
-        urls = [Path(p).as_uri() for p in paths]
-        mime.setUrls([QUrl(u) for u in urls])
-        QGuiApplication.clipboard().setMimeData(mime)
+        idx = indexes[0]
+        old_path = self._model.filePath(idx)
+
+        if not old_path or not Path(old_path).exists():
+            return
+
+        old_name = Path(old_path).name
+        parent_dir = Path(old_path).parent
+
+        # Create custom dialog with dynamic width
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Rename File")
+
+        layout = QVBoxLayout(dialog)
+
+        # Label
+        label = QLabel("New name:")
+        layout.addWidget(label)
+
+        # Line edit with current filename
+        line_edit = QLineEdit(old_name)
+        line_edit.selectAll()  # Select all text for easy replacement
+
+        # Calculate width based on filename length
+        font_metrics = QFontMetrics(line_edit.font())
+        text_width = font_metrics.horizontalAdvance(old_name)
+        # Add padding: 40px for margins, 20px extra space
+        dialog_width = max(300, min(600, text_width + 60))
+        dialog.setMinimumWidth(dialog_width)
+
+        layout.addWidget(line_edit)
+
+        # Buttons
+        button_box = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        button_box.accepted.connect(dialog.accept)
+        button_box.rejected.connect(dialog.reject)
+        layout.addWidget(button_box)
+
+        # Show dialog
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        new_name = line_edit.text()
+
+        if not new_name or new_name == old_name:
+            return
+
+        # Validate filename
+        if not new_name.strip():
+            QMessageBox.warning(self, "Invalid Name", "Filename cannot be empty.")
+            return
+
+        # Check for invalid characters (Windows)
+        invalid_chars = '<>:"/\\|?*'
+        if any(c in new_name for c in invalid_chars):
+            QMessageBox.warning(
+                self,
+                "Invalid Name",
+                f"Filename cannot contain: {invalid_chars}"
+            )
+            return
+
+        new_path = parent_dir / new_name
+
+        # Check if target already exists
+        if new_path.exists():
+            QMessageBox.warning(
+                self,
+                "File Exists",
+                f"A file named '{new_name}' already exists."
+            )
+            return
+
+        # Perform rename
+        try:
+            Path(old_path).rename(new_path)
+            _logger.debug("renamed: %s -> %s", old_path, new_path)
+
+            # Update cache if needed
+            if old_path in self._model._thumb_cache:
+                icon = self._model._thumb_cache.pop(old_path)
+                self._model._thumb_cache[str(new_path)] = icon
+
+            if old_path in self._model._meta:
+                meta = self._model._meta.pop(old_path)
+                self._model._meta[str(new_path)] = meta
+
+        except Exception as exc:
+            _logger.error("rename failed: %s", exc)
+            QMessageBox.critical(
+                self,
+                "Rename Failed",
+                f"Failed to rename file:\n{exc}"
+            )
+
+
 
     # View mode ------------------------------------------------------------------
     def set_view_mode(self, mode: str) -> None:
@@ -831,45 +897,7 @@ class ThumbnailGridWidget(QWidget):
                 self._tree.setColumnHidden(ImageFileSystemModel.COL_RES, False)
         self.update()
 
-    # Utilities -----------------------------------------------------------------
-    def _unique_dest(self, dest_dir: Path, name: str) -> str:
-        dest = dest_dir / name
-        stem = dest.stem
-        suffix = dest.suffix
-        counter = 1
-        while dest.exists():
-            dest = dest_dir / f"{stem} - Copy ({counter}){suffix}"
-            counter += 1
-        return str(dest)
 
-    def _send_to_recycle_bin(self, path: str) -> None:
-        try:
-            FO_DELETE = 3
-            FOF_ALLOWUNDO = 0x40
-            FOF_NOCONFIRMATION = 0x10
-
-            class SHFILEOPSTRUCT(ctypes.Structure):
-                _fields_: ClassVar[list[tuple[str, object]]] = [  # type: ignore[assignment]
-                    ("hwnd", wintypes.HWND),
-                    ("wFunc", wintypes.UINT),
-                    ("pFrom", wintypes.LPCWSTR),
-                    ("pTo", wintypes.LPCWSTR),
-                    ("fFlags", ctypes.c_ushort),
-                    ("fAnyOperationsAborted", wintypes.BOOL),
-                    ("hNameMappings", ctypes.c_void_p),
-                    ("lpszProgressTitle", wintypes.LPCWSTR),
-                ]
-
-            p_from = f"{Path(path)}\0\0"
-            op = SHFILEOPSTRUCT()
-            op.wFunc = FO_DELETE
-            op.pFrom = p_from
-            op.fFlags = FOF_ALLOWUNDO | FOF_NOCONFIRMATION
-            res = ctypes.windll.shell32.SHFileOperationW(ctypes.byref(op))
-            if res != 0:
-                raise OSError(f"SHFileOperation failed: {res}")
-        except Exception:
-            Path(path).unlink(missing_ok=True)
 
     # QWidget overrides ---------------------------------------------------------
     def keyReleaseEvent(self, event):  # type: ignore[override]

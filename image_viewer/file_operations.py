@@ -1,11 +1,21 @@
-"""File operation handlers: delete, trim, etc."""
+"""File operation handlers for both View and Explorer modes.
+
+This module provides file operation functions that can be used by:
+- View Mode: delete_current_file() - deletes currently displayed image
+- Explorer Mode: copy/cut/paste/delete functions - operates on selected files
+"""
+import ctypes
 import gc
 import os
+import shutil
 import time as _time
+from ctypes import wintypes
+from pathlib import Path
+from typing import ClassVar
 
-from PySide6.QtGui import QPixmap
+from PySide6.QtCore import QMimeData, Qt, QUrl
+from PySide6.QtGui import QGuiApplication, QPixmap
 from PySide6.QtWidgets import QApplication, QMessageBox
-from send2trash import send2trash
 
 from .busy_cursor import busy_cursor
 from .logger import get_logger
@@ -13,11 +23,20 @@ from .logger import get_logger
 _logger = get_logger("file_operations")
 
 
+# ============= View Mode Operations =============
+
+
 def delete_current_file(viewer) -> None:
-    """Delete the current file and move to trash.
+    """Delete the current file in View Mode and move to trash.
+
+    This function is specifically designed for View Mode where a single image
+    is displayed. It handles:
+    - Switching to another image before deletion
+    - Updating the image list and index
+    - Clearing the canvas if no images remain
 
     Args:
-        viewer: The ImageViewer instance
+        viewer: The ImageViewer instance (View Mode)
     """
     # Move the current file to the trash (with a confirmation dialog).
     # UX: After confirming deletion, switch to another image first, then attempt the actual deletion.
@@ -38,19 +57,70 @@ def delete_current_file(viewer) -> None:
         len(viewer.image_files),
     )
 
-    # Confirmation dialog
-    proceed = True
+    # Confirmation dialog with enhanced visibility
     base = os.path.basename(del_path)
-    ret = QMessageBox.question(
-        viewer,
-        "Move to Trash",
-        f"Are you sure you want to move this file to the trash?\n{base}",
-        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-        QMessageBox.StandardButton.Yes,
-    )
-    proceed = ret == QMessageBox.StandardButton.Yes
-    _logger.debug("[delete] confirm: proceed=%s", proceed)
-    if not proceed:
+    msg_box = QMessageBox(viewer)
+    msg_box.setWindowTitle("Delete File")
+    msg_box.setIcon(QMessageBox.Icon.Warning)
+    msg_box.setText("Delete this file?")
+    msg_box.setInformativeText(f"{base}\n\nIt will be moved to Recycle Bin.")
+
+    # Create custom buttons with clear labels
+    yes_btn = msg_box.addButton("Delete", QMessageBox.ButtonRole.YesRole)
+    no_btn = msg_box.addButton("Cancel", QMessageBox.ButtonRole.NoRole)
+
+    # Set default to Cancel (safer)
+    msg_box.setDefaultButton(no_btn)
+
+    # Apply custom styling for better visibility
+    msg_box.setStyleSheet("""
+        QMessageBox {
+            background-color: #2b2b2b;
+        }
+        QMessageBox QLabel {
+            color: #ffffff;
+            font-size: 13px;
+        }
+        QPushButton {
+            min-width: 80px;
+            min-height: 32px;
+            padding: 6px 16px;
+            font-size: 13px;
+            font-weight: bold;
+            border-radius: 4px;
+            border: 2px solid transparent;
+        }
+        QPushButton[text="Delete"] {
+            background-color: #d32f2f;
+            color: #ffffff;
+            border: 2px solid #f44336;
+        }
+        QPushButton[text="Delete"]:hover {
+            background-color: #f44336;
+            border: 2px solid #ff5252;
+        }
+        QPushButton[text="Delete"]:focus {
+            border: 2px solid #ff5252;
+            outline: none;
+        }
+        QPushButton[text="Cancel"] {
+            background-color: #424242;
+            color: #ffffff;
+            border: 2px solid #616161;
+        }
+        QPushButton[text="Cancel"]:hover {
+            background-color: #616161;
+            border: 2px solid #757575;
+        }
+        QPushButton[text="Cancel"]:focus {
+            border: 2px solid #4A90E2;
+            outline: none;
+        }
+    """)
+
+    msg_box.exec()
+
+    if msg_box.clickedButton() != yes_btn:
         _logger.debug("[delete] user cancelled")
         return
 
@@ -88,28 +158,11 @@ def delete_current_file(viewer) -> None:
     except Exception as ex:
         _logger.debug("[delete] settle phase error: %s", ex)
 
-    # 2) Actual move to trash (with retries)
+    # 2) Actual move to trash (using shared function)
     with busy_cursor():
         try:
-            try:
-                last_err = None
-                for attempt in range(1, 4):
-                    try:
-                        _logger.debug("[delete] trash attempt %s", attempt)
-                        send2trash(abs_path)
-                        last_err = None
-                        _logger.debug("[delete] trash success")
-                        break
-                    except Exception as ex:
-                        last_err = ex
-                        _logger.debug(
-                            "[delete] trash failed attempt %s: %s", attempt, ex
-                        )
-                        _time.sleep(0.2)
-                if last_err is not None:
-                    raise last_err
-            except Exception:
-                raise
+            send_to_recycle_bin(abs_path)
+            _logger.debug("[delete] trash success")
         except Exception as e:
             _logger.debug("[delete] trash final error: %s", e)
             QMessageBox.critical(
@@ -160,8 +213,6 @@ def delete_current_file(viewer) -> None:
         _logger.debug("[delete] list empty: clearing view")
         viewer.current_index = -1
         try:
-            from PySide6.QtCore import Qt
-
             empty = QPixmap(1, 1)
             empty.fill(Qt.GlobalColor.transparent)
             viewer.canvas.set_pixmap(empty)
@@ -180,3 +231,248 @@ def delete_current_file(viewer) -> None:
         viewer.maintain_decode_window()
     except Exception as ex:
         _logger.debug("[delete] final display error: %s", ex)
+
+
+# ============= Explorer Mode File Operations =============
+
+
+def copy_files_to_clipboard(paths: list[str]) -> None:
+    """Copy file paths to system clipboard.
+
+    Args:
+        paths: List of file paths to copy
+    """
+    try:
+        mime = QMimeData()
+        urls = [Path(p).as_uri() for p in paths]
+        mime.setUrls([QUrl(u) for u in urls])
+        QGuiApplication.clipboard().setMimeData(mime)
+        _logger.debug("copied %d files to clipboard", len(paths))
+    except Exception as exc:
+        _logger.error("failed to copy to clipboard: %s", exc)
+
+
+def cut_files_to_clipboard(paths: list[str]) -> None:
+    """Cut file paths to system clipboard.
+
+    Args:
+        paths: List of file paths to cut
+    """
+    try:
+        mime = QMimeData()
+        urls = [Path(p).as_uri() for p in paths]
+        mime.setUrls([QUrl(u) for u in urls])
+        QGuiApplication.clipboard().setMimeData(mime)
+        _logger.debug("cut %d files to clipboard", len(paths))
+    except Exception as exc:
+        _logger.error("failed to cut to clipboard: %s", exc)
+
+
+def paste_files(
+    dest_folder: str, clipboard_paths: list[str], mode: str
+) -> tuple[int, list[str]]:
+    """Paste files from clipboard to destination folder.
+
+    Args:
+        dest_folder: Destination folder path
+        clipboard_paths: List of source file paths
+        mode: "copy" or "cut"
+
+    Returns:
+        Tuple of (success_count, failed_paths)
+    """
+    dest_dir = Path(dest_folder)
+    if not dest_dir.is_dir():
+        _logger.warning("destination is not a directory: %s", dest_folder)
+        return 0, clipboard_paths
+
+    success_count = 0
+    failed_paths = []
+
+    for src in clipboard_paths:
+        try:
+            src_path = Path(src)
+            if not src_path.exists():
+                failed_paths.append(src)
+                continue
+
+            target = generate_unique_filename(str(dest_dir), src_path.name)
+
+            if mode == "cut":
+                shutil.move(str(src_path), target)
+            else:
+                shutil.copy2(str(src_path), target)
+
+            success_count += 1
+        except Exception as exc:
+            _logger.warning("paste failed for %s: %s", src, exc)
+            failed_paths.append(src)
+
+    _logger.debug(
+        "paste complete: %d success, %d failed, mode=%s",
+        success_count,
+        len(failed_paths),
+        mode,
+    )
+    return success_count, failed_paths
+
+
+def delete_files_to_recycle_bin(
+    paths: list[str], parent_widget=None
+) -> tuple[int, list[str]]:
+    """Delete files to recycle bin with confirmation.
+
+    Args:
+        paths: List of file paths to delete
+        parent_widget: Parent widget for confirmation dialog (optional)
+
+    Returns:
+        Tuple of (success_count, failed_paths)
+    """
+    if not paths:
+        return 0, []
+
+    # Confirmation dialog with enhanced visibility
+    if parent_widget:
+        msg_box = QMessageBox(parent_widget)
+        msg_box.setWindowTitle("Delete Files")
+        msg_box.setIcon(QMessageBox.Icon.Warning)
+        msg_box.setText(f"Delete {len(paths)} item(s)?")
+        msg_box.setInformativeText("They will be moved to Recycle Bin when possible.")
+
+        # Create custom buttons with clear labels
+        yes_btn = msg_box.addButton("Delete", QMessageBox.ButtonRole.YesRole)
+        no_btn = msg_box.addButton("Cancel", QMessageBox.ButtonRole.NoRole)
+
+        # Set default to Cancel (safer)
+        msg_box.setDefaultButton(no_btn)
+
+        # Apply custom styling for better visibility
+        msg_box.setStyleSheet("""
+            QMessageBox {
+                background-color: #2b2b2b;
+            }
+            QMessageBox QLabel {
+                color: #ffffff;
+                font-size: 13px;
+            }
+            QPushButton {
+                min-width: 80px;
+                min-height: 32px;
+                padding: 6px 16px;
+                font-size: 13px;
+                font-weight: bold;
+                border-radius: 4px;
+                border: 2px solid transparent;
+            }
+            QPushButton[text="Delete"] {
+                background-color: #d32f2f;
+                color: #ffffff;
+                border: 2px solid #f44336;
+            }
+            QPushButton[text="Delete"]:hover {
+                background-color: #f44336;
+                border: 2px solid #ff5252;
+            }
+            QPushButton[text="Delete"]:focus {
+                border: 2px solid #ff5252;
+                outline: none;
+            }
+            QPushButton[text="Cancel"] {
+                background-color: #424242;
+                color: #ffffff;
+                border: 2px solid #616161;
+            }
+            QPushButton[text="Cancel"]:hover {
+                background-color: #616161;
+                border: 2px solid #757575;
+            }
+            QPushButton[text="Cancel"]:focus {
+                border: 2px solid #4A90E2;
+                outline: none;
+            }
+        """)
+
+        msg_box.exec()
+
+        if msg_box.clickedButton() != yes_btn:
+            _logger.debug("delete cancelled by user")
+            return 0, paths
+
+    success_count = 0
+    failed_paths = []
+
+    for path in paths:
+        try:
+            send_to_recycle_bin(path)
+            success_count += 1
+        except Exception as exc:
+            _logger.warning("delete failed for %s: %s", path, exc)
+            failed_paths.append(path)
+
+    _logger.debug("delete complete: %d success, %d failed", success_count, len(failed_paths))
+    return success_count, failed_paths
+
+
+def send_to_recycle_bin(path: str) -> None:
+    """Send a single file to recycle bin (Windows).
+
+    Args:
+        path: File path to delete
+
+    Raises:
+        OSError: If operation fails
+    """
+    try:
+        FO_DELETE = 3
+        FOF_ALLOWUNDO = 0x40
+        FOF_NOCONFIRMATION = 0x10
+
+        class SHFILEOPSTRUCT(ctypes.Structure):
+            _fields_: ClassVar[list[tuple[str, object]]] = [  # type: ignore[assignment]
+                ("hwnd", wintypes.HWND),
+                ("wFunc", wintypes.UINT),
+                ("pFrom", wintypes.LPCWSTR),
+                ("pTo", wintypes.LPCWSTR),
+                ("fFlags", ctypes.c_ushort),
+                ("fAnyOperationsAborted", wintypes.BOOL),
+                ("hNameMappings", ctypes.c_void_p),
+                ("lpszProgressTitle", wintypes.LPCWSTR),
+            ]
+
+        p_from = f"{Path(path)}\0\0"
+        op = SHFILEOPSTRUCT()
+        op.wFunc = FO_DELETE
+        op.pFrom = p_from
+        op.fFlags = FOF_ALLOWUNDO | FOF_NOCONFIRMATION
+        res = ctypes.windll.shell32.SHFileOperationW(ctypes.byref(op))
+        if res != 0:
+            raise OSError(f"SHFileOperation failed: {res}")
+    except Exception:
+        # Fallback to direct delete
+        Path(path).unlink(missing_ok=True)
+
+
+def generate_unique_filename(dest_dir: str, filename: str) -> str:
+    """Generate unique filename if file already exists.
+
+    Args:
+        dest_dir: Destination directory
+        filename: Original filename
+
+    Returns:
+        Unique filename path (e.g., "file - Copy (1).jpg")
+    """
+    dest = Path(dest_dir) / filename
+    if not dest.exists():
+        return str(dest)
+
+    stem = dest.stem
+    suffix = dest.suffix
+    counter = 1
+
+    while dest.exists():
+        dest = Path(dest_dir) / f"{stem} - Copy ({counter}){suffix}"
+        counter += 1
+
+    return str(dest)
