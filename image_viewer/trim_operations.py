@@ -3,7 +3,7 @@
 import contextlib
 import traceback as _tb
 
-from PySide6.QtGui import QKeySequence, QShortcut
+from PySide6.QtGui import QImage, QKeySequence, QPixmap, QShortcut
 from PySide6.QtWidgets import QMessageBox
 
 from .logger import get_logger
@@ -95,9 +95,25 @@ def start_trim_workflow(viewer) -> None:
                 crop = None
             if not crop:
                 continue
-            preview = make_trim_preview(path, crop)
-            if preview is None:
+            preview_array = make_trim_preview(path, crop)
+            if preview_array is None:
                 continue
+
+            # Convert numpy array to QPixmap
+            try:
+                h, w, c = preview_array.shape
+                if c == 3:
+                    qimg = QImage(preview_array.data, w, h, w * 3, QImage.Format.Format_RGB888)
+                elif c == 4:
+                    qimg = QImage(preview_array.data, w, h, w * 4, QImage.Format.Format_RGBA8888)
+                else:
+                    _logger.error("unsupported channel count: %d", c)
+                    continue
+                preview = QPixmap.fromImage(qimg)
+            except Exception as e:
+                _logger.error("failed to convert preview to pixmap: %s", e)
+                continue
+
             prev_pix = (
                 viewer.canvas._pix_item.pixmap() if viewer.canvas._pix_item else None
             )
