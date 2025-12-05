@@ -16,6 +16,7 @@ from PySide6.QtCore import (
     Signal,
 )
 from PySide6.QtGui import (
+    QFontMetrics,
     QIcon,
     QImage,
     QImageReader,
@@ -28,7 +29,6 @@ from PySide6.QtWidgets import (
     QDialogButtonBox,
     QFileIconProvider,
     QFileSystemModel,
-    QFontMetrics,
     QHeaderView,
     QLabel,
     QLineEdit,
