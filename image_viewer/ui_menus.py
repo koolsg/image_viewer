@@ -100,14 +100,6 @@ def build_menus(viewer: "ImageViewer") -> None:
     zoom_out_action.triggered.connect(lambda: viewer.zoom_by(0.75))
     view_menu.addAction(zoom_out_action)
 
-    # Trim workflow
-    try:
-        viewer.trim_action = QAction("Trim...", viewer)
-        viewer.trim_action.triggered.connect(viewer.start_trim_workflow)
-        view_menu.addAction(viewer.trim_action)
-    except Exception as ex:
-        _logger.debug("trim menu unavailable: %s", ex)
-
     # Explorer mode
     viewer.explorer_mode_action = QAction("Explorer Mode(&E)", viewer, checkable=True)
     viewer.explorer_mode_action.setChecked(False)
@@ -130,6 +122,13 @@ def build_menus(viewer: "ImageViewer") -> None:
     # Tools menu
     try:
         tools_menu = menu_bar.addMenu("Tools")
+
+        # Trim workflow
+        viewer.trim_action = QAction("Trim...", viewer)
+        viewer.trim_action.triggered.connect(viewer.start_trim_workflow)
+        tools_menu.addAction(viewer.trim_action)
+
+        # WebP converter
         viewer.convert_webp_action = QAction("Convert to WebP...", viewer)
         viewer.convert_webp_action.triggered.connect(viewer.open_convert_dialog)
         tools_menu.addAction(viewer.convert_webp_action)
