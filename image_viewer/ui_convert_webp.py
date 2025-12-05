@@ -6,6 +6,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtWidgets import (
+    QApplication,
     QCheckBox,
     QDialog,
     QFileDialog,
@@ -56,7 +57,7 @@ class WebPConvertDialog(QDialog):
         self.delete_cb = QCheckBox("Delete originals after convert")
         self.delete_cb.setChecked(True)
         warn = QLabel("Warning: originals will be removed when enabled.")
-        warn.setStyleSheet("color: orange;")
+        warn.setStyleSheet("color: #d32f2f; font-weight: bold;")
 
         form = QFormLayout()
         folder_row = QHBoxLayout()
@@ -135,13 +136,25 @@ class WebPConvertDialog(QDialog):
         self._append_log(f"Done: {converted}/{total} converted.")
         self.start_btn.setEnabled(True)
         self.cancel_btn.setEnabled(False)
+        self._restore_cursor()
 
     def _on_canceled(self):
         self._append_log("Canceled.")
         self.start_btn.setEnabled(True)
         self.cancel_btn.setEnabled(False)
+        self._restore_cursor()
 
     def _on_error(self, msg: str):
         self._append_log(msg)
         self.start_btn.setEnabled(True)
         self.cancel_btn.setEnabled(False)
+        self._restore_cursor()
+
+    def _restore_cursor(self):
+        """Restore cursor to normal state (fix for cursor stuck in wait state)."""
+        try:
+            # Restore all override cursors to ensure clean state
+            while QApplication.overrideCursor() is not None:
+                QApplication.restoreOverrideCursor()
+        except Exception as ex:
+            _logger.debug("cursor restore failed: %s", ex)
