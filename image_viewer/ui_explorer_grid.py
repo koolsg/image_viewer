@@ -90,6 +90,103 @@ class ImageFileSystemModel(QFileSystemModel):
     def set_view_mode(self, mode: str) -> None:
         self._view_mode = mode
 
+    # --- file list access (for unified model) ------------------------------
+    def get_image_files(self) -> list[str]:
+        """Get all image files in current folder (sorted).
+
+        Returns:
+            List of absolute file paths for image files
+        """
+        try:
+            root_path = self.rootPath()
+            if not root_path:
+                return []
+
+            root_index = self.index(root_path)
+            if not root_index.isValid():
+                return []
+
+            files = []
+            row_count = self.rowCount(root_index)
+
+            for row in range(row_count):
+                index = self.index(row, 0, root_index)
+                if not index.isValid():
+                    continue
+
+                # Skip directories
+                if self.isDir(index):
+                    continue
+
+                path = self.filePath(index)
+                if self._is_image_file(path):
+                    files.append(path)
+
+            return sorted(files)
+        except Exception as e:
+            _logger.debug("get_image_files failed: %s", e)
+            return []
+
+    def get_file_at_index(self, idx: int) -> str | None:
+        """Get file path at given index in sorted image file list.
+
+        Args:
+            idx: Index in the sorted file list
+
+        Returns:
+            File path or None if index out of range
+        """
+        files = self.get_image_files()
+        if 0 <= idx < len(files):
+            return files[idx]
+        return None
+
+    def get_file_index(self, path: str) -> int:
+        """Get index of file path in sorted image file list.
+
+        Args:
+            path: Absolute file path
+
+        Returns:
+            Index in sorted list, or -1 if not found
+        """
+        files = self.get_image_files()
+        try:
+            return files.index(path)
+        except ValueError:
+            return -1
+
+    def get_file_count(self) -> int:
+        """Get count of image files in current folder.
+
+        Returns:
+            Number of image files
+        """
+        return len(self.get_image_files())
+
+    def get_current_folder(self) -> str:
+        """Get current root folder path.
+
+        Returns:
+            Absolute folder path or empty string
+        """
+        return self.rootPath()
+
+    def _is_image_file(self, path: str) -> bool:
+        """Check if file is an image based on extension.
+
+        Args:
+            path: File path to check
+
+        Returns:
+            True if file has image extension
+        """
+        try:
+            lower = path.lower()
+            return lower.endswith((".jpg", ".jpeg", ".png", ".bmp", ".gif", ".webp", ".tif", ".tiff"))
+        except Exception:
+            return False
+
     # --- columns -----------------------------------------------------------
     def columnCount(self, parent: QModelIndex | None = None) -> int:  # type: ignore[override]
         parent = parent or QModelIndex()

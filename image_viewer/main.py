@@ -93,7 +93,13 @@ class ImageViewer(QMainWindow):
         self.view_state = ViewState()
         self.trim_state = TrimState()
         self.explorer_state = ExplorerState()
-        self.image_files: list[str] = []
+
+        # Shared file system model (always exists, used by all modes)
+        from image_viewer.ui_explorer_grid import ImageFileSystemModel
+        self.fs_model = ImageFileSystemModel(self)
+        self.fs_model.directoryLoaded.connect(self._on_fs_directory_loaded)
+
+        self.image_files: list[str] = []  # Will be deprecated in Phase 2
         self.current_index = -1
         # Menu/action placeholders (populated in build_menus)
         self.view_group = None
@@ -289,6 +295,44 @@ class ImageViewer(QMainWindow):
             logger.debug("explorer refreshed: %s", current_folder)
         except Exception as ex:
             logger.debug("refresh_explorer failed: %s", ex)
+
+    def _on_fs_directory_loaded(self, path: str):
+        """Handle file system changes detected by shared model.
+
+        Called when QFileSystemModel detects directory changes.
+        In View mode: synchronize image_files list.
+        In Explorer mode: model automatically updates the view.
+
+        Args:
+            path: Directory path that was loaded/changed
+        """
+        try:
+            # Only handle in View mode (Explorer mode auto-updates via model-view)
+            if not self.explorer_state.view_mode:
+                return
+
+            # Get current file before update
+            current_file = None
+            if self.current_index >= 0 and self.current_index < len(self.image_files):
+                current_file = self.image_files[self.current_index]
+
+            # Update file list from model
+            new_files = self.fs_model.get_image_files()
+            self.image_files = new_files
+
+            # Restore current index if file still exists
+            if current_file and current_file in new_files:
+                self.current_index = new_files.index(current_file)
+            elif self.current_index >= len(new_files):
+                self.current_index = max(0, len(new_files) - 1) if new_files else -1
+
+            # Update status display
+            if self.current_index >= 0:
+                self._update_status()
+
+            logger.debug("fs changed in view mode: %d files, current_index=%d", len(new_files), self.current_index)
+        except Exception as e:
+            logger.debug("_on_fs_directory_loaded failed: %s", e)
 
     def on_image_ready(self, path, image_data, error):
         self._display_controller.on_image_ready(path, image_data, error)
