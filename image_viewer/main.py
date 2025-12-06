@@ -94,7 +94,7 @@ class ImageViewer(QMainWindow):
         self.explorer_state = ExplorerState()
 
         # Shared file system model (always exists, used by all modes)
-        from image_viewer.ui_explorer_grid import ImageFileSystemModel
+        from image_viewer.fs_model import ImageFileSystemModel
         self.fs_model = ImageFileSystemModel(self)
         self.fs_model.directoryLoaded.connect(self._on_fs_directory_loaded)
 
