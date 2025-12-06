@@ -249,13 +249,15 @@ class ImageViewer(QMainWindow):
 
     def open_convert_dialog(self) -> None:
         try:
-            # Prefer current folder if available
+            # Get current folder from shared model
             start_folder = None
             try:
-                if self.image_files and self.current_index >= 0:
-                    start_folder = Path(self.image_files[self.current_index]).parent
+                current_folder = self.fs_model.get_current_folder()
+                if current_folder:
+                    start_folder = Path(current_folder)
             except Exception:
                 start_folder = None
+
             if self._convert_dialog is None:
                 self._convert_dialog = WebPConvertDialog(self, start_folder=start_folder)
             elif start_folder:

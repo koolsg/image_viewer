@@ -386,7 +386,7 @@ def start_trim_workflow(viewer) -> None:
 
         if not overwrite:
             # Save as copy: batch process in a background thread + progress dialog
-            paths = list(viewer.image_files)
+            paths = viewer.fs_model.get_image_files()
             dlg = TrimProgressDialog(viewer)
 
             # Synchronous processing
@@ -408,7 +408,7 @@ def start_trim_workflow(viewer) -> None:
         preview_dialog = None  # Reuse dialog for all images
 
         # Start preloader thread
-        preloader = TrimPreloader(list(viewer.image_files), profile, max_queue_size=5)
+        preloader = TrimPreloader(viewer.fs_model.get_image_files(), profile, max_queue_size=5)
         preloader_finished = False
 
         def _on_preloader_finished():
