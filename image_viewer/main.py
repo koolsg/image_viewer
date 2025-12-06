@@ -81,7 +81,6 @@ class ExplorerState:
         self.view_mode: bool = True  # True=View, False=Explorer
         self._explorer_tree: Any | None = None
         self._explorer_grid: Any | None = None
-        self._fs_watcher: Any | None = None  # QFileSystemModel for auto-reload in View mode
 
 
 class ImageViewer(QMainWindow):
