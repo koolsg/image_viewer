@@ -77,7 +77,73 @@ class DisplayController:
         except Exception:
             pass
 
+        # Setup QFileSystemModel watcher for auto-reload in View mode
+        self._setup_fs_watcher(dir_path)
+
+        # Initial file list load
+        self._reload_image_files(dir_path)
+
+        if not viewer.image_files:
+            viewer.setWindowTitle("Image Viewer")
+            viewer._update_status("No images found.")
+            return
+
+        viewer.current_index = 0
+        viewer._save_last_parent_dir(dir_path)
+        viewer.setWindowTitle(
+            f"Image Viewer - {os.path.basename(viewer.image_files[viewer.current_index])}"
+        )
+        self.display_image()
+        self.maintain_decode_window(back=0, ahead=5)
         try:
+            if getattr(viewer.explorer_state, "view_mode", True):
+                viewer.enter_fullscreen()
+        except Exception:
+            pass
+        _logger.debug(
+            "folder opened: %s, images=%d", dir_path, len(viewer.image_files)
+        )
+
+    def _setup_fs_watcher(self, dir_path: str) -> None:
+        """Setup QFileSystemModel to watch for file changes in View mode."""
+        from PySide6.QtWidgets import QFileSystemModel
+        viewer = self.viewer
+        try:
+            # Clean up existing watcher
+            if viewer.explorer_state._fs_watcher:
+                with contextlib.suppress(Exception):
+                    viewer.explorer_state._fs_watcher.directoryLoaded.disconnect()
+                viewer.explorer_state._fs_watcher = None
+
+            # Create new watcher
+            fs_model = QFileSystemModel()
+            fs_model.setRootPath(dir_path)
+
+            # Connect to directory loaded signal for auto-reload
+            def _on_dir_changed(path: str):
+                if path == dir_path and getattr(viewer.explorer_state, "view_mode", True):
+                    _logger.debug("fs watcher detected change: %s", path)
+                    self._reload_image_files(dir_path, preserve_current=True)
+
+            fs_model.directoryLoaded.connect(_on_dir_changed)
+            viewer.explorer_state._fs_watcher = fs_model
+            _logger.debug("fs watcher setup: %s", dir_path)
+        except Exception as e:
+            _logger.debug("failed to setup fs watcher: %s", e)
+
+    def _reload_image_files(self, dir_path: str, preserve_current: bool = False) -> None:
+        """Reload image file list from directory.
+
+        Args:
+            dir_path: Directory path to scan
+            preserve_current: If True, try to maintain current image selection
+        """
+        viewer = self.viewer
+        try:
+            current_file = None
+            if preserve_current and viewer.current_index >= 0 and viewer.current_index < len(viewer.image_files):
+                current_file = viewer.image_files[viewer.current_index]
+
             files = []
             for name in os.listdir(dir_path):
                 p = os.path.join(dir_path, name)
@@ -99,28 +165,19 @@ class DisplayController:
             files.sort()
             viewer.image_files = files
 
-            if not viewer.image_files:
-                viewer.setWindowTitle("Image Viewer")
-                viewer._update_status("No images found.")
-                return
+            # Restore current index if possible
+            if preserve_current and current_file:
+                if current_file in viewer.image_files:
+                    viewer.current_index = viewer.image_files.index(current_file)
+                elif viewer.current_index >= len(viewer.image_files):
+                    viewer.current_index = max(0, len(viewer.image_files) - 1)
+                # Update display if we're viewing
+                if viewer.current_index >= 0 and viewer.current_index < len(viewer.image_files):
+                    viewer._update_status()
 
-            viewer.current_index = 0
-            viewer._save_last_parent_dir(dir_path)
-            viewer.setWindowTitle(
-                f"Image Viewer - {os.path.basename(viewer.image_files[viewer.current_index])}"
-            )
-            self.display_image()
-            self.maintain_decode_window(back=0, ahead=5)
-            try:
-                if getattr(viewer.explorer_state, "view_mode", True):
-                    viewer.enter_fullscreen()
-            except Exception:
-                pass
-            _logger.debug(
-                "folder opened: %s, images=%d", dir_path, len(viewer.image_files)
-            )
+            _logger.debug("image files reloaded: %d files", len(viewer.image_files))
         except Exception as e:
-            _logger.error("failed to open_folder: %s, error=%s", dir_path, e)
+            _logger.error("failed to reload image files: %s", e)
 
     def display_image(self) -> None:
         viewer = self.viewer

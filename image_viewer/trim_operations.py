@@ -141,7 +141,11 @@ class TrimPreviewDialog(QDialog):
         self.setModal(False)  # Non-modal so confirmation dialog can be on top
 
         # Set window flags for proper display
-        self.setWindowFlags(Qt.WindowType.Window | Qt.WindowType.WindowMaximizeButtonHint | Qt.WindowType.WindowCloseButtonHint)
+        self.setWindowFlags(
+            Qt.WindowType.Window
+            | Qt.WindowType.WindowMaximizeButtonHint
+            | Qt.WindowType.WindowCloseButtonHint
+        )
 
         # Apply theme
         self._apply_theme(parent)
@@ -211,7 +215,7 @@ class TrimPreviewDialog(QDialog):
         # Update left label
         left_labels = self.left_widget.findChildren(QLabel)
         if left_labels:
-            left_labels[0].setText(f"Original: {original_pixmap.width()} × {original_pixmap.height()}")
+            left_labels[0].setText(f"Original: {original_pixmap.width()} x {original_pixmap.height()}")
 
         # Find and update right (trimmed) image
         right_views = self.right_widget.findChildren(QGraphicsView)
@@ -230,7 +234,7 @@ class TrimPreviewDialog(QDialog):
         # Update right label
         right_labels = self.right_widget.findChildren(QLabel)
         if right_labels:
-            right_labels[0].setText(f"Trimmed: {trimmed_pixmap.width()} × {trimmed_pixmap.height()}")
+            right_labels[0].setText(f"Trimmed: {trimmed_pixmap.width()} x {trimmed_pixmap.height()}")
 
     def showEvent(self, event):
         """Handle show event to fit views after widgets are ready."""
@@ -261,7 +265,7 @@ class TrimPreviewDialog(QDialog):
         layout.setSpacing(4)
 
         # Title and resolution label
-        info_label = QLabel(f"{title}: {width} × {height}")
+        info_label = QLabel(f"{title}: {width} x {height}")
         info_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         font = QFont()
         font.setPointSize(12)
@@ -323,10 +327,8 @@ class TrimPreviewDialog(QDialog):
         # Find all QGraphicsView widgets and refit
         for view in self.findChildren(QGraphicsView):
             if hasattr(view, "_original_fit"):
-                try:
+                with contextlib.suppress(Exception):
                     view._original_fit()
-                except Exception:
-                    pass
 
 
 def start_trim_workflow(viewer) -> None:
