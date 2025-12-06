@@ -164,7 +164,9 @@ def _setup_explorer_mode(viewer) -> None:
         splitter.setObjectName("explorerSplitter")
         splitter.setHandleWidth(1)
         tree = FolderTreeWidget()
-        grid = ThumbnailGridWidget()
+
+        # Use shared model from viewer
+        grid = ThumbnailGridWidget(model=viewer.fs_model)
 
         try:
             grid.set_loader(viewer.thumb_loader)
@@ -221,8 +223,15 @@ def _setup_explorer_mode(viewer) -> None:
         viewer.explorer_state._explorer_tree = tree
         viewer.explorer_state._explorer_grid = grid
 
-        # Auto-load current folder
-        if viewer.image_files:
+        # Auto-load current folder from shared model
+        current_folder = viewer.fs_model.get_current_folder()
+        if current_folder:
+            tree.set_root_path(current_folder)
+            grid.load_folder(current_folder)
+            with contextlib.suppress(Exception):
+                grid.resume_pending_thumbnails()
+        elif viewer.image_files:
+            # Fallback: use first image's parent folder
             current_dir = str(Path(viewer.image_files[0]).parent)
             tree.set_root_path(current_dir)
             grid.load_folder(current_dir)

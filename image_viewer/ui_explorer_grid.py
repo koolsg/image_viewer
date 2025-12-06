@@ -592,28 +592,35 @@ class ThumbnailGridWidget(QWidget):
 
     image_selected = Signal(str)
 
-    def __init__(self, parent=None) -> None:
+    def __init__(self, parent=None, model: ImageFileSystemModel | None = None) -> None:
         super().__init__(parent)
         self._current_folder: str | None = None
         self._clipboard_paths: list[str] = []
         self._clipboard_mode: str | None = None  # "copy" | "cut"
 
-        self._model = ImageFileSystemModel(self)
-        self._model.setFilter(QDir.Filter.Files | QDir.Filter.NoDotAndDotDot)
-        self._model.setNameFilters(
-            [
-                "*.jpg",
-                "*.jpeg",
-                "*.png",
-                "*.bmp",
-                "*.gif",
-                "*.webp",
-                "*.tif",
-                "*.tiff",
-            ]
-        )
-        self._model.setNameFilterDisables(False)
-        self._model.setIconProvider(_ImageOnlyIconProvider())
+        # Use provided model or create new one (for backward compatibility)
+        if model is not None:
+            self._model = model
+        else:
+            self._model = ImageFileSystemModel(self)
+
+        # Configure model if not already configured
+        if self._model.filter() == QDir.Filter.NoFilter:
+            self._model.setFilter(QDir.Filter.Files | QDir.Filter.NoDotAndDotDot)
+            self._model.setNameFilters(
+                [
+                    "*.jpg",
+                    "*.jpeg",
+                    "*.png",
+                    "*.bmp",
+                    "*.gif",
+                    "*.webp",
+                    "*.tif",
+                    "*.tiff",
+                ]
+            )
+            self._model.setNameFilterDisables(False)
+            self._model.setIconProvider(_ImageOnlyIconProvider())
 
         # Thumbnail view (icon grid)
         self._list = _ThumbnailListView()
