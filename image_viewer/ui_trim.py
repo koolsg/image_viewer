@@ -7,7 +7,7 @@ from image_viewer.trim import apply_trim_to_file, detect_trim_box_stats
 
 
 class TrimBatchWorker(QObject):
-    progress = Signal(int, int, str)  # total, index (1-based), filename
+    progress = Signal(str, int, int, str)  # path, index (1-based), total, error
     finished = Signal()
 
     def __init__(self, paths: list[str], profile: str):
@@ -23,7 +23,7 @@ class TrimBatchWorker(QObject):
                 try:
                     result = detect_trim_box_stats(p, profile=self.profile)
                     if result:
-                        apply_trim_to_file(p, result, overwrite=True)
+                        apply_trim_to_file(p, result, overwrite=False)  # Save as copy
                 except Exception as ex:  # keep worker resilient
                     err = str(ex)
                 self.progress.emit(p, idx, total, err)
