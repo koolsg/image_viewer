@@ -10,7 +10,6 @@ from PySide6.QtWidgets import QApplication, QColorDialog, QFileDialog, QInputDia
 
 from image_viewer.busy_cursor import busy_cursor
 from image_viewer.explorer_mode_operations import open_folder_at, toggle_view_mode
-from image_viewer.file_operations import delete_current_file
 from image_viewer.image_engine import ImageEngine
 from image_viewer.image_engine.strategy import DecodingStrategy, FastViewStrategy, FullStrategy
 from image_viewer.logger import get_logger
@@ -21,6 +20,7 @@ from image_viewer.ui_canvas import ImageCanvas
 from image_viewer.ui_convert_webp import WebPConvertDialog
 from image_viewer.ui_menus import build_menus
 from image_viewer.ui_settings import SettingsDialog
+from image_viewer.view_mode_operations import delete_current_file
 
 # --- CLI logging options -----------------------------------------------------
 # To prevent Qt from exiting due to unknown options, we preemptively parse
@@ -95,9 +95,6 @@ class ImageViewer(QMainWindow):
         self.engine.image_ready.connect(self._on_engine_image_ready)
         self.engine.folder_changed.connect(self._on_engine_folder_changed)
 
-        # Backward compatibility: expose fs_model from engine
-        self.fs_model = self.engine.fs_model
-
         self.image_files: list[str] = []  # Synced from engine
         self.current_index = -1
         # Menu/action placeholders (populated in build_menus)
@@ -117,10 +114,6 @@ class ImageViewer(QMainWindow):
 
         self.canvas = ImageCanvas(self)
         self.setCentralWidget(self.canvas)
-
-        # Backward compatibility: expose loader/pixmap_cache from engine
-        self.loader = self.engine._loader
-        self.thumb_loader = self.engine._thumb_loader
 
         self._settings_path = (_BASE_DIR / "settings.json").as_posix()
         self._settings_manager = SettingsManager(self._settings_path)
@@ -238,52 +231,32 @@ class ImageViewer(QMainWindow):
         except Exception as e:
             logger.error("settings save failed: key=%s, error=%s", key, e)
 
-    def open_folder(self) -> None:
-        """Open folder dialog and load images."""
+    def _open_folder_in_explorer_mode(self, dir_path: str) -> None:
+        """Handle folder opening when in Explorer mode."""
         try:
-            start_dir = self._load_last_parent_dir()
+            self.open_folder_at(dir_path)
         except Exception:
-            start_dir = os.path.expanduser("~")
-        try:
-            dir_path = QFileDialog.getExistingDirectory(self, "Open Folder", start_dir)
-        except Exception:
-            dir_path = None
-        if not dir_path:
             return
+        tree = getattr(self.explorer_state, "_explorer_tree", None)
+        grid = getattr(self.explorer_state, "_explorer_grid", None)
+        with contextlib.suppress(Exception):
+            if tree is not None:
+                tree.set_root_path(dir_path)
+        with contextlib.suppress(Exception):
+            if grid is not None:
+                grid.load_folder(dir_path)
+                grid.resume_pending_thumbnails()
 
-        # If currently in Explorer mode, reuse the explorer workflow
-        is_explorer_mode = not getattr(self.explorer_state, "view_mode", True)
-        if is_explorer_mode:
-            try:
-                self.open_folder_at(dir_path)
-            except Exception:
-                return
-            tree = getattr(self.explorer_state, "_explorer_tree", None)
-            grid = getattr(self.explorer_state, "_explorer_grid", None)
-            try:
-                if tree is not None:
-                    tree.set_root_path(dir_path)
-            except Exception:
-                pass
-            try:
-                if grid is not None:
-                    grid.load_folder(dir_path)
-                    with contextlib.suppress(Exception):
-                        grid.resume_pending_thumbnails()
-            except Exception:
-                pass
-            return
-
+    def _open_folder_in_view_mode(self, dir_path: str) -> None:
+        """Handle folder opening when in View mode."""
         # Reset state and clear canvas
         self.current_index = -1
-        try:
+        with contextlib.suppress(Exception):
             empty = QPixmap(1, 1)
             empty.fill(Qt.GlobalColor.transparent)
             self.canvas.set_pixmap(empty)
-        except Exception:
-            pass
 
-        # Open folder via engine (clears caches, sets root path)
+        # Open folder via engine
         if not self.engine.open_folder(dir_path):
             self._update_status("Failed to open folder.")
             return
@@ -302,12 +275,26 @@ class ImageViewer(QMainWindow):
         self.setWindowTitle(f"Image Viewer - {os.path.basename(files[self.current_index])}")
         self.display_image()
         self.maintain_decode_window(back=0, ahead=5)
-        try:
+
+        # Enter fullscreen in View mode
+        with contextlib.suppress(Exception):
             if getattr(self.explorer_state, "view_mode", True):
                 self.enter_fullscreen()
-        except Exception:
-            pass
+
         logger.debug("folder opened: %s, images=%d", dir_path, len(files))
+
+    def open_folder(self) -> None:
+        """Open folder dialog and load images."""
+        start_dir = self._load_last_parent_dir() or os.path.expanduser("~")
+        dir_path = QFileDialog.getExistingDirectory(self, "Open Folder", start_dir)
+        if not dir_path:
+            return
+
+        is_explorer_mode = not getattr(self.explorer_state, "view_mode", True)
+        if is_explorer_mode:
+            self._open_folder_in_explorer_mode(dir_path)
+        else:
+            self._open_folder_in_view_mode(dir_path)
 
     def display_image(self) -> None:
         """Display the current image."""
@@ -343,7 +330,7 @@ class ImageViewer(QMainWindow):
             # Get current folder from shared model
             start_folder = None
             try:
-                current_folder = self.fs_model.get_current_folder()
+                current_folder = self.engine.get_current_folder()
                 if current_folder:
                     start_folder = Path(current_folder)
             except Exception:
@@ -463,11 +450,6 @@ class ImageViewer(QMainWindow):
         except Exception as e:
             logger.debug("_on_engine_folder_changed failed: %s", e)
 
-    @property
-    def pixmap_cache(self):
-        """Backward compatibility: access engine's pixmap cache."""
-        return self.engine._pixmap_cache
-
     def on_image_ready(self, path, image_data, error):
         """Legacy handler - kept for backward compatibility."""
         # Now handled by _on_engine_image_ready via engine.image_ready signal
@@ -570,8 +552,7 @@ class ImageViewer(QMainWindow):
             for idx in range(start, end + 1):
                 try:
                     p = self.image_files[idx]
-                    if hasattr(self, "loader"):
-                        self.loader.unignore_path(p)
+                    self.engine.unignore_path(p)
                 except Exception:
                     pass
         except Exception:
@@ -588,7 +569,7 @@ class ImageViewer(QMainWindow):
         # If the current image is still loading, ignore the input
         if self.current_index >= 0 and self.current_index < len(self.image_files):
             current_path = self.image_files[self.current_index]
-            if current_path not in self.pixmap_cache:
+            if not self.engine.is_cached(current_path):
                 logger.debug("next_image: current image still loading, ignoring input")
                 return
         with busy_cursor():
@@ -605,7 +586,7 @@ class ImageViewer(QMainWindow):
         # If the current image is still loading, ignore the input
         if self.current_index >= 0 and self.current_index < len(self.image_files):
             current_path = self.image_files[self.current_index]
-            if current_path not in self.pixmap_cache:
+            if not self.engine.is_cached(current_path):
                 logger.debug("prev_image: current image still loading, ignoring input")
                 return
         with busy_cursor():

@@ -1,13 +1,27 @@
-"""Explorer mode operations: folder/image selection, UI setup."""
+"""Explorer mode operations: folder/image selection, UI setup, file operations."""
 
 import contextlib
 import os
 from pathlib import Path
 
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QPixmap
+from PySide6.QtCore import QMimeData, Qt, QUrl
+from PySide6.QtGui import QGuiApplication, QPixmap
 from PySide6.QtWidgets import QStackedWidget
 
+from .file_operations import (
+    copy_file,
+    move_file,
+    send_to_recycle_bin,
+    show_delete_confirmation,
+)
+
+# Re-export for backward compatibility (used by ui_explorer_grid)
+__all__ = [
+    "copy_files_to_clipboard",
+    "cut_files_to_clipboard",
+    "delete_files_to_recycle_bin",
+    "paste_files",
+]
 from .logger import get_logger
 from .ui_canvas import ImageCanvas
 
@@ -148,7 +162,7 @@ def _setup_explorer_mode(viewer) -> None:
                 grid = getattr(viewer.explorer_state, "_explorer_grid", None)
                 if grid is not None:
                     with contextlib.suppress(Exception):
-                        grid.set_loader(viewer.thumb_loader)
+                        grid.set_loader(viewer.engine.thumb_loader)
                         grid.resume_pending_thumbnails()
             except Exception:
                 pass
@@ -169,7 +183,7 @@ def _setup_explorer_mode(viewer) -> None:
         grid = ThumbnailGridWidget(model=viewer.engine.fs_model)
 
         try:
-            grid.set_loader(viewer.thumb_loader)
+            grid.set_loader(viewer.engine.thumb_loader)
         except Exception as ex:
             _logger.debug("failed to attach thumb_loader: %s", ex)
 
@@ -391,3 +405,128 @@ def open_folder_at(viewer, folder_path: str) -> None:
         _logger.debug("folder opened: %s, images=%d", folder_path, len(files))
     except Exception as e:
         _logger.error("failed to open_folder_at: %s, error=%s", folder_path, e)
+
+
+# ============= Explorer Mode File Operations =============
+
+
+def _set_files_to_clipboard(paths: list[str], operation: str) -> None:
+    """Set file paths to system clipboard (internal helper).
+
+    Args:
+        paths: List of file paths
+        operation: "copy" or "cut" (for logging)
+    """
+    try:
+        mime = QMimeData()
+        urls = [Path(p).as_uri() for p in paths]
+        mime.setUrls([QUrl(u) for u in urls])
+        QGuiApplication.clipboard().setMimeData(mime)
+        _logger.debug("%s %d files to clipboard", operation, len(paths))
+    except Exception as exc:
+        _logger.error("failed to %s to clipboard: %s", operation, exc)
+
+
+def copy_files_to_clipboard(paths: list[str]) -> None:
+    """Copy file paths to system clipboard.
+
+    Args:
+        paths: List of file paths to copy
+    """
+    _set_files_to_clipboard(paths, "copy")
+
+
+def cut_files_to_clipboard(paths: list[str]) -> None:
+    """Cut file paths to system clipboard.
+
+    Args:
+        paths: List of file paths to cut
+    """
+    _set_files_to_clipboard(paths, "cut")
+
+
+def paste_files(
+    dest_folder: str, clipboard_paths: list[str], mode: str
+) -> tuple[int, list[str]]:
+    """Paste files from clipboard to destination folder.
+
+    Args:
+        dest_folder: Destination folder path
+        clipboard_paths: List of source file paths
+        mode: "copy" or "cut"
+
+    Returns:
+        Tuple of (success_count, failed_paths)
+    """
+    dest_dir = Path(dest_folder)
+    if not dest_dir.is_dir():
+        _logger.warning("destination is not a directory: %s", dest_folder)
+        return 0, clipboard_paths
+
+    success_count = 0
+    failed_paths = []
+
+    for src in clipboard_paths:
+        try:
+            src_path = Path(src)
+            if not src_path.exists():
+                failed_paths.append(src)
+                continue
+
+            if mode == "cut":
+                move_file(str(src_path), str(dest_dir))
+            else:
+                copy_file(str(src_path), str(dest_dir))
+
+            success_count += 1
+        except Exception as exc:
+            _logger.warning("paste failed for %s: %s", src, exc)
+            failed_paths.append(src)
+
+    _logger.debug(
+        "paste complete: %d success, %d failed, mode=%s",
+        success_count,
+        len(failed_paths),
+        mode,
+    )
+    return success_count, failed_paths
+
+
+def delete_files_to_recycle_bin(
+    paths: list[str], parent_widget=None
+) -> tuple[int, list[str]]:
+    """Delete files to recycle bin with confirmation.
+
+    Args:
+        paths: List of file paths to delete
+        parent_widget: Parent widget for confirmation dialog (optional)
+
+    Returns:
+        Tuple of (success_count, failed_paths)
+    """
+    if not paths:
+        return 0, []
+
+    # Confirmation dialog
+    if parent_widget and not show_delete_confirmation(
+        parent_widget,
+        "Delete Files",
+        f"Delete {len(paths)} item(s)?",
+        "They will be moved to Recycle Bin when possible.",
+    ):
+        _logger.debug("delete cancelled by user")
+        return 0, paths
+
+    success_count = 0
+    failed_paths = []
+
+    for path in paths:
+        try:
+            send_to_recycle_bin(path)
+            success_count += 1
+        except Exception as exc:
+            _logger.warning("delete failed for %s: %s", path, exc)
+            failed_paths.append(path)
+
+    _logger.debug("delete complete: %d success, %d failed", success_count, len(failed_paths))
+    return success_count, failed_paths

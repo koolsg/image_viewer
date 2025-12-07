@@ -143,10 +143,19 @@ class ImageEngine(QObject):
     def fs_model(self) -> ImageFileSystemModel:
         """Get the underlying file system model.
 
-        This is provided for backward compatibility with UI components
-        that need direct model access (e.g., QListView).
+        This is provided for UI components that need direct model access
+        (e.g., QListView for Explorer mode).
         """
         return self._fs_model
+
+    @property
+    def thumb_loader(self) -> Loader:
+        """Get the thumbnail loader.
+
+        This is provided for UI components that need direct loader access
+        (e.g., ThumbnailGridWidget).
+        """
+        return self._thumb_loader
 
     # ═══════════════════════════════════════════════════════════════════════
     # Image Decoding API
@@ -235,6 +244,36 @@ class ImageEngine(QObject):
         """Clear the pixmap cache."""
         self._pixmap_cache.clear()
         _logger.debug("pixmap cache cleared")
+
+    def remove_from_cache(self, path: str) -> bool:
+        """Remove a specific path from the pixmap cache.
+
+        Args:
+            path: Image file path to remove
+
+        Returns:
+            True if path was in cache and removed
+        """
+        removed = self._pixmap_cache.pop(path, None) is not None
+        if removed:
+            _logger.debug("removed from cache: %s", path)
+        return removed
+
+    def ignore_path(self, path: str) -> None:
+        """Ignore a path in the loader (skip pending requests).
+
+        Args:
+            path: Image file path to ignore
+        """
+        self._loader.ignore_path(path)
+
+    def unignore_path(self, path: str) -> None:
+        """Unignore a path in the loader.
+
+        Args:
+            path: Image file path to unignore
+        """
+        self._loader.unignore_path(path)
 
     # ═══════════════════════════════════════════════════════════════════════
     # Thumbnail API

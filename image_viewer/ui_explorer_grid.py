@@ -36,7 +36,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from . import file_operations
+from . import explorer_mode_operations
 from .busy_cursor import busy_cursor
 from .image_engine.fs_model import ImageFileSystemModel
 from .logger import get_logger
@@ -377,7 +377,7 @@ class ThumbnailGridWidget(QWidget):
         if not paths:
             return
 
-        file_operations.copy_files_to_clipboard(paths)
+        explorer_mode_operations.copy_files_to_clipboard(paths)
 
         # Update UI state
         self._clipboard_paths = paths
@@ -388,7 +388,7 @@ class ThumbnailGridWidget(QWidget):
         if not paths:
             return
 
-        file_operations.cut_files_to_clipboard(paths)
+        explorer_mode_operations.cut_files_to_clipboard(paths)
 
         # Update UI state
         self._clipboard_paths = paths
@@ -398,7 +398,7 @@ class ThumbnailGridWidget(QWidget):
         if not self._current_folder or not self._clipboard_paths:
             return
 
-        success_count, _failed = file_operations.paste_files(
+        success_count, _failed = explorer_mode_operations.paste_files(
             self._current_folder, self._clipboard_paths, self._clipboard_mode or "copy"
         )
 
@@ -412,7 +412,7 @@ class ThumbnailGridWidget(QWidget):
         if not paths:
             return
 
-        file_operations.delete_files_to_recycle_bin(paths, self)
+        explorer_mode_operations.delete_files_to_recycle_bin(paths, self)
 
     def rename_first_selected(self) -> None:
         """Rename the first selected file using a dialog with dynamic width."""
