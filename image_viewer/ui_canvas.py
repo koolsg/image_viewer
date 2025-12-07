@@ -18,6 +18,26 @@ from math import pow
 
 _logger = get_logger("ui_canvas")
 
+# Constants for rotation normalization
+ROTATION_MAX = 360.0
+ROTATION_MIN = -360.0
+
+# Floating point comparison tolerance
+FLOAT_EPSILON = 1e-6
+
+# Luminance threshold for text color contrast
+LUMINANCE_THRESHOLD = 0.5
+
+# sRGB linearization threshold
+SRGB_LINEAR_THRESHOLD = 0.04045
+
+# File size thresholds for display formatting
+KB_THRESHOLD = 1024
+MB_THRESHOLD = 1024 * 1024
+
+# Image channel count
+RGB_CHANNELS = 3
+
 
 class ImageCanvas(QGraphicsView):
     def __init__(self, parent=None):
@@ -141,134 +161,151 @@ class ImageCanvas(QGraphicsView):
             _logger.debug("mousePressEvent button read error: %s", ex)
             btn = None
             btns = None
-        # Right-click: Enter manual panning mode if scrollbar exists (legacy behavior)
-        if (btn == Qt.RightButton) or (btns is not None and (btns & Qt.RightButton)):
-            try:
-                hbar = self.horizontalScrollBar()
-                vbar = self.verticalScrollBar()
-                h_scroll = hbar.maximum() > 0
-                v_scroll = vbar.maximum() > 0
-            except Exception:
-                h_scroll = v_scroll = False
-            if h_scroll or v_scroll:
-                self._rc_drag_active = True
-                try:
-                    if hasattr(event, "position"):
-                        posf = event.position()
-                        view_qpoint = (
-                            posf.toPoint() if hasattr(posf, "toPoint") else None
-                        )
-                        if view_qpoint is None:
-                            # QPoint imported at module top
 
-                            view_qpoint = QPoint(int(posf.x()), int(posf.y()))
-                    else:
-                        view_qpoint = event.pos() if hasattr(event, "pos") else None
-                except Exception:
-                    view_qpoint = None
-                self._rc_drag_start_view = view_qpoint
-                self._rc_drag_start_h = hbar.value()
-                self._rc_drag_start_v = vbar.value()
-                with contextlib.suppress(Exception):
-                    event.accept()
+        # Dispatch to button-specific handlers
+        if (btn == Qt.RightButton) or (btns is not None and (btns & Qt.RightButton)):
+            if self._handle_right_click(event):
                 return
-        # Middle-click: Snap to global view (maintaining legacy behavior)
-        if (btn == Qt.MiddleButton) or (btns is not None and (btns & Qt.MiddleButton)):
-            viewer = self.window()
-            if hasattr(viewer, "snap_to_global_view"):
-                try:
-                    viewer.snap_to_global_view()
-                    event.accept()
-                    return
-                except Exception:
-                    pass
-        # Auxiliary buttons: Zoom in/out (maintaining legacy mapping)
+        elif (btn == Qt.MiddleButton) or (btns is not None and (btns & Qt.MiddleButton)):
+            if self._handle_middle_click(event):
+                return
+        elif self._handle_auxiliary_buttons(btn, btns, event) or (btn == Qt.LeftButton and self._zoom_saved is None and self._handle_left_click(event)):
+            return
+
+        with contextlib.suppress(Exception):
+            super().mousePressEvent(event)
+
+    def _handle_right_click(self, event) -> bool:
+        """Handle right-click: Enter manual panning mode if scrollbar exists."""
+        try:
+            hbar = self.horizontalScrollBar()
+            vbar = self.verticalScrollBar()
+            h_scroll = hbar.maximum() > 0
+            v_scroll = vbar.maximum() > 0
+        except Exception:
+            return False
+
+        if not (h_scroll or v_scroll):
+            return False
+
+        self._rc_drag_active = True
+        view_qpoint = self._get_event_position(event)
+        self._rc_drag_start_view = view_qpoint
+        self._rc_drag_start_h = hbar.value()
+        self._rc_drag_start_v = vbar.value()
+        with contextlib.suppress(Exception):
+            event.accept()
+        return True
+
+    def _handle_middle_click(self, event) -> bool:
+        """Handle middle-click: Snap to global view."""
+        viewer = self.window()
+        if hasattr(viewer, "snap_to_global_view"):
+            try:
+                viewer.snap_to_global_view()
+                event.accept()
+                return True
+            except Exception:
+                pass
+        return False
+
+    def _handle_auxiliary_buttons(self, btn, btns, event) -> bool:
+        """Handle auxiliary mouse buttons (XButton1/XButton2) for zoom."""
         xbtn1 = getattr(Qt, "XButton1", None)
         xbtn2 = getattr(Qt, "XButton2", None)
-        if (xbtn1 is not None) and (
-            (btn == xbtn1) or (btns is not None and (btns & xbtn1))
-        ):
+
+        if xbtn1 is not None and ((btn == xbtn1) or (btns is not None and (btns & xbtn1))):
             try:
                 self.zoom_by(0.8)
                 event.accept()
-                return
+                return True
             except Exception:
                 pass
-        if (xbtn2 is not None) and (
-            (btn == xbtn2) or (btns is not None and (btns & xbtn2))
-        ):
+
+        if xbtn2 is not None and ((btn == xbtn2) or (btns is not None and (btns & xbtn2))):
             try:
                 self.zoom_by(1.25)
                 event.accept()
-                return
+                return True
             except Exception:
                 pass
-        # Left-click: Press-to-zoom (legacy behavior: zoom at cursor and restore)
-        if (btn == Qt.LeftButton) and self._zoom_saved is None:
-            try:
-                # Save current preset and calculate baseline scale
-                self._preset_before_press = getattr(self, "_preset_mode", "fit")
-                baseline = (
-                    self.get_fit_scale()
-                    if self._preset_before_press == "fit"
-                    else float(self._zoom)
-                )
-            except Exception:
-                self._preset_before_press = getattr(self, "_preset_mode", "fit")
-                baseline = 1.0
-            mul = getattr(self, "_press_zoom_multiplier", 2.0)
-            try:
-                mul = float(mul)
-                if abs(mul) < 1e-6:
-                    mul = 2.0
-            except Exception:
+
+        return False
+
+    def _handle_left_click(self, event) -> bool:
+        """Handle left-click: Press-to-zoom at cursor position."""
+        try:
+            self._preset_before_press = getattr(self, "_preset_mode", "fit")
+            baseline = self.get_fit_scale() if self._preset_before_press == "fit" else float(self._zoom)
+        except Exception:
+            self._preset_before_press = getattr(self, "_preset_mode", "fit")
+            baseline = 1.0
+
+        mul = self._get_zoom_multiplier()
+        self._zoom_saved = float(baseline)
+
+        # Calculate cursor position (view coords -> scene -> item)
+        view_qpoint = self._get_event_position(event)
+        scene_pt = self.mapToScene(view_qpoint) if view_qpoint is not None else None
+        item_pt = self._pix_item.mapFromScene(scene_pt) if scene_pt is not None else None
+
+        # Switch to actual mode and apply zoom
+        self._preset_mode = "actual"
+        self._zoom = max(0.05, min(float(baseline) * float(mul), 20.0))
+        self.apply_current_view()
+
+        # Align cursor: keep the same point under the cursor after zooming
+        self._align_cursor_after_zoom(item_pt, view_qpoint)
+
+        try:
+            parent = self.parent()
+            if hasattr(parent, "_update_status"):
+                parent._update_status()
+        except Exception:
+            pass
+        return True
+
+    def _get_event_position(self, event) -> QPoint | None:
+        """Extract QPoint position from mouse event."""
+        try:
+            if hasattr(event, "position"):
+                posf = event.position()
+                if hasattr(posf, "toPoint"):
+                    return posf.toPoint()
+                return QPoint(int(posf.x()), int(posf.y()))
+            elif hasattr(event, "pos"):
+                return event.pos()
+        except Exception:
+            pass
+        return None
+
+    def _get_zoom_multiplier(self) -> float:
+        """Get the press-zoom multiplier value."""
+        mul = getattr(self, "_press_zoom_multiplier", 2.0)
+        try:
+            mul = float(mul)
+            if abs(mul) < FLOAT_EPSILON:
                 mul = 2.0
-            self._zoom_saved = float(baseline)
+        except Exception:
+            mul = 2.0
+        return mul
 
-            # Calculate cursor position (view coords -> scene -> item)
-            view_qpoint = None
-            try:
-                if hasattr(event, "position"):
-                    posf = event.position()
-                    view_qpoint = posf.toPoint() if hasattr(posf, "toPoint") else QPoint(int(posf.x()), int(posf.y()))
-                elif hasattr(event, "pos"):
-                    view_qpoint = event.pos()
-            except Exception:
-                view_qpoint = None
-
-            scene_pt = self.mapToScene(view_qpoint) if view_qpoint is not None else None
-            item_pt = (
-                self._pix_item.mapFromScene(scene_pt) if scene_pt is not None else None
-            )
-
-            # Switch to actual mode and apply zoom
-            self._preset_mode = "actual"
-            self._zoom = max(0.05, min(float(baseline) * float(mul), 20.0))
-            self.apply_current_view()
-
-            # Align cursor: keep the same point under the cursor after zooming (equivalent to legacy)
-            if item_pt is not None and view_qpoint is not None:
-                try:
-                    new_scene_pt = self._pix_item.mapToScene(item_pt)
-                    new_view_pt = self.mapFromScene(new_scene_pt)
-                    delta_x = int(new_view_pt.x() - view_qpoint.x())
-                    delta_y = int(new_view_pt.y() - view_qpoint.y())
-                    hbar = self.horizontalScrollBar()
-                    vbar = self.verticalScrollBar()
-                    hbar.setValue(hbar.value() + delta_x)
-                    vbar.setValue(vbar.value() + delta_y)
-                except Exception:
-                    with contextlib.suppress(Exception):
-                        self.centerOn(new_scene_pt)
-            try:
-                parent = self.parent()
-                if hasattr(parent, "_update_status"):
-                    parent._update_status()
-            except Exception:
-                pass
+    def _align_cursor_after_zoom(self, item_pt, view_qpoint) -> None:
+        """Align view so the same point stays under cursor after zoom."""
+        if item_pt is None or view_qpoint is None:
             return
-        with contextlib.suppress(Exception):
-            super().mousePressEvent(event)
+        try:
+            new_scene_pt = self._pix_item.mapToScene(item_pt)
+            new_view_pt = self.mapFromScene(new_scene_pt)
+            delta_x = int(new_view_pt.x() - view_qpoint.x())
+            delta_y = int(new_view_pt.y() - view_qpoint.y())
+            hbar = self.horizontalScrollBar()
+            vbar = self.verticalScrollBar()
+            hbar.setValue(hbar.value() + delta_x)
+            vbar.setValue(vbar.value() + delta_y)
+        except Exception:
+            with contextlib.suppress(Exception):
+                self.centerOn(self._pix_item.mapToScene(item_pt))
 
     def mouseMoveEvent(self, event):
         if getattr(self, "_rc_drag_active", False):
@@ -352,10 +389,10 @@ class ImageCanvas(QGraphicsView):
                 self._rotation = 0.0
         # Normalize to -360~360 range (to prevent excessive accumulation)
         try:
-            while self._rotation <= -360.0:
-                self._rotation += 360.0
-            while self._rotation > 360.0:
-                self._rotation -= 360.0
+            while self._rotation <= ROTATION_MIN:
+                self._rotation += ROTATION_MAX
+            while self._rotation > ROTATION_MAX:
+                self._rotation -= ROTATION_MAX
         except Exception:
             pass
         self.apply_current_view()
@@ -378,7 +415,7 @@ class ImageCanvas(QGraphicsView):
                 self._apply_hq_fit()
             else:
                 self.fitInView(self._pix_item, Qt.KeepAspectRatio)
-        elif abs(self._zoom - 1.0) > 1e-6:
+        elif abs(self._zoom - 1.0) > FLOAT_EPSILON:
             self.scale(self._zoom, self._zoom)
         try:
             viewer = self.window()
@@ -405,7 +442,7 @@ class ImageCanvas(QGraphicsView):
                 b = c.blue() / 255.0
 
                 def f(u):
-                    return pow((u + 0.055) / 1.055, 2.4) if u > 0.04045 else (u / 12.92)
+                    return pow((u + 0.055) / 1.055, 2.4) if u > SRGB_LINEAR_THRESHOLD else (u / 12.92)
 
                 rL, gL, bL = f(r), f(g), f(b)
                 return 0.2126 * rL + 0.7152 * gL + 0.0722 * bL
@@ -413,7 +450,7 @@ class ImageCanvas(QGraphicsView):
             text_color = QColor(255, 255, 255)
             try:
                 if isinstance(bg, QColor):
-                    text_color = QColor(0, 0, 0) if rel_lum(bg) > 0.5 else QColor(255, 255, 255)
+                    text_color = QColor(0, 0, 0) if rel_lum(bg) > LUMINANCE_THRESHOLD else QColor(255, 255, 255)
             except Exception:
                 pass
             painter.setPen(text_color)
@@ -424,21 +461,21 @@ class ImageCanvas(QGraphicsView):
             font = QFont()
             font.setPointSize(10)
             painter.setFont(font)
-            
+
             # Measure text to draw background
             fm = painter.fontMetrics()
             title_w = fm.horizontalAdvance(title)
             info_w = fm.horizontalAdvance(info)
             line_h = fm.height()
-            
+
             box_w = max(title_w, info_w) + 20
             box_h = (line_h * 2) + 10
-            
+
             # Draw semi-transparent background
             painter.setPen(Qt.NoPen)
             painter.setBrush(QColor(0, 0, 0, 128))
             painter.drawRoundedRect(8, 8, box_w, box_h, 6, 6)
-            
+
             # Draw text
             painter.setPen(QColor(255, 255, 255))
             painter.drawText(18, 8 + line_h, title)
@@ -460,10 +497,10 @@ class ImageCanvas(QGraphicsView):
                     rows = []
 
                     def _fmt_size(num: int) -> str:
-                        if num >= 1024 * 1024:
-                            return f"{num / (1024 * 1024):.1f} MB"
-                        if num >= 1024:
-                            return f"{num / 1024:.1f} KB"
+                        if num >= MB_THRESHOLD:
+                            return f"{num / MB_THRESHOLD:.1f} MB"
+                        if num >= KB_THRESHOLD:
+                            return f"{num / KB_THRESHOLD:.1f} KB"
                         return f"{num} B"
 
                     for path, pix in list(cache.items()):
@@ -556,7 +593,7 @@ class ImageCanvas(QGraphicsView):
             except Exception:
                 self.fitInView(self._pix_item, Qt.KeepAspectRatio)
                 return
-            if arr2.shape[2] != 3:
+            if arr2.shape[2] != RGB_CHANNELS:
                 self.fitInView(self._pix_item, Qt.KeepAspectRatio)
                 return
             h2, w2, _ = arr2.shape

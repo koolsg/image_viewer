@@ -1,17 +1,28 @@
+"""Decoding strategies for image loading.
+
+This module provides different strategies for image decoding:
+- FullStrategy: Decode at original resolution (highest quality)
+- FastViewStrategy: Decode at viewport size (faster loading)
+"""
+
 from abc import ABC, abstractmethod
 
-from .logger import get_logger
+from image_viewer.logger import get_logger
 
 _logger = get_logger("strategy")
 
 
 class DecodingStrategy(ABC):
-
-
     """Abstract base class for image decoding strategies."""
+
     @abstractmethod
     def get_target_size(self, viewport_width: int, viewport_height: int) -> tuple[int | None, int | None]:
         """Returns the target decoding size based on the viewport size.
+
+        Args:
+            viewport_width: Width of the viewport
+            viewport_height: Height of the viewport
+
         Returns:
             (target_width, target_height) tuple. None means original size.
         """
@@ -27,12 +38,13 @@ class DecodingStrategy(ABC):
         """Returns whether high-quality downscaling is supported."""
         pass
 
+
 class FastViewStrategy(DecodingStrategy):
     """Fast view mode: calculates target resolution based on viewport size."""
+
     def __init__(self):
         self.name = "fast view"
         _logger.debug("FastViewStrategy initialized")
-
 
     def get_target_size(self, viewport_width: int, viewport_height: int) -> tuple[int | None, int | None]:
         """Calculate the resolution to use based on the viewport area."""
@@ -47,8 +59,10 @@ class FastViewStrategy(DecodingStrategy):
     def supports_hq_downscale(self) -> bool:
         return False
 
+
 class FullStrategy(DecodingStrategy):
     """Original resolution-based strategy: highest quality."""
+
     def __init__(self):
         self.name = "original"
         _logger.debug("FullStrategy initialized")
@@ -64,4 +78,3 @@ class FullStrategy(DecodingStrategy):
     def supports_hq_downscale(self) -> bool:
         """HQ downscaling is supported in original mode."""
         return True
-

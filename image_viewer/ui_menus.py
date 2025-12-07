@@ -3,8 +3,8 @@ from typing import TYPE_CHECKING
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QActionGroup, QColor, QKeySequence, QShortcut
 
+from .image_engine.strategy import FastViewStrategy
 from .logger import get_logger
-from .strategy import FastViewStrategy
 
 if TYPE_CHECKING:
     from .main import ImageViewer

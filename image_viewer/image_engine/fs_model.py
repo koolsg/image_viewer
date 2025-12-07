@@ -11,7 +11,8 @@ from PySide6.QtCore import QDateTime, QModelIndex, Qt
 from PySide6.QtGui import QIcon, QImage, QImageReader, QPixmap
 from PySide6.QtWidgets import QApplication, QFileSystemModel
 
-from .logger import get_logger
+from image_viewer.logger import get_logger
+
 from .thumbnail_cache import ThumbnailCache
 
 _logger = get_logger("fs_model")

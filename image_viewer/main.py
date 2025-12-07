@@ -1,24 +1,21 @@
 import contextlib
 import os
 import sys
-from collections import OrderedDict
 from pathlib import Path
 from typing import Any
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QImageReader, QPixmap
-from PySide6.QtWidgets import QApplication, QColorDialog, QInputDialog, QMainWindow
+from PySide6.QtWidgets import QApplication, QColorDialog, QFileDialog, QInputDialog, QMainWindow
 
 from image_viewer.busy_cursor import busy_cursor
-from image_viewer.decoder import decode_image
-from image_viewer.display_controller import DisplayController
 from image_viewer.explorer_mode_operations import open_folder_at, toggle_view_mode
 from image_viewer.file_operations import delete_current_file
-from image_viewer.loader import Loader
+from image_viewer.image_engine import ImageEngine
+from image_viewer.image_engine.strategy import DecodingStrategy, FastViewStrategy, FullStrategy
 from image_viewer.logger import get_logger
 from image_viewer.settings_manager import SettingsManager
 from image_viewer.status_overlay import StatusOverlayBuilder
-from image_viewer.strategy import DecodingStrategy, FastViewStrategy, FullStrategy
 from image_viewer.trim_operations import start_trim_workflow
 from image_viewer.ui_canvas import ImageCanvas
 from image_viewer.ui_convert_webp import WebPConvertDialog
@@ -45,7 +42,7 @@ def _apply_cli_logging_options() -> None:
             _os.environ["IMAGE_VIEWER_LOG_LEVEL"] = args.log_level
         if args.log_cats:
             _os.environ["IMAGE_VIEWER_LOG_CATS"] = args.log_cats
-        _sys.argv[:] = [_sys.argv[0]] + remaining
+        _sys.argv[:] = [_sys.argv[0], *remaining]
     except Exception:
         # Failing to set up logging should not prevent the app from running.
         pass
@@ -93,12 +90,15 @@ class ImageViewer(QMainWindow):
         self.trim_state = TrimState()
         self.explorer_state = ExplorerState()
 
-        # Shared file system model (always exists, used by all modes)
-        from image_viewer.fs_model import ImageFileSystemModel
-        self.fs_model = ImageFileSystemModel(self)
-        self.fs_model.directoryLoaded.connect(self._on_fs_directory_loaded)
+        # ImageEngine: single entry point for all data/processing
+        self.engine = ImageEngine(self)
+        self.engine.image_ready.connect(self._on_engine_image_ready)
+        self.engine.folder_changed.connect(self._on_engine_folder_changed)
 
-        self.image_files: list[str] = []  # Will be deprecated in Phase 2
+        # Backward compatibility: expose fs_model from engine
+        self.fs_model = self.engine.fs_model
+
+        self.image_files: list[str] = []  # Synced from engine
         self.current_index = -1
         # Menu/action placeholders (populated in build_menus)
         self.view_group = None
@@ -111,7 +111,6 @@ class ImageViewer(QMainWindow):
         self.fullscreen_action = None
         self.refresh_explorer_action = None
         self.convert_webp_action = None
-        self.pixmap_cache: OrderedDict[str, QPixmap] = OrderedDict()
         self.cache_size = 20
         self.decode_full = False
         self.decoding_strategy: DecodingStrategy = FullStrategy()
@@ -119,9 +118,9 @@ class ImageViewer(QMainWindow):
         self.canvas = ImageCanvas(self)
         self.setCentralWidget(self.canvas)
 
-        self.loader = Loader(decode_image)
-        self.loader.image_decoded.connect(self.on_image_ready)
-        self.thumb_loader = Loader(decode_image)
+        # Backward compatibility: expose loader/pixmap_cache from engine
+        self.loader = self.engine._loader
+        self.thumb_loader = self.engine._thumb_loader
 
         self._settings_path = (_BASE_DIR / "settings.json").as_posix()
         self._settings_manager = SettingsManager(self._settings_path)
@@ -135,7 +134,6 @@ class ImageViewer(QMainWindow):
 
         build_menus(self)
         self._status_builder = StatusOverlayBuilder(self)
-        self._display_controller = DisplayController(self)
         self._apply_background()
 
         # Load press zoom multiplier from settings
@@ -240,12 +238,105 @@ class ImageViewer(QMainWindow):
         except Exception as e:
             logger.error("settings save failed: key=%s, error=%s", key, e)
 
-    def open_folder(self):
-        self._display_controller.open_folder()
+    def open_folder(self) -> None:
+        """Open folder dialog and load images."""
+        try:
+            start_dir = self._load_last_parent_dir()
+        except Exception:
+            start_dir = os.path.expanduser("~")
+        try:
+            dir_path = QFileDialog.getExistingDirectory(self, "Open Folder", start_dir)
+        except Exception:
+            dir_path = None
+        if not dir_path:
+            return
+
+        # If currently in Explorer mode, reuse the explorer workflow
+        is_explorer_mode = not getattr(self.explorer_state, "view_mode", True)
+        if is_explorer_mode:
+            try:
+                self.open_folder_at(dir_path)
+            except Exception:
+                return
+            tree = getattr(self.explorer_state, "_explorer_tree", None)
+            grid = getattr(self.explorer_state, "_explorer_grid", None)
+            try:
+                if tree is not None:
+                    tree.set_root_path(dir_path)
+            except Exception:
+                pass
+            try:
+                if grid is not None:
+                    grid.load_folder(dir_path)
+                    with contextlib.suppress(Exception):
+                        grid.resume_pending_thumbnails()
+            except Exception:
+                pass
+            return
+
+        # Reset state and clear canvas
+        self.current_index = -1
+        try:
+            empty = QPixmap(1, 1)
+            empty.fill(Qt.GlobalColor.transparent)
+            self.canvas.set_pixmap(empty)
+        except Exception:
+            pass
+
+        # Open folder via engine (clears caches, sets root path)
+        if not self.engine.open_folder(dir_path):
+            self._update_status("Failed to open folder.")
+            return
+
+        # Get file list from engine
+        files = self.engine.get_image_files()
+        self.image_files = files
+
+        if not files:
+            self.setWindowTitle("Image Viewer")
+            self._update_status("No images found.")
+            return
+
+        self.current_index = 0
+        self._save_last_parent_dir(dir_path)
+        self.setWindowTitle(f"Image Viewer - {os.path.basename(files[self.current_index])}")
+        self.display_image()
+        self.maintain_decode_window(back=0, ahead=5)
+        try:
+            if getattr(self.explorer_state, "view_mode", True):
+                self.enter_fullscreen()
+        except Exception:
+            pass
+        logger.debug("folder opened: %s, images=%d", dir_path, len(files))
 
     def display_image(self) -> None:
+        """Display the current image."""
         with busy_cursor():
-            self._display_controller.display_image()
+            if self.current_index == -1:
+                return
+            image_path = self.image_files[self.current_index]
+            self.setWindowTitle(f"Image Viewer - {os.path.basename(image_path)}")
+            logger.debug("display_image: idx=%s path=%s", self.current_index, image_path)
+
+            # Calculate target size for FastView strategy
+            target_size = None
+            if isinstance(self.decoding_strategy, FastViewStrategy):
+                screen = self.windowHandle().screen() if self.windowHandle() else QApplication.primaryScreen()
+                if screen is not None:
+                    size = screen.size()
+                    tw, th = self.decoding_strategy.get_target_size(int(size.width()), int(size.height()))
+                    target_size = (tw, th)
+
+            # Check cache first
+            cached = self.engine.get_cached_pixmap(image_path)
+            if cached is not None:
+                logger.debug("display_image: cache-hit path=%s", image_path)
+                self.update_pixmap(cached)
+                return
+
+            # Request decode via engine
+            self._update_status("Loading...")
+            self.engine.request_decode(image_path, target_size)
 
     def open_convert_dialog(self) -> None:
         try:
@@ -297,15 +388,53 @@ class ImageViewer(QMainWindow):
         except Exception as ex:
             logger.debug("refresh_explorer failed: %s", ex)
 
-    def _on_fs_directory_loaded(self, path: str):
-        """Handle file system changes detected by shared model.
-
-        Called when QFileSystemModel detects directory changes.
-        In View mode: synchronize image_files list.
-        In Explorer mode: model automatically updates the view.
+    def _on_engine_image_ready(self, path: str, pixmap: QPixmap, error) -> None:
+        """Handle image decoded signal from ImageEngine.
 
         Args:
-            path: Directory path that was loaded/changed
+            path: Image file path
+            pixmap: Decoded QPixmap (empty if error)
+            error: Error message or None
+        """
+        try:
+            if path not in self.image_files:
+                logger.debug("_on_engine_image_ready drop: path not in image_files: %s", path)
+                return
+        except Exception:
+            pass
+
+        if error:
+            logger.error("decode error for %s: %s", path, error)
+            try:
+                base = os.path.basename(path)
+            except Exception:
+                base = path
+            self._overlay_info = f"Load failed: {base} - {error}"
+            if hasattr(self, "canvas"):
+                self.canvas.viewport().update()
+            return
+
+        if pixmap and not pixmap.isNull():
+            # Store decoded size for status display
+            if path == self.image_files[self.current_index]:
+                with contextlib.suppress(Exception):
+                    self._current_decoded_size = (pixmap.width(), pixmap.height())
+
+            # Skip screen update during trim preview
+            if getattr(self.trim_state, "in_preview", False):
+                logger.debug("skipping screen update during trim preview")
+                return
+
+            # Update canvas if this is the current image
+            if path == self.image_files[self.current_index]:
+                self.update_pixmap(pixmap)
+
+    def _on_engine_folder_changed(self, path: str, files: list[str]) -> None:
+        """Handle folder changed signal from ImageEngine.
+
+        Args:
+            path: Folder path
+            files: List of image file paths
         """
         try:
             # Only handle in View mode (Explorer mode auto-updates via model-view)
@@ -317,26 +446,32 @@ class ImageViewer(QMainWindow):
             if self.current_index >= 0 and self.current_index < len(self.image_files):
                 current_file = self.image_files[self.current_index]
 
-            # Update file list from model
-            new_files = self.fs_model.get_image_files()
-            self.image_files = new_files
+            # Update file list
+            self.image_files = files
 
             # Restore current index if file still exists
-            if current_file and current_file in new_files:
-                self.current_index = new_files.index(current_file)
-            elif self.current_index >= len(new_files):
-                self.current_index = max(0, len(new_files) - 1) if new_files else -1
+            if current_file and current_file in files:
+                self.current_index = files.index(current_file)
+            elif self.current_index >= len(files):
+                self.current_index = max(0, len(files) - 1) if files else -1
 
             # Update status display
             if self.current_index >= 0:
                 self._update_status()
 
-            logger.debug("fs changed in view mode: %d files, current_index=%d", len(new_files), self.current_index)
+            logger.debug("folder changed in view mode: %d files, current_index=%d", len(files), self.current_index)
         except Exception as e:
-            logger.debug("_on_fs_directory_loaded failed: %s", e)
+            logger.debug("_on_engine_folder_changed failed: %s", e)
+
+    @property
+    def pixmap_cache(self):
+        """Backward compatibility: access engine's pixmap cache."""
+        return self.engine._pixmap_cache
 
     def on_image_ready(self, path, image_data, error):
-        self._display_controller.on_image_ready(path, image_data, error)
+        """Legacy handler - kept for backward compatibility."""
+        # Now handled by _on_engine_image_ready via engine.image_ready signal
+        logger.debug("on_image_ready (legacy): path=%s error=%s", path, error)
 
     def update_pixmap(self, pixmap: QPixmap):
         if pixmap and not pixmap.isNull():
@@ -393,8 +528,36 @@ class ImageViewer(QMainWindow):
         else:
             super().keyPressEvent(event)
 
-    def maintain_decode_window(self, back: int = 3, ahead: int = 5):
-        self._display_controller.maintain_decode_window(back, ahead)
+    def maintain_decode_window(self, back: int = 3, ahead: int = 5) -> None:
+        """Prefetch images around the current index."""
+        if not self.image_files:
+            return
+        n = len(self.image_files)
+        i = self.current_index
+        start = max(0, i - back)
+        end = min(n - 1, i + ahead)
+        logger.debug("prefetch window: idx=%s range=[%s..%s]", i, start, end)
+
+        # Calculate target size for FastView strategy
+        target_size = None
+        fast_view_action = getattr(self, "fast_view_action", None)
+        fast_view_enabled = bool(fast_view_action and fast_view_action.isChecked())
+        if fast_view_enabled and not self.decode_full:
+            screen = self.windowHandle().screen() if self.windowHandle() else QApplication.primaryScreen()
+            if screen is not None:
+                sz = screen.size()
+                target_size = (int(sz.width()), int(sz.height()))
+
+        # Collect paths to prefetch
+        paths_to_prefetch = []
+        for idx in range(start, end + 1):
+            path = self.image_files[idx]
+            if not self.engine.is_cached(path):
+                paths_to_prefetch.append(path)
+
+        if paths_to_prefetch:
+            logger.debug("prefetch %d images, target=%s", len(paths_to_prefetch), target_size)
+            self.engine.prefetch(paths_to_prefetch, target_size)
 
     def _unignore_decode_window(self, back: int = 1, ahead: int = 4) -> None:
         try:
@@ -469,7 +632,7 @@ class ImageViewer(QMainWindow):
         delete_current_file(self)
 
     def closeEvent(self, event):
-        self.loader.shutdown()
+        self.engine.shutdown()
         event.accept()
 
     # View commands
@@ -518,6 +681,9 @@ class ImageViewer(QMainWindow):
             self.decoding_strategy = FullStrategy()
             logger.debug("switched to FullStrategy")
 
+        # Update engine's strategy
+        self.engine.set_decoding_strategy(self.decoding_strategy)
+
         # Save setting: only save the thumbnail mode state
         self._save_settings_key("fast_view_enabled", is_fast_view)
 
@@ -528,7 +694,7 @@ class ImageViewer(QMainWindow):
             self.canvas._hq_downscale = False
 
         # Clear the current cache to allow immediate comparison with the new strategy
-        self.pixmap_cache.clear()
+        self.engine.clear_cache()
         # Redisplay the current image and re-request prefetching
         self.display_image()
         self.maintain_decode_window()

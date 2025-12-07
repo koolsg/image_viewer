@@ -38,7 +38,7 @@ from PySide6.QtWidgets import (
 
 from . import file_operations
 from .busy_cursor import busy_cursor
-from .fs_model import ImageFileSystemModel
+from .image_engine.fs_model import ImageFileSystemModel
 from .logger import get_logger
 
 _logger = get_logger("ui_explorer_grid")

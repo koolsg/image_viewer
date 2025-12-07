@@ -165,8 +165,8 @@ def _setup_explorer_mode(viewer) -> None:
         splitter.setHandleWidth(1)
         tree = FolderTreeWidget()
 
-        # Use shared model from viewer
-        grid = ThumbnailGridWidget(model=viewer.fs_model)
+        # Use shared model from engine
+        grid = ThumbnailGridWidget(model=viewer.engine.fs_model)
 
         try:
             grid.set_loader(viewer.thumb_loader)
@@ -223,20 +223,23 @@ def _setup_explorer_mode(viewer) -> None:
         viewer.explorer_state._explorer_tree = tree
         viewer.explorer_state._explorer_grid = grid
 
-        # Auto-load current folder from shared model
-        current_folder = viewer.fs_model.get_current_folder()
+        # Auto-load current folder from engine
+        engine = viewer.engine
+        current_folder = engine.get_current_folder()
         if current_folder:
             tree.set_root_path(current_folder)
             grid.load_folder(current_folder)
             with contextlib.suppress(Exception):
                 grid.resume_pending_thumbnails()
-        elif viewer.image_files:
+        elif engine.get_file_count() > 0:
             # Fallback: use first image's parent folder
-            current_dir = str(Path(viewer.image_files[0]).parent)
-            tree.set_root_path(current_dir)
-            grid.load_folder(current_dir)
-            with contextlib.suppress(Exception):
-                grid.resume_pending_thumbnails()
+            first_file = engine.get_file_at_index(0)
+            if first_file:
+                current_dir = str(Path(first_file).parent)
+                tree.set_root_path(current_dir)
+                grid.load_folder(current_dir)
+                with contextlib.suppress(Exception):
+                    grid.resume_pending_thumbnails()
 
         _logger.debug("switched to Explorer Mode")
     except Exception as e:
@@ -267,15 +270,12 @@ def _on_explorer_image_selected(viewer, image_path: str) -> None:
         viewer: The ImageViewer instance
         image_path: Selected image path
     """
+    engine = viewer.engine
     try:
         # Calculate jump distance (for debugging)
         try:
             cur_idx = viewer.current_index
-            tgt_idx = (
-                viewer.image_files.index(image_path)
-                if image_path in viewer.image_files
-                else None
-            )
+            tgt_idx = engine.get_file_index(image_path)
             _logger.debug(
                 "explorer select: cur=%s tgt=%s path=%s",
                 cur_idx,
@@ -288,7 +288,8 @@ def _on_explorer_image_selected(viewer, image_path: str) -> None:
         # Set current_index BEFORE switching to View Mode
         # Display image by image_path (normalize paths for comparison)
         normalized_path = str(Path(image_path).resolve())
-        normalized_files = [str(Path(f).resolve()) for f in viewer.image_files]
+        image_files = engine.get_image_files()
+        normalized_files = [str(Path(f).resolve()) for f in image_files]
 
         if normalized_path in normalized_files:
             viewer.current_index = normalized_files.index(normalized_path)
@@ -299,7 +300,8 @@ def _on_explorer_image_selected(viewer, image_path: str) -> None:
             open_folder_at(viewer, new_folder)
             # Re-normalize after opening folder
             normalized_path = str(Path(image_path).resolve())
-            normalized_files = [str(Path(f).resolve()) for f in viewer.image_files]
+            image_files = engine.get_image_files()
+            normalized_files = [str(Path(f).resolve()) for f in image_files]
             if normalized_path in normalized_files:
                 viewer.current_index = normalized_files.index(normalized_path)
 
@@ -354,69 +356,38 @@ def open_folder_at(viewer, folder_path: str) -> None:
         viewer: The ImageViewer instance
         folder_path: Path to the folder to open
     """
+    engine = viewer.engine
     try:
         if not os.path.isdir(folder_path):
             _logger.warning("not a directory: %s", folder_path)
             return
 
-        # Clear session state: Reset pending/ignore lists for both Viewer and Thumbnail loaders
-        try:
-            if hasattr(viewer, "loader"):
-                viewer.loader._ignored.clear()
-                viewer.loader._pending.clear()
-                if hasattr(viewer.loader, "_latest_id"):
-                    viewer.loader._latest_id.clear()
-        except Exception:
-            pass
-        try:
-            if hasattr(viewer, "thumb_loader") and viewer.thumb_loader is not None:
-                viewer.thumb_loader._ignored.clear()
-                viewer.thumb_loader._pending.clear()
-                if hasattr(viewer.thumb_loader, "_latest_id"):
-                    viewer.thumb_loader._latest_id.clear()
-        except Exception:
-            pass
-
-        viewer.pixmap_cache.clear()
+        # Reset state
         viewer.current_index = -1
 
-        # Rebuild image list
-        files = []
-        for name in os.listdir(folder_path):
-            p = os.path.join(folder_path, name)
-            if os.path.isfile(p):
-                lower = name.lower()
-                if lower.endswith(
-                    (
-                        ".jpg",
-                        ".jpeg",
-                        ".png",
-                        ".bmp",
-                        ".gif",
-                        ".webp",
-                        ".tif",
-                        ".tiff",
-                    )
-                ):
-                    files.append(p)
-        files.sort()
+        # Open folder via engine (clears caches, sets root path)
+        if not engine.open_folder(folder_path):
+            viewer._update_status("Failed to open folder.")
+            return
+
+        # Get file list from engine
+        files = engine.get_image_files()
         viewer.image_files = files
 
-        if not viewer.image_files:
+        if not files:
             viewer.setWindowTitle("Image Viewer")
             viewer._update_status("No images found.")
             return
 
         viewer.current_index = 0
         viewer._save_last_parent_dir(folder_path)
+        first_file = engine.get_file_at_index(0)
         viewer.setWindowTitle(
-            f"Image Viewer - {os.path.basename(viewer.image_files[viewer.current_index])}"
+            f"Image Viewer - {os.path.basename(first_file) if first_file else ''}"
         )
         # Lightweight initial prefetch
         viewer.maintain_decode_window(back=0, ahead=3)
 
-        _logger.debug(
-            "folder opened: %s, images=%d", folder_path, len(viewer.image_files)
-        )
+        _logger.debug("folder opened: %s, images=%d", folder_path, len(files))
     except Exception as e:
         _logger.error("failed to open_folder_at: %s, error=%s", folder_path, e)

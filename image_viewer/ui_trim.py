@@ -1,9 +1,26 @@
 from __future__ import annotations
 
-from PySide6.QtCore import QObject, Signal, Slot
-from PySide6.QtWidgets import QApplication, QDialog, QLabel, QProgressBar, QVBoxLayout
+import contextlib
 
+from PySide6.QtCore import QObject, Qt, Signal, Slot
+from PySide6.QtGui import QFont, QPixmap
+from PySide6.QtWidgets import (
+    QApplication,
+    QDialog,
+    QGraphicsPixmapItem,
+    QGraphicsScene,
+    QGraphicsView,
+    QLabel,
+    QProgressBar,
+    QSplitter,
+    QVBoxLayout,
+    QWidget,
+)
+
+from image_viewer.logger import get_logger
 from image_viewer.trim import apply_trim_to_file, detect_trim_box_stats
+
+_logger = get_logger("ui_trim")
 
 
 class TrimBatchWorker(QObject):
@@ -71,3 +88,181 @@ class TrimProgressDialog(QDialog):
             self._bar.setValue(pct)
         except Exception:
             pass
+
+
+class TrimPreviewDialog(QDialog):
+    """Dialog to show before/after trim comparison in a separate window."""
+
+    def __init__(self, original_pixmap: QPixmap, trimmed_pixmap: QPixmap, filename: str, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(f"Trim Preview - {filename}")
+        self.setModal(False)  # Non-modal so confirmation dialog can be on top
+
+        # Set window flags for proper display
+        self.setWindowFlags(
+            Qt.WindowType.Window | Qt.WindowType.WindowMaximizeButtonHint | Qt.WindowType.WindowCloseButtonHint
+        )
+
+        # Apply theme
+        self._apply_theme(parent)
+
+        # Main layout
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
+
+        # Splitter for left/right comparison
+        self.splitter = QSplitter(Qt.Orientation.Horizontal)
+        self.splitter.setHandleWidth(8)
+        self.splitter.setStyleSheet("""
+            QSplitter::handle {
+                background: #555555;
+                border: 1px solid #333333;
+            }
+            QSplitter::handle:hover {
+                background: #666666;
+            }
+        """)
+
+        # Left side: Original image
+        left_widget = self._create_image_widget(
+            original_pixmap, "Original", original_pixmap.width(), original_pixmap.height()
+        )
+
+        # Right side: Trimmed image
+        right_widget = self._create_image_widget(
+            trimmed_pixmap, "Trimmed", trimmed_pixmap.width(), trimmed_pixmap.height()
+        )
+
+        self.splitter.addWidget(left_widget)
+        self.splitter.addWidget(right_widget)
+
+        main_layout.addWidget(self.splitter)
+        self.setLayout(main_layout)
+
+        # Store widget references for updates
+        self.left_widget = left_widget
+        self.right_widget = right_widget
+
+    def update_images(self, original_pixmap: QPixmap, trimmed_pixmap: QPixmap, filename: str):
+        """Update dialog with new images without recreating the window."""
+        self.setWindowTitle(f"Trim Preview - {filename}")
+
+        # Find and update left (original) image
+        left_views = self.left_widget.findChildren(QGraphicsView)
+        if left_views:
+            view = left_views[0]
+            if hasattr(view, "_scene") and hasattr(view, "_pixmap_item"):
+                view._pixmap = original_pixmap
+                view._pixmap_item.setPixmap(original_pixmap)
+                if hasattr(view, "_border_rect"):
+                    view._border_rect.setRect(view._pixmap_item.boundingRect())
+                view._scene.setSceneRect(view._pixmap_item.boundingRect())
+                view.fitInView(view._pixmap_item, Qt.AspectRatioMode.KeepAspectRatio)
+
+        # Update left label
+        left_labels = self.left_widget.findChildren(QLabel)
+        if left_labels:
+            left_labels[0].setText(f"Original: {original_pixmap.width()} x {original_pixmap.height()}")
+
+        # Find and update right (trimmed) image
+        right_views = self.right_widget.findChildren(QGraphicsView)
+        if right_views:
+            view = right_views[0]
+            if hasattr(view, "_scene") and hasattr(view, "_pixmap_item"):
+                view._pixmap = trimmed_pixmap
+                view._pixmap_item.setPixmap(trimmed_pixmap)
+                if hasattr(view, "_border_rect"):
+                    view._border_rect.setRect(view._pixmap_item.boundingRect())
+                view._scene.setSceneRect(view._pixmap_item.boundingRect())
+                view.fitInView(view._pixmap_item, Qt.AspectRatioMode.KeepAspectRatio)
+
+        # Update right label
+        right_labels = self.right_widget.findChildren(QLabel)
+        if right_labels:
+            right_labels[0].setText(f"Trimmed: {trimmed_pixmap.width()} x {trimmed_pixmap.height()}")
+
+    def showEvent(self, event):
+        """Handle show event to fit views after widgets are ready."""
+        super().showEvent(event)
+        from PySide6.QtCore import QTimer
+
+        QTimer.singleShot(50, self._fit_all_views)
+
+    def _fit_all_views(self):
+        """Fit all graphics views to their content."""
+        total_width = self.splitter.width()
+        self.splitter.setSizes([total_width // 2, total_width // 2])
+
+        for view in self.findChildren(QGraphicsView):
+            if hasattr(view, "_pixmap_item"):
+                try:
+                    view.fitInView(view._pixmap_item, Qt.AspectRatioMode.KeepAspectRatio)
+                except Exception as e:
+                    _logger.debug("failed to fit view: %s", e)
+
+    def _create_image_widget(self, pixmap: QPixmap, title: str, width: int, height: int) -> QWidget:
+        """Create a widget containing title, resolution info, and image view."""
+        from PySide6.QtCore import Qt as QtCore
+        from PySide6.QtGui import QPainter, QPen
+
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+        layout.setContentsMargins(4, 4, 4, 4)
+        layout.setSpacing(4)
+
+        # Title and resolution label
+        info_label = QLabel(f"{title}: {width} x {height}")
+        info_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        font = QFont()
+        font.setPointSize(12)
+        font.setBold(True)
+        info_label.setFont(font)
+        layout.addWidget(info_label)
+
+        # Graphics view for displaying the image
+        scene = QGraphicsScene(widget)
+        view = QGraphicsView(scene)
+        view.setRenderHint(QPainter.RenderHint.Antialiasing)
+        view.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
+
+        # Add pixmap to scene
+        pixmap_item = QGraphicsPixmapItem(pixmap)
+        scene.addItem(pixmap_item)
+
+        # Add border around image for clear boundary visibility
+        border_rect = scene.addRect(pixmap_item.boundingRect(), QPen(QtCore.GlobalColor.red, 3))
+        border_rect.setZValue(1)
+
+        # Store references to prevent garbage collection
+        view._scene = scene
+        view._pixmap_item = pixmap_item
+        view._border_rect = border_rect
+        view._pixmap = pixmap
+        view._original_fit = lambda: view.fitInView(pixmap_item, Qt.AspectRatioMode.KeepAspectRatio)
+
+        scene.setSceneRect(pixmap_item.boundingRect())
+        layout.addWidget(view)
+        widget.setLayout(layout)
+        return widget
+
+    def _apply_theme(self, parent):
+        """Apply the current theme from parent viewer."""
+        try:
+            if parent and hasattr(parent, "_settings_manager"):
+                theme = parent._settings_manager.get("theme", "dark")
+                from image_viewer.styles import apply_theme
+
+                app = QApplication.instance()
+                if app:
+                    apply_theme(app, theme)
+        except Exception as e:
+            _logger.debug("failed to apply theme to preview dialog: %s", e)
+
+    def resizeEvent(self, event):
+        """Maintain fit on resize for all views."""
+        super().resizeEvent(event)
+        for view in self.findChildren(QGraphicsView):
+            if hasattr(view, "_original_fit"):
+                with contextlib.suppress(Exception):
+                    view._original_fit()

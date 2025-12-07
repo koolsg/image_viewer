@@ -1,4 +1,8 @@
-"""SQLite-based thumbnail cache manager."""
+"""SQLite-based thumbnail cache manager.
+
+This module provides persistent thumbnail caching using SQLite database
+for fast thumbnail retrieval and reduced disk I/O.
+"""
 
 from __future__ import annotations
 
@@ -9,7 +13,7 @@ from pathlib import Path
 from PySide6.QtCore import QBuffer, QIODevice
 from PySide6.QtGui import QPixmap
 
-from .logger import get_logger
+from image_viewer.logger import get_logger
 
 _logger = get_logger("thumbnail_cache")
 

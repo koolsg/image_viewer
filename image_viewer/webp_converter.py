@@ -4,8 +4,6 @@ This module provides a ProcessPoolExecutor-based worker for converting images to
 using true multiprocessing for parallel conversion across CPU cores.
 """
 
-from __future__ import annotations
-
 import math
 import os
 from concurrent.futures import ProcessPoolExecutor, as_completed

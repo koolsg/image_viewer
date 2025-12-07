@@ -13,7 +13,7 @@ except Exception:
     pyvips = None  # type: ignore
 
 # Import the decode function from the app
-from image_viewer.decoder import decode_image
+from image_viewer.image_engine.decoder import decode_image
 
 
 def make_jpeg_bytes_from_png(png_path: str) -> bytes:

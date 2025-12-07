@@ -1,3 +1,9 @@
+"""Image loader with multi-process decoding.
+
+This module provides the Loader class that manages file I/O scheduling
+and multi-process image decoding for high performance.
+"""
+
 import contextlib
 import os
 import threading
@@ -6,7 +12,7 @@ from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 
 from PySide6.QtCore import QObject, Signal
 
-from .logger import get_logger
+from image_viewer.logger import get_logger
 
 _logger = get_logger("loader")
 
@@ -27,8 +33,8 @@ class Loader(QObject):
         self.executor = ProcessPoolExecutor()
         max_io = max(2, min(4, (os.cpu_count() or 2)))
         self.io_pool = ThreadPoolExecutor(max_workers=max_io)
-        self._pending = set()
-        self._ignored = set()
+        self._pending: set[str] = set()
+        self._ignored: set[str] = set()
         self._next_id = 1
         self._latest_id: dict[str, int] = {}
         self._lock = threading.Lock()
@@ -98,7 +104,9 @@ class Loader(QObject):
             _logger.debug("decode_finished emit: path=%s id=%s err=%s", path, req_id, error)
         self.image_decoded.emit(path, data, error)
 
-    def request_load(self, path, target_width: int | None = None, target_height: int | None = None, size: str = "both"):
+    def request_load(
+        self, path: str, target_width: int | None = None, target_height: int | None = None, size: str = "both"
+    ) -> None:
         with self._lock:
             if path in self._ignored:
                 _logger.debug("request_load skip(ignored): path=%s", path)
@@ -131,6 +139,13 @@ class Loader(QObject):
     def unignore_path(self, path: str):
         with self._lock:
             self._ignored.discard(path)
+
+    def clear_pending(self):
+        """Clear all pending requests."""
+        with self._lock:
+            self._pending.clear()
+            self._ignored.clear()
+            self._latest_id.clear()
 
     def shutdown(self):
         self.executor.shutdown(wait=False, cancel_futures=True)

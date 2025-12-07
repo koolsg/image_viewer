@@ -1,3 +1,9 @@
+"""Image decoder using pyvips.
+
+This module provides the core image decoding functionality using pyvips
+for high-performance image loading and processing.
+"""
+
 import contextlib
 import os
 from pathlib import Path
@@ -9,8 +15,11 @@ from image_viewer.logger import get_logger
 
 _logger = get_logger("decoder")
 
+# Constants
+RGB_CHANNELS = 3
+
 # Locate bundled libvips (for frozen exe/_MEIPASS and source tree)
-_BASE_DIR = Path(getattr(os.sys, "_MEIPASS", Path(__file__).resolve().parent))
+_BASE_DIR = Path(getattr(os.sys, "_MEIPASS", Path(__file__).resolve().parent.parent))
 _LIBVIPS_DIR = _BASE_DIR / "libvips"
 if os.name == "nt" and _LIBVIPS_DIR.exists():
     with contextlib.suppress(Exception):
@@ -58,10 +67,10 @@ def _decode_with_pyvips_from_file(
         image = image.colourspace("srgb")
     if image.hasalpha():
         image = image.flatten(background=[0, 0, 0])
-    if image.bands > 3:
-        image = image.extract_band(0, 3)
-    elif image.bands < 3:
-        image = pyvips.Image.bandjoin([image] * 3)
+    if image.bands > RGB_CHANNELS:
+        image = image.extract_band(0, RGB_CHANNELS)
+    elif image.bands < RGB_CHANNELS:
+        image = pyvips.Image.bandjoin([image] * RGB_CHANNELS)
     if image.format != "uchar":
         image = image.cast("uchar")
 
@@ -70,7 +79,7 @@ def _decode_with_pyvips_from_file(
     array = array.copy()
     with contextlib.suppress(Exception):
         del image
-    if array.shape[2] != 3:
+    if array.shape[2] != RGB_CHANNELS:
         raise RuntimeError(f"Unsupported band count after conversion: {array.shape[2]}")
     return array
 

@@ -1,7 +1,5 @@
-from __future__ import annotations
-
+from .image_engine.strategy import FastViewStrategy
 from .logger import get_logger
-from .strategy import FastViewStrategy
 
 _logger = get_logger("status_overlay")
 
