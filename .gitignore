@@ -2,17 +2,17 @@
 /.venv
 /.serena
 /.vscode
-/image_viewer/__pycache__/
-/image_viewer/settings.json
+__pycache__
+
 /tools
 /.githooks
 /.cache
-/tests/__pycache__/
+
 
 *.md
 !README.md
 image_viewer\settings.json
-
+/image_viewer/settings.json
 /image_viewer/libvips/
 CONTROL_PANEL.md.backup
 
