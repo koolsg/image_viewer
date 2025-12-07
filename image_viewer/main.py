@@ -60,7 +60,7 @@ class ViewState:
         self.preset_mode: str = "fit"  # "fit" or "actual"
         self.zoom: float = 1.0
         self.hq_downscale: bool = False
-        self.press_zoom_multiplier: float = 2.0
+        # Note: press_zoom_multiplier is stored in canvas._press_zoom_multiplier
 
 
 class TrimState:
@@ -746,7 +746,7 @@ class ImageViewer(QMainWindow):
             pass
         except Exception:
             return
-        current = getattr(self.canvas, "_press_zoom_multiplier", 2.0)
+        current = getattr(self.canvas, "_press_zoom_multiplier", 3.0)
         val, ok = QInputDialog.getDouble(
             self,
             "Press Zoom Multiplier",

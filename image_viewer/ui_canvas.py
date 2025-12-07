@@ -281,13 +281,13 @@ class ImageCanvas(QGraphicsView):
 
     def _get_zoom_multiplier(self) -> float:
         """Get the press-zoom multiplier value."""
-        mul = getattr(self, "_press_zoom_multiplier", 2.0)
+        mul = getattr(self, "_press_zoom_multiplier", 3.0)
         try:
             mul = float(mul)
             if abs(mul) < FLOAT_EPSILON:
-                mul = 2.0
+                mul = 3.0
         except Exception:
-            mul = 2.0
+            mul = 3.0
         return mul
 
     def _align_cursor_after_zoom(self, item_pt, view_qpoint) -> None:
