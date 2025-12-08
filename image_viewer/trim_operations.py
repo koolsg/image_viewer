@@ -266,7 +266,7 @@ def _apply_trim_and_update(viewer, path: str, crop: tuple[int, int, int, int]) -
 
     # Invalidate cache and redisplay if necessary
     with contextlib.suppress(Exception):
-        engine._pixmap_cache.pop(path, None)
+        engine.remove_from_cache(path)
 
     current_path = engine.get_file_at_index(viewer.current_index)
     if current_path == path:
