@@ -1,5 +1,6 @@
 """View mode operations: file deletion for single image display."""
 
+import contextlib
 import gc
 import os
 import time as _time
@@ -167,10 +168,8 @@ def delete_current_file(viewer) -> None:
             return
 
     # Step 4: Ignore path in loader
-    try:
+    with contextlib.suppress(Exception):
         viewer.engine.ignore_path(del_path)
-    except Exception:
-        pass
 
     # Step 5: Update image list
     _update_image_list_after_delete(viewer, del_path)
