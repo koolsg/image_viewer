@@ -9,8 +9,9 @@ from pathlib import Path
 
 from PySide6.QtCore import QDateTime, QModelIndex, Qt
 from PySide6.QtGui import QIcon, QImage, QImageReader, QPixmap
-from PySide6.QtWidgets import QApplication, QFileSystemModel
+from PySide6.QtWidgets import QFileSystemModel
 
+from image_viewer.busy_cursor import busy_cursor
 from image_viewer.logger import get_logger
 
 from .thumbnail_cache import ThumbnailCache
@@ -44,7 +45,7 @@ class ImageFileSystemModel(QFileSystemModel):
         self._view_mode: str = "thumbnail"
         self._meta: dict[str, tuple[int | None, int | None, int | None, float | None]] = {}
         self._db_cache: ThumbnailCache | None = None
-        self._busy_cursor_active: bool = False
+        self._batch_load_done: bool = False
 
     # --- loader wiring -----------------------------------------------------
     def set_loader(self, loader) -> None:
@@ -58,11 +59,149 @@ class ImageFileSystemModel(QFileSystemModel):
         except Exception as exc:
             _logger.debug("set_loader failed: %s", exc)
 
+    def batch_load_thumbnails(self, root_index: QModelIndex | None = None) -> None:
+        """Pre-load thumbnails for all visible files from cache.
+
+        This method should be called after setRootPath to batch-load
+        thumbnails from the database, avoiding individual queries per item.
+
+        Uses busy_cursor context manager to show wait cursor during loading.
+
+        Args:
+            root_index: Root index to load from (uses current root if None)
+        """
+        if self._batch_load_done:
+            return
+
+        with busy_cursor():
+            try:
+                if root_index is None:
+                    root_path = self.rootPath()
+                    if not root_path:
+                        return
+                    root_index = self.index(root_path)
+
+                if not root_index.isValid():
+                    return
+
+                # Collect all image files with their stats
+                paths_with_stats = []
+                row_count = self.rowCount(root_index)
+
+                for row in range(row_count):
+                    index = self.index(row, 0, root_index)
+                    if not index.isValid() or self.isDir(index):
+                        continue
+
+                    path = self.filePath(index)
+                    if not self._is_image_file(path):
+                        continue
+
+                    # Get file stats
+                    file_path = Path(path)
+                    if not file_path.exists():
+                        continue
+
+                    try:
+                        stat = file_path.stat()
+                        paths_with_stats.append((path, stat.st_mtime, stat.st_size))
+                    except Exception:
+                        continue
+
+                if not paths_with_stats:
+                    self._batch_load_done = True
+                    return
+
+                # Ensure DB cache is initialized
+                if paths_with_stats:
+                    self._ensure_db_cache(paths_with_stats[0][0])
+
+                if not self._db_cache:
+                    self._batch_load_done = True
+                    return
+
+                # Batch load from database
+                results = self._db_cache.get_batch(paths_with_stats, self._thumb_size[0], self._thumb_size[1])
+
+                # Update cache and metadata
+                for path, (pixmap, orig_width, orig_height) in results.items():
+                    self._thumb_cache[path] = QIcon(pixmap)
+                    prev = self._meta.get(path, (None, None, None, None))
+                    self._meta[path] = (orig_width, orig_height, prev[2], prev[3])
+
+                # Emit dataChanged for all loaded items
+                if results:
+                    first_index = self.index(0, 0, root_index)
+                    last_index = self.index(row_count - 1, 0, root_index)
+                    self.dataChanged.emit(first_index, last_index, [Qt.DecorationRole, Qt.DisplayRole])
+
+                _logger.debug("batch loaded %d thumbnails from cache", len(results))
+
+                # Pre-load resolution info for Detail view
+                self._preload_resolution_info(root_index, row_count)
+
+                self._batch_load_done = True
+            except Exception as exc:
+                _logger.debug("batch_load_thumbnails failed: %s", exc)
+                self._batch_load_done = True
+
+    def _preload_resolution_info(self, root_index: QModelIndex, row_count: int) -> None:
+        """Pre-load resolution information for all image files.
+
+        This is called after thumbnail loading to prepare data for Detail view.
+        Reading image headers is fast and prevents lag when switching to Detail mode.
+
+        Args:
+            root_index: Root index of the folder
+            row_count: Number of rows to process
+        """
+        try:
+            loaded_count = 0
+            for row in range(row_count):
+                index = self.index(row, 0, root_index)
+                if not index.isValid() or self.isDir(index):
+                    continue
+
+                path = self.filePath(index)
+                if not self._is_image_file(path):
+                    continue
+
+                # Skip if resolution already cached
+                w, h, _size, _mtime = self._meta.get(path, (None, None, None, None))
+                if w is not None and h is not None:
+                    continue
+
+                # Read resolution from image header
+                try:
+                    reader = QImageReader(path)
+                    size = reader.size()
+                    if size.isValid():
+                        w = int(size.width())
+                        h = int(size.height())
+                        prev = self._meta.get(path, (None, None, None, None))
+                        self._meta[path] = (w, h, prev[2], prev[3])
+                        loaded_count += 1
+                except Exception:
+                    pass
+
+            if loaded_count > 0:
+                _logger.debug("preloaded %d resolution info", loaded_count)
+        except Exception as exc:
+            _logger.debug("_preload_resolution_info failed: %s", exc)
+
     def set_thumb_size(self, width: int, height: int) -> None:
         self._thumb_size = (width, height)
+        # Reset batch load flag when thumbnail size changes
+        self._batch_load_done = False
 
     def set_view_mode(self, mode: str) -> None:
         self._view_mode = mode
+
+    def setRootPath(self, path: str) -> QModelIndex:  # type: ignore[override]
+        """Override to reset batch load flag when folder changes."""
+        # Reset batch load flag for new folder
+        self._batch_load_done = False
+        return super().setRootPath(path)
 
     # --- file list access (for unified model) ------------------------------
     def get_image_files(self) -> list[str]:
@@ -183,8 +322,13 @@ class ImageFileSystemModel(QFileSystemModel):
                 return None
             base_cols = super().columnCount(index.parent())
             col = index.column()
+
+            # Early return for roles that don't need file info
+            if role not in (Qt.DisplayRole, Qt.ToolTipRole, Qt.DecorationRole, Qt.TextAlignmentRole):
+                return super().data(index, role)
+
             path = self.filePath(index)
-            self._meta_update_basic(path)
+
             # Resolution column
             if col == base_cols:
                 if role in (Qt.DisplayRole, Qt.ToolTipRole):
@@ -194,7 +338,7 @@ class ImageFileSystemModel(QFileSystemModel):
             if col > base_cols:
                 return None
 
-            # Type column -> extension only
+            # Type column -> extension only (no file access needed)
             if col == self.COL_TYPE and role == Qt.DisplayRole:
                 suffix = Path(path).suffix.lower().lstrip(".")
                 return suffix
@@ -206,8 +350,17 @@ class ImageFileSystemModel(QFileSystemModel):
                     return self._fmt_size(int(info.size()))
                 except Exception:
                     return super().data(index, role)
+
+            # Text alignment per column
             if role == Qt.TextAlignmentRole:
-                return Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+                # Name column: left aligned
+                if col == self.COL_NAME:
+                    return Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+                # Size and Resolution: right aligned
+                if col in (self.COL_SIZE, base_cols):
+                    return Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+                # Others (Type, Modified): center aligned
+                return Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter
 
             # Decoration for thumbnails
             if role == Qt.DecorationRole and self._view_mode == "thumbnail" and col == self.COL_NAME:
@@ -227,16 +380,20 @@ class ImageFileSystemModel(QFileSystemModel):
     def _resolution_str(self, index: QModelIndex) -> str:
         path = self.filePath(index)
         try:
-            self._meta_update_basic(path)
+            # Check cache first (already preloaded)
             w, h, _size_bytes, _mtime = self._meta.get(path, (None, None, None, None))
+
+            # Only read if not cached (new files)
             if w is None or h is None:
                 reader = QImageReader(path)
                 size = reader.size()
                 if size.isValid():
                     w = int(size.width())
                     h = int(size.height())
+                    # Update cache with resolution only
                     prev = self._meta.get(path, (None, None, None, None))
                     self._meta[path] = (w, h, prev[2], prev[3])
+
             if w and h:
                 return f"{w}x{h}"
         except Exception:
@@ -260,7 +417,7 @@ class ImageFileSystemModel(QFileSystemModel):
         mtime_str = ""
         res_str = ""
         try:
-            self._meta_update_basic(path)
+            # Use cached metadata (already preloaded)
             w, h, size_bytes, mtime = self._meta.get(path, (None, None, None, None))
             if size_bytes is not None:
                 size_str = self._fmt_size(int(size_bytes))
@@ -278,10 +435,10 @@ class ImageFileSystemModel(QFileSystemModel):
         """Build tooltip with file metadata."""
         try:
             filename = Path(path).name
-            self._meta_update_basic(path)
+            # Use cached metadata (already preloaded)
             w, h, size_bytes, mtime = self._meta.get(path, (None, None, None, None))
 
-            # Get resolution (from cache or read header)
+            # Get resolution from cache or read header (new files only)
             if w is None or h is None:
                 reader = QImageReader(path)
                 size = reader.size()
@@ -332,12 +489,8 @@ class ImageFileSystemModel(QFileSystemModel):
         if not self._loader or path in self._thumb_pending:
             return
 
-        # Start busy cursor if not already active
-        if not self._busy_cursor_active:
-            QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
-            QApplication.processEvents()
-            self._busy_cursor_active = True
-
+        # Don't start busy cursor here - it's managed by batch_load_thumbnails
+        # Individual thumbnail requests happen during scrolling, not initial load
         self._thumb_pending.add(path)
         try:
             self._loader.request_load(
@@ -353,8 +506,6 @@ class ImageFileSystemModel(QFileSystemModel):
         try:
             self._thumb_pending.discard(path)
             if error or image_data is None:
-                # Check if all thumbnails are done
-                self._check_thumbnail_completion()
                 return
             thumb_height, thumb_width, _ = image_data.shape
             bytes_per_line = 3 * thumb_width
@@ -388,23 +539,8 @@ class ImageFileSystemModel(QFileSystemModel):
             idx = self.index(path)
             if idx.isValid():
                 self.dataChanged.emit(idx, idx, [Qt.DecorationRole, Qt.DisplayRole])
-
-            # Check if all thumbnails are done
-            self._check_thumbnail_completion()
         except Exception as exc:
             _logger.debug("thumbnail_ready failed: %s", exc)
-            # Check if all thumbnails are done even on error
-            self._check_thumbnail_completion()
-
-    def _check_thumbnail_completion(self) -> None:
-        """Check if all pending thumbnails are complete and restore cursor."""
-        try:
-            if self._busy_cursor_active and not self._thumb_pending:
-                QApplication.restoreOverrideCursor()
-                self._busy_cursor_active = False
-                _logger.debug("thumbnail loading complete, cursor restored")
-        except Exception as exc:
-            _logger.debug("_check_thumbnail_completion failed: %s", exc)
 
     def _ensure_db_cache(self, path: str) -> None:
         """Ensure database cache is initialized for the given path's directory."""
