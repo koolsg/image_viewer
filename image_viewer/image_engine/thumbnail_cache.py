@@ -113,6 +113,59 @@ class ThumbnailCache:
             _logger.debug("failed to get thumbnail from cache: %s", exc)
             return None
 
+    def get_batch(
+        self, paths_with_stats: list[tuple[str, float, int]], thumb_width: int, thumb_height: int
+    ) -> dict[str, tuple[QPixmap, int | None, int | None]]:
+        """Get multiple thumbnails from cache in a single query.
+
+        Args:
+            paths_with_stats: List of (path, mtime, size) tuples
+            thumb_width: Expected thumbnail width
+            thumb_height: Expected thumbnail height
+
+        Returns:
+            Dictionary mapping path to (pixmap, original_width, original_height)
+        """
+        if not self._conn or not paths_with_stats:
+            return {}
+
+        try:
+            # Build query with multiple conditions
+            placeholders = ",".join(["(?, ?, ?)"] * len(paths_with_stats))
+            query = f"""
+                SELECT path, thumbnail, width, height, thumb_width, thumb_height
+                FROM thumbnails
+                WHERE (path, mtime, size) IN ({placeholders})
+            """
+
+            # Flatten the list of tuples for query parameters
+            params = []
+            for path, mtime, size in paths_with_stats:
+                params.extend([path, mtime, size])
+
+            cursor = self._conn.execute(query, params)
+            rows = cursor.fetchall()
+
+            # Process results
+            results = {}
+            for row in rows:
+                path, thumbnail_data, orig_width, orig_height, cached_tw, cached_th = row
+
+                # Check if thumbnail size matches
+                if cached_tw != thumb_width or cached_th != thumb_height:
+                    continue
+
+                # Load pixmap from blob
+                pixmap = QPixmap()
+                if pixmap.loadFromData(thumbnail_data):
+                    results[path] = (pixmap, orig_width, orig_height)
+
+            _logger.debug("batch loaded %d/%d thumbnails", len(results), len(paths_with_stats))
+            return results
+        except Exception as exc:
+            _logger.debug("failed to batch get thumbnails: %s", exc)
+            return {}
+
     def set(
         self,
         path: str,
