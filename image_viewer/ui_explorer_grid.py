@@ -139,6 +139,7 @@ class ThumbnailGridWidget(QWidget):
         self._current_folder: str | None = None
         self._clipboard_paths: list[str] = []
         self._clipboard_mode: str | None = None  # "copy" | "cut"
+        self._context_menu: QMenu | None = None  # Pre-created context menu
 
         # Use provided model or create new one (for backward compatibility)
         if model is not None:
@@ -223,46 +224,57 @@ class ThumbnailGridWidget(QWidget):
 
     # Public API -----------------------------------------------------------------
     def load_folder(self, folder_path: str) -> None:
-        with busy_cursor():
-            try:
-                if not Path(folder_path).is_dir():
-                    _logger.warning("not a directory: %s", folder_path)
-                    return
-                idx = self._model.setRootPath(folder_path)
-                self._list.setRootIndex(idx)
-                self._tree.setRootIndex(idx)
-                self._current_folder = folder_path
-                self._list.clearSelection()
-                self._tree.clearSelection()
-                # Column sizing for tree
-                with contextlib.suppress(Exception):
-                    header = self._tree.header()
-                    base_cols = self._model.columnCount() - 1  # resolution column index
-                    header.setSectionResizeMode(QHeaderView.ResizeToContents)
-                    header.setStretchLastSection(False)
-                    header.setDefaultAlignment(
-                        Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter
-                    )
-                    # Desired order: Name, Type, Size, Resolution, Modified
-                    header.moveSection(2, 1)  # Type next to Name
-                    header.moveSection(base_cols, 3)  # Resolution before Modified
-                    margin = 16
-                    for col in range(self._model.columnCount()):
-                        width = max(self._tree.sizeHintForColumn(col), 48)
-                        self._tree.setColumnWidth(col, width + margin)
-            except Exception as exc:
-                _logger.error("failed to load_folder %s: %s", folder_path, exc)
+        """Load folder and display thumbnails.
+
+        Note: Thumbnail loading happens asynchronously in background.
+        This method only sets up the folder structure.
+        """
+        try:
+            if not Path(folder_path).is_dir():
+                _logger.warning("not a directory: %s", folder_path)
+                return
+            idx = self._model.setRootPath(folder_path)
+            self._list.setRootIndex(idx)
+            self._tree.setRootIndex(idx)
+            self._current_folder = folder_path
+            self._list.clearSelection()
+            self._tree.clearSelection()
+            # Column sizing for tree
+            with contextlib.suppress(Exception):
+                header = self._tree.header()
+                base_cols = self._model.columnCount() - 1  # resolution column index
+                header.setSectionResizeMode(QHeaderView.ResizeToContents)
+                header.setStretchLastSection(False)
+                header.setDefaultAlignment(
+                    Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter
+                )
+                # Desired order: Name, Type, Size, Resolution, Modified
+                header.moveSection(2, 1)  # Type next to Name
+                header.moveSection(base_cols, 3)  # Resolution before Modified
+                margin = 16
+                for col in range(self._model.columnCount()):
+                    width = max(self._tree.sizeHintForColumn(col), 48)
+                    self._tree.setColumnWidth(col, width + margin)
+            # Batch load thumbnails from cache
+            self._model.batch_load_thumbnails(idx)
+        except Exception as exc:
+            _logger.error("failed to load_folder %s: %s", folder_path, exc)
 
     def set_thumbnail_size_wh(self, width: int, height: int) -> None:
-        with busy_cursor():
-            try:
-                w = max(32, min(1024, int(width)))
-                h = max(32, min(1024, int(height)))
-                self._list.setIconSize(QSize(w, h))
-                self._list.setGridSize(QSize(w + 32, h + 48))
-                self._model.set_thumb_size(w, h)
-            except Exception as exc:
-                _logger.debug("set_thumbnail_size_wh failed: %s", exc)
+        """Set thumbnail size (width and height separately).
+
+        Args:
+            width: Thumbnail width in pixels
+            height: Thumbnail height in pixels
+        """
+        try:
+            w = max(32, min(1024, int(width)))
+            h = max(32, min(1024, int(height)))
+            self._list.setIconSize(QSize(w, h))
+            self._list.setGridSize(QSize(w + 32, h + 48))
+            self._model.set_thumb_size(w, h)
+        except Exception as exc:
+            _logger.debug("set_thumbnail_size_wh failed: %s", exc)
 
     def set_thumbnail_size(self, size: int) -> None:
         self.set_thumbnail_size_wh(size, size)
@@ -341,25 +353,22 @@ class ThumbnailGridWidget(QWidget):
 
     def _show_context_menu(self, pos: QPoint) -> None:
         try:
-            menu = QMenu(self)
-            menu.addAction("Open", lambda: self._activate_current())
-            view_menu = menu.addMenu("View")
-            view_menu.addAction(
-                "Thumbnails",
-                lambda: self.set_view_mode("thumbnail"),
-            )
-            view_menu.addAction(
-                "Details",
-                lambda: self.set_view_mode("detail"),
-            )
-            menu.addSeparator()
-            menu.addAction("Copy", self.copy_selected)
-            menu.addAction("Cut", self.cut_selected)
-            menu.addAction("Paste", self.paste_into_current)
-            menu.addAction("Rename", self.rename_first_selected)
-            menu.addSeparator()
-            menu.addAction("Delete", self.delete_selected)
-            menu.exec(self.mapToGlobal(pos))
+            # Create menu once and reuse
+            if self._context_menu is None:
+                self._context_menu = QMenu(self)
+                self._context_menu.addAction("Open", self._activate_current)
+                view_menu = self._context_menu.addMenu("View")
+                view_menu.addAction("Thumbnails", lambda: self.set_view_mode("thumbnail"))
+                view_menu.addAction("Details", lambda: self.set_view_mode("detail"))
+                self._context_menu.addSeparator()
+                self._context_menu.addAction("Copy", self.copy_selected)
+                self._context_menu.addAction("Cut", self.cut_selected)
+                self._context_menu.addAction("Paste", self.paste_into_current)
+                self._context_menu.addAction("Rename", self.rename_first_selected)
+                self._context_menu.addSeparator()
+                self._context_menu.addAction("Delete", self.delete_selected)
+
+            self._context_menu.exec(self.mapToGlobal(pos))
         except Exception as exc:
             _logger.debug("context menu failed: %s", exc)
 
@@ -525,19 +534,20 @@ class ThumbnailGridWidget(QWidget):
 
     # View mode ------------------------------------------------------------------
     def set_view_mode(self, mode: str) -> None:
-        mode = "thumbnail" if mode not in {"thumbnail", "detail"} else mode
-        self._view_mode = mode
-        self._model.set_view_mode(mode)
-        with contextlib.suppress(Exception):
-            for idx in self._list.selectedIndexes():
-                self._list.closePersistentEditor(idx)
-            for idx in self._tree.selectedIndexes():
-                self._tree.closePersistentEditor(idx)
-            self.clearFocus()
-        if mode == "thumbnail":
-            self._stack.setCurrentIndex(0)
-        else:
-            self._stack.setCurrentIndex(1)
+        with busy_cursor():
+            mode = "thumbnail" if mode not in {"thumbnail", "detail"} else mode
+            self._view_mode = mode
+            self._model.set_view_mode(mode)
+            with contextlib.suppress(Exception):
+                for idx in self._list.selectedIndexes():
+                    self._list.closePersistentEditor(idx)
+                for idx in self._tree.selectedIndexes():
+                    self._tree.closePersistentEditor(idx)
+                self.clearFocus()
+            if mode == "thumbnail":
+                self._stack.setCurrentIndex(0)
+            else:
+                self._stack.setCurrentIndex(1)
             # ensure columns visible
             with contextlib.suppress(Exception):
                 self._tree.setColumnHidden(ImageFileSystemModel.COL_RES, False)
