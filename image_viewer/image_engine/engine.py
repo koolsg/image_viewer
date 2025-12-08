@@ -296,7 +296,7 @@ class ImageEngine(QObject):
         """
         info = {}
         try:
-            self._fs_model._meta_update_basic(path)
+            # Use cached metadata (already preloaded)
             w, h, size_bytes, mtime = self._fs_model._meta.get(
                 path, (None, None, None, None)
             )
@@ -426,6 +426,10 @@ class ImageEngine(QObject):
 
     def _on_directory_loaded(self, path: str) -> None:
         """Handle directory loaded signal from fs_model."""
+        # Only process if this is the current root path
+        current_root = self._fs_model.rootPath()
+        if path != current_root:
+            return
         files = self._fs_model.get_image_files()
         _logger.debug("directory loaded: %s (%d files)", path, len(files))
         self.folder_changed.emit(path, files)
