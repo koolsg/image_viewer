@@ -278,38 +278,8 @@ class ImageEngine(QObject):
     # ═══════════════════════════════════════════════════════════════════════
     # Thumbnail API
     # ═══════════════════════════════════════════════════════════════════════
-
-    def request_thumbnail(
-        self,
-        path: str,
-        size: tuple[int, int] = (256, 195),
-    ) -> None:
-        """Request thumbnail generation.
-
-        Args:
-            path: Image file path
-            size: Thumbnail (width, height)
-        """
-        self._thumb_loader.request_load(path, size[0], size[1], "both")
-
-    def get_cached_thumbnail(self, path: str) -> QIcon | None:
-        """Get cached thumbnail if available.
-
-        Args:
-            path: Image file path
-
-        Returns:
-            Cached QIcon or None
-        """
-        return self._fs_model._thumb_cache.get(path)
-
-    def set_thumbnail_loader(self, loader: Loader) -> None:
-        """Set the thumbnail loader for the file system model.
-
-        Args:
-            loader: Loader instance for thumbnail generation
-        """
-        self._fs_model.set_loader(loader)
+    # Note: Thumbnail management is handled by ImageFileSystemModel.
+    # Use fs_model.set_loader() and thumb_loader property for thumbnail operations.
 
     # ═══════════════════════════════════════════════════════════════════════
     # Metadata API
