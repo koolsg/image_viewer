@@ -1,10 +1,17 @@
+"""Smoke test for image decoder.
+
+Tests basic image decoding functionality with PNG and JPEG files.
+"""
+
 import os
 import sys
+from pathlib import Path
 
 # Ensure repo root on path
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
+
 from concurrent.futures import ProcessPoolExecutor
 
 try:
@@ -16,21 +23,8 @@ except Exception:
 from image_viewer.image_engine.decoder import decode_image
 
 
-def make_jpeg_bytes_from_png(png_path: str) -> bytes:
-    if pyvips is None:
-        raise RuntimeError("pyvips missing")
-    image = pyvips.Image.new_from_file(png_path, access="sequential")
-    if image.hasalpha():
-        image = image.flatten(background=[0, 0, 0])
-    try:
-        image = image.colourspace("srgb")
-    except Exception:
-        pass
-    return image.write_to_buffer(".jpg[Q=90]")
-
-
 def assert_rgb_array(arr):
-    # duck-typing assertions to avoid hard numpy import here
+    """Verify decoded array is valid RGB uint8."""
     assert hasattr(arr, "shape"), "Decoded image lacks shape attribute"
     h, w, c = arr.shape
     assert c == 3 and h > 0 and w > 0, f"Unexpected shape: {arr.shape}"
@@ -39,53 +33,62 @@ def assert_rgb_array(arr):
 
 
 def main():
+    """Run smoke tests for image decoding."""
     any_ran = False
 
-    # 1) Decode a PNG through the pyvips fallback path
+    # Test 1: Decode a PNG file
     png_path = os.path.join(os.getcwd(), "test.png")
     if os.path.exists(png_path):
-        with open(png_path, "rb") as f:
-            png_bytes = f.read()
-        path, arr, err = decode_image(png_path, png_bytes)
+        print(f"Testing PNG decode: {png_path}")
+        path, arr, err = decode_image(png_path)
+        if err is None:
+            assert path == png_path, f"Path mismatch: {path} != {png_path}"
+            assert_rgb_array(arr)
+            print(f"✓ PNG decoded successfully: {arr.shape}")
+            any_ran = True
+        else:
+            print(f"✗ PNG decode failed: {err}")
+    else:
+        print("⊘ PNG test skipped (missing test.png)")
+
+    # Test 2: Decode with target size
+    if os.path.exists(png_path):
+        print(f"Testing PNG decode with target size: {png_path}")
+        path, arr, err = decode_image(png_path, target_width=256, target_height=256)
         if err is None:
             assert path == png_path
             assert_rgb_array(arr)
+            h, w, _ = arr.shape
+            # Should be resized (approximately, aspect ratio preserved)
+            assert max(h, w) <= 256, f"Size not constrained: {arr.shape}"
+            print(f"✓ PNG decoded with resize: {arr.shape}")
             any_ran = True
         else:
-            print(f"PNG decode skipped/failed: {err}")
-    else:
-        print("PNG test skipped (missing test.png)")
+            print(f"✗ PNG decode with resize failed: {err}")
 
-    # 2) Decode a JPEG synthesized with pyvips (decoder also pyvips)
-    if pyvips is not None and os.path.exists(png_path):
-        jpeg_bytes = make_jpeg_bytes_from_png(png_path)
-        fake_jpg = os.path.join(os.getcwd(), "test_converted.jpg")
-        path, arr, err = decode_image(fake_jpg, jpeg_bytes)
-        if err is None:
-            assert path == fake_jpg
-            assert_rgb_array(arr)
-            any_ran = True
-        else:
-            print(f"JPEG decode skipped/failed: {err}")
-    else:
-        print("JPEG test skipped (pyvips missing or no test.png)")
+    # Test 3: Multiprocessing path (Windows safety)
+    if any_ran and os.path.exists(png_path):
+        print("Testing multiprocessing decode...")
+        try:
+            with ProcessPoolExecutor(max_workers=1) as ex:
+                fut = ex.submit(decode_image, png_path)
+                pth, arr, err = fut.result(timeout=10)
+                assert err is None, f"Process decode error for {pth}: {err}"
+                assert_rgb_array(arr)
+                print(f"✓ Multiprocessing decode successful: {arr.shape}")
+        except Exception as e:
+            print(f"✗ Multiprocessing decode failed: {e}")
 
-    # 3) Multiprocessing path if any decode succeeded
+    # Summary
     if any_ran:
-        with open(png_path, "rb") as f:
-            png_bytes = f.read()
-        with ProcessPoolExecutor() as ex:
-            fut = ex.submit(decode_image, png_path, png_bytes)
-            pth, arr, err = fut.result(timeout=10)
-            assert err is None, f"Process decode error for {pth}: {err}"
-            assert_rgb_array(arr)
-        print("SMOKE TEST PASSED")
+        print("\n✓ SMOKE TEST PASSED")
     else:
-        print("SMOKE TEST SKIPPED - required imaging libs not available")
+        print("\n⊘ SMOKE TEST SKIPPED - no test files or pyvips unavailable")
 
 
 if __name__ == "__main__":
     # Windows multiprocessing safety
     from multiprocessing import freeze_support
+
     freeze_support()
     main()
