@@ -169,8 +169,11 @@ class ImageCanvas(QGraphicsView):
         elif (btn == Qt.MiddleButton) or (btns is not None and (btns & Qt.MiddleButton)):
             if self._handle_middle_click(event):
                 return
-        elif self._handle_auxiliary_buttons(btn, btns, event) or (btn == Qt.LeftButton and self._zoom_saved is None and self._handle_left_click(event)):
+        elif self._handle_auxiliary_buttons(btn, btns, event):
             return
+        elif btn == Qt.LeftButton and self._zoom_saved is None:
+            if self._handle_left_click(event):
+                return
 
         with contextlib.suppress(Exception):
             super().mousePressEvent(event)
@@ -492,7 +495,8 @@ class ImageCanvas(QGraphicsView):
                 getattr(getattr(viewer, "explorer_state", None), "view_mode", True)
             )
             if debug_enabled and is_view_mode:
-                cache = getattr(viewer, "pixmap_cache", None)
+                engine = getattr(viewer, "engine", None)
+                cache = getattr(engine, "_pixmap_cache", None) if engine else None
                 if cache:
                     rows = []
 
