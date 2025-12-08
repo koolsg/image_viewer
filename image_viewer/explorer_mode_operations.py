@@ -330,6 +330,9 @@ def _on_explorer_image_selected(viewer, image_path: str) -> None:
             viewer.explorer_state.view_mode = True
             _update_ui_for_mode(viewer)
 
+        # Sync image_files from engine after mode switch
+        viewer.image_files = engine.get_image_files()
+
         # Clear canvas and show loading state before displaying the selected image
         if hasattr(viewer, "canvas") and viewer.canvas is not None:
             try:
