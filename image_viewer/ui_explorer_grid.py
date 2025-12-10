@@ -230,7 +230,9 @@ class ThumbnailGridWidget(QWidget):
         This method only sets up the folder structure.
         """
         try:
-            if not Path(folder_path).is_dir():
+            # Check through model, not direct file access
+            folder_index = self._model.index(folder_path)
+            if not folder_index.isValid() or not self._model.isDir(folder_index):
                 _logger.warning("not a directory: %s", folder_path)
                 return
             idx = self._model.setRootPath(folder_path)
@@ -436,7 +438,8 @@ class ThumbnailGridWidget(QWidget):
         idx = indexes[0]
         old_path = self._model.filePath(idx)
 
-        if not old_path or not Path(old_path).exists():
+        # Check validity through model, not direct file access
+        if not old_path or not idx.isValid():
             return
 
         old_name = Path(old_path).name
