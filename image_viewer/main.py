@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor, QImageReader, QPixmap
+from PySide6.QtGui import QColor, QPixmap
 from PySide6.QtWidgets import QApplication, QColorDialog, QFileDialog, QInputDialog, QMainWindow
 
 from image_viewer.busy_cursor import busy_cursor
@@ -141,12 +141,14 @@ class ImageViewer(QMainWindow):
         self._convert_dialog: WebPConvertDialog | None = None
 
     def _get_file_dimensions(self, file_path: str) -> tuple[int | None, int | None]:
-        """Get the original dimensions of a file."""
+        """Get the original dimensions of a file via engine (no direct file access)."""
         try:
-            reader = QImageReader(file_path)
-            size = reader.size()
-            if size.width() > 0 and size.height() > 0:
-                return size.width(), size.height()
+            # Get dimensions only through engine - UI should never access files directly
+            if hasattr(self, 'engine') and self.engine:
+                w, h, _, _ = self.engine._meta.get(file_path, (None, None, None, None))
+                if w is not None and h is not None:
+                    return w, h
+            # If not in cache, return None - engine should have preloaded all metadata
         except Exception:
             pass
         return None, None
