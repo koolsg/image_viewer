@@ -328,7 +328,12 @@ def _on_explorer_image_selected(viewer, image_path: str) -> None:
         # Switch to View Mode and display the image
         if not viewer.explorer_state.view_mode:
             viewer.explorer_state.view_mode = True
-            _update_ui_for_mode(viewer)
+            # Only call the main viewer's method which will handle both UI and hover menu
+            if hasattr(viewer, '_update_ui_for_mode'):
+                viewer._update_ui_for_mode()
+            else:
+                # Fallback to the old function if method doesn't exist
+                _update_ui_for_mode(viewer)
 
         # Sync image_files from engine after mode switch
         viewer.image_files = engine.get_image_files()
