@@ -340,15 +340,10 @@ class ThumbnailGridWidget(QWidget):
                 event.accept()
                 return
             if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
-                idx = (
-                    self._list.currentIndex()
-                    if self._view_mode == "thumbnail"
-                    else self._tree.currentIndex()
-                )
-                if idx.isValid():
-                    self._on_activated(idx)
-                    event.accept()
-                    return
+                # Don't manually call _on_activated here - let Qt's activated signal handle it
+                # This prevents double activation (manual call + Qt's activated signal)
+                event.accept()
+                return
         except Exception:
             pass
         super().keyPressEvent(event)
