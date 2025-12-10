@@ -100,7 +100,13 @@ def send_to_recycle_bin(path: str) -> None:
     Raises:
         Exception: If operation fails
     """
-    send2trash(path)
+    _logger.debug("sending to recycle bin: %s", path)
+    try:
+        send2trash(path)
+        _logger.debug("recycle bin success: %s", path)
+    except Exception as e:
+        _logger.error("recycle bin failed: %s -> %s", path, e)
+        raise
 
 
 def generate_unique_filename(dest_dir: str, filename: str) -> str:
@@ -143,8 +149,14 @@ def copy_file(src: str, dest_dir: str) -> str:
     """
     src_path = Path(src)
     target = generate_unique_filename(dest_dir, src_path.name)
-    shutil.copy2(str(src_path), target)
-    return target
+    _logger.debug("copying file: %s -> %s", src, target)
+    try:
+        shutil.copy2(str(src_path), target)
+        _logger.debug("copy success: %s -> %s", src, target)
+        return target
+    except Exception as e:
+        _logger.error("copy failed: %s -> %s, error: %s", src, target, e)
+        raise
 
 
 def move_file(src: str, dest_dir: str) -> str:
@@ -162,5 +174,11 @@ def move_file(src: str, dest_dir: str) -> str:
     """
     src_path = Path(src)
     target = generate_unique_filename(dest_dir, src_path.name)
-    shutil.move(str(src_path), target)
-    return target
+    _logger.debug("moving file: %s -> %s", src, target)
+    try:
+        shutil.move(str(src_path), target)
+        _logger.debug("move success: %s -> %s", src, target)
+        return target
+    except Exception as e:
+        _logger.error("move failed: %s -> %s, error: %s", src, target, e)
+        raise

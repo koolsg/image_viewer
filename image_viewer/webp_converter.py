@@ -12,6 +12,10 @@ from pathlib import Path
 import pyvips  # type: ignore
 from PySide6.QtCore import QObject, QThread, Signal
 
+from .logger import get_logger
+
+_logger = get_logger("webp_converter")
+
 VALID_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".gif"}
 
 
@@ -39,12 +43,12 @@ def _convert_single(
     delete_original: bool,
 ) -> tuple[str, bool]:
     """Convert a single image to WebP. Must be pickleable for multiprocessing."""
+    output_path = img_path.with_suffix(".webp")  # Initialize early for error handling
     try:
         # Skip unsupported or existing targets
         if img_path.suffix.lower() not in VALID_EXTS:
             return f"[ ] Skip (ext): {img_path.name}", False
 
-        output_path = img_path.with_suffix(".webp")
         if output_path.exists():
             return f"[ ] Exists: {output_path.name}", False
 
@@ -74,6 +78,7 @@ def _convert_single(
         return f"[✓] {img_path.name} -> {output_path.name} ({_format_size(output_path.stat().st_size)})", True
 
     except Exception as ex:
+        _logger.debug("webp conversion failed: %s -> %s, error: %s", img_path, output_path, ex)
         return f"[X] {img_path.name}: {ex}", False
 
 
