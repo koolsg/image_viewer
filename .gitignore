@@ -15,5 +15,5 @@ image_viewer\settings.json
 /image_viewer/settings.json
 /image_viewer/libvips/
 CONTROL_PANEL.md.backup
-
 control.yaml
+swiftview*.db
