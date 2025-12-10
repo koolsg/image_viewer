@@ -84,6 +84,34 @@ def _decode_with_pyvips_from_file(
     return array
 
 
+def get_image_dimensions(file_path: str) -> tuple[int | None, int | None]:
+    """Get image dimensions using libvips (faster than QImageReader).
+
+    Returns (width, height) or (None, None) if failed.
+    """
+    try:
+        pyvips = _get_pyvips_module()
+        # Configure pyvips caches to avoid memory growth
+        with contextlib.suppress(Exception):
+            pyvips.cache_set_max(0)
+            pyvips.cache_set_max_mem(0)
+            pyvips.cache_set_max_files(0)
+
+        # Use new_from_file with access="sequential" for header-only reading
+        image = pyvips.Image.new_from_file(file_path, access="sequential")
+        width = image.width
+        height = image.height
+
+        # Clean up
+        with contextlib.suppress(Exception):
+            del image
+
+        return width, height
+    except Exception as e:
+        _logger.debug("get_image_dimensions failed for %s: %s", file_path, e)
+        return None, None
+
+
 def decode_image(
     file_path: str, target_width: int | None = None, target_height: int | None = None, size: str = "both"
 ) -> tuple[str, object | None, str | None]:
