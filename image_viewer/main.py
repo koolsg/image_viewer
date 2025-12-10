@@ -4,7 +4,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QEvent, Qt
 from PySide6.QtGui import QColor, QPixmap
 from PySide6.QtWidgets import QApplication, QColorDialog, QFileDialog, QInputDialog, QMainWindow
 
@@ -18,9 +18,12 @@ from image_viewer.status_overlay import StatusOverlayBuilder
 from image_viewer.trim_operations import start_trim_workflow
 from image_viewer.ui_canvas import ImageCanvas
 from image_viewer.ui_convert_webp import WebPConvertDialog
+from image_viewer.ui_hover_menu import HoverDrawerMenu
 from image_viewer.ui_menus import build_menus
 from image_viewer.ui_settings import SettingsDialog
 from image_viewer.view_mode_operations import delete_current_file
+
+_logger = get_logger("main")
 
 # --- CLI logging options -----------------------------------------------------
 # To prevent Qt from exiting due to unknown options, we preemptively parse
@@ -85,6 +88,7 @@ class ImageViewer(QMainWindow):
         super().__init__()
         self.setWindowTitle("Image Viewer")
         # self.resize(1024, 768)
+        _logger.debug("ImageViewer initialization started")
 
         self.view_state = ViewState()
         self.trim_state = TrimState()
@@ -94,6 +98,7 @@ class ImageViewer(QMainWindow):
         self.engine = ImageEngine(self)
         self.engine.image_ready.connect(self._on_engine_image_ready)
         self.engine.folder_changed.connect(self._on_engine_folder_changed)
+        _logger.debug("ImageEngine connected")
 
         self.image_files: list[str] = []  # Synced from engine
         self.current_index = -1
@@ -115,10 +120,24 @@ class ImageViewer(QMainWindow):
         self.canvas = ImageCanvas(self)
         self.setCentralWidget(self.canvas)
 
+        # Hover drawer menu for View mode
+        # Parent the hover menu to the canvas viewport so the menu is above the image
+        # and we can receive mouse move events from the viewport.
+        self._hover_menu = HoverDrawerMenu(self.canvas.viewport())
+        self._hover_menu.crop_requested.connect(self._on_hover_crop_requested)
+        # Ensure viewport generates mouse move events even when no button is pressed
+        try:
+            self.canvas.viewport().setMouseTracking(True)
+            self.canvas.viewport().installEventFilter(self)
+        except Exception:
+            pass
+        # Don't hide initially - let _update_ui_for_mode handle visibility
+
         self._settings_path = (_BASE_DIR / "settings.json").as_posix()
         self._settings_manager = SettingsManager(self._settings_path)
         self._settings: dict[str, Any] = self._settings_manager.data
         self._bg_color = self._settings_manager.determine_startup_background()
+        _logger.debug("Settings loaded from: %s", self._settings_path)
 
         if self._settings_manager.fast_view_enabled:
             self.decoding_strategy = FastViewStrategy()
@@ -144,7 +163,7 @@ class ImageViewer(QMainWindow):
         """Get the original dimensions of a file via engine (no direct file access)."""
         try:
             # Get dimensions only through engine - UI should never access files directly
-            if hasattr(self, 'engine') and self.engine:
+            if hasattr(self, "engine") and self.engine:
                 w, h, _, _ = self.engine._meta.get(file_path, (None, None, None, None))
                 if w is not None and h is not None:
                     return w, h
@@ -532,10 +551,14 @@ class ImageViewer(QMainWindow):
                 sz = screen.size()
                 target_size = (int(sz.width()), int(sz.height()))
 
-        # Collect paths to prefetch
+        # Collect paths to prefetch (skip current image - already requested by display_image)
+        current_path = self.image_files[i] if 0 <= i < n else None
         paths_to_prefetch = []
         for idx in range(start, end + 1):
             path = self.image_files[idx]
+            # Skip current image (already requested) and cached images
+            if path == current_path:
+                continue
             if not self.engine.is_cached(path):
                 paths_to_prefetch.append(path)
 
@@ -617,6 +640,62 @@ class ImageViewer(QMainWindow):
     def closeEvent(self, event):
         self.engine.shutdown()
         event.accept()
+
+    def resizeEvent(self, event):
+        """Handle window resize to update hover menu position."""
+        super().resizeEvent(event)
+        if hasattr(self, "_hover_menu"):
+            # Use viewport size for hover menu positioning when parented to the viewport
+            try:
+                vw = self.canvas.viewport().width()
+                vh = self.canvas.viewport().height()
+            except Exception:
+                vw = event.size().width()
+                vh = event.size().height()
+            self._hover_menu.set_parent_size(vw, vh)
+            _logger.debug("hover menu position updated: %dx%d", event.size().width(), event.size().height())
+
+    def mouseMoveEvent(self, event):
+        """Handle mouse move to show/hide hover menu in View mode."""
+        super().mouseMoveEvent(event)
+
+        # Only show hover menu in View mode
+        if hasattr(self, "explorer_state") and not self.explorer_state.view_mode:
+            return
+
+        # Forward main window mouse move handling to hover menu as a fallback (in case
+        # the viewport doesn't install an event filter). If the canvas consumes events
+        # we rely on the eventFilter installed on the viewport.
+        if hasattr(self, "_hover_menu"):
+            try:
+                pos = event.position().toPoint()
+            except Exception:
+                pos = event.pos()
+            self._hover_menu.check_hover_zone(pos.x(), pos.y(), self.rect())
+
+    def eventFilter(self, obj, event):
+        """Intercept mouse move events from the canvas viewport and show/hide
+        the hover menu accordingly."""
+        try:
+            if event.type() == QEvent.MouseMove and hasattr(self, "_hover_menu"):
+                # Only show hover menu in View mode
+                if hasattr(self, "explorer_state") and not self.explorer_state.view_mode:
+                    return super().eventFilter(obj, event)
+
+                # Map event pos (viewport coords) to viewport-local QPoint
+                try:
+                    pos = event.position().toPoint() if hasattr(event, "position") else event.pos()
+                except Exception:
+                    pos = event.pos() if hasattr(event, "pos") else None
+
+                if pos is not None:
+                    # If hover menu is parented to the viewport, use viewport rect
+                    parent_rect = obj.rect() if hasattr(obj, "rect") else self.rect()
+                    _logger.debug("viewport mouse move: %d,%d (parent rect: %s)", pos.x(), pos.y(), parent_rect)
+                    self._hover_menu.check_hover_zone(pos.x(), pos.y(), parent_rect)
+        except Exception:
+            pass
+        return super().eventFilter(obj, event)
 
     # View commands
     def toggle_fit(self):
@@ -802,6 +881,23 @@ class ImageViewer(QMainWindow):
 
         _update_ui_for_mode(self)
 
+        # Show/hide hover menu based on mode
+        if hasattr(self, "_hover_menu"):
+            if self.explorer_state.view_mode:  # View mode (view_mode = True)
+                try:
+                    vw = self.canvas.viewport().width()
+                    vh = self.canvas.viewport().height()
+                except Exception:
+                    vw = self.width()
+                    vh = self.height()
+                self._hover_menu.show()
+                self._hover_menu.set_parent_size(vw, vh)
+                self._hover_menu.raise_()
+                _logger.debug("hover menu shown for View mode")
+            else:  # Explorer mode (view_mode = False)
+                self._hover_menu.hide()
+                _logger.debug("hover menu hidden for Explorer mode")
+
     def _setup_view_mode(self) -> None:
         """Set up View Mode: show only the central canvas"""
         from image_viewer.explorer_mode_operations import _setup_view_mode
@@ -858,6 +954,17 @@ class ImageViewer(QMainWindow):
 
         _on_explorer_image_selected(self, image_path)
 
+    def _on_hover_crop_requested(self) -> None:
+        """Handle crop request from hover menu."""
+        try:
+            # TODO: Implement crop functionality (different from trim)
+            # This is a placeholder for future crop feature
+            _logger.debug("crop requested from hover menu - not implemented yet")
+            # For now, just show a debug message
+            print("Crop feature requested - coming soon!")
+        except Exception as ex:
+            _logger.debug("hover crop failed: %s", ex)
+
     def open_folder_at(self, folder_path: str) -> None:
         """Open a specific folder directly (used in explorer mode)."""
         open_folder_at(self, folder_path)
@@ -874,6 +981,7 @@ class ImageViewer(QMainWindow):
             app = getattr(self, "_current_app", None)
             if app is None:
                 from PySide6.QtWidgets import QApplication
+
                 app = QApplication.instance()
 
             if app:
@@ -890,6 +998,7 @@ def run(argv: list[str] | None = None) -> int:
     from multiprocessing import freeze_support
 
     freeze_support()
+    _logger.debug("Application startup initiated")
 
     if argv is None:
         argv = sys.argv
@@ -905,14 +1014,19 @@ def run(argv: list[str] | None = None) -> int:
         start_path_str = None
 
     start_path = Path(start_path_str) if start_path_str else None
+    if start_path:
+        _logger.debug("Start path provided: %s", start_path)
 
     app = QApplication(argv)
     viewer = ImageViewer()
+    _logger.debug("ImageViewer created")
 
     # Apply theme from settings (default: dark)
     theme = viewer._settings_manager.get("theme", "dark")
     from image_viewer.styles import apply_theme
+
     apply_theme(app, theme)
+    _logger.debug("Theme applied: %s", theme)
     viewer._current_app = app  # Store app reference for theme switching
 
     # Case 1: started with an image file → open its folder and show that image in View mode, fullscreen.
@@ -956,5 +1070,6 @@ def run(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     from multiprocessing import freeze_support
+
     freeze_support()
     sys.exit(run())
