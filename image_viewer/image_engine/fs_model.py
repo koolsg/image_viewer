@@ -8,7 +8,7 @@ import contextlib
 from pathlib import Path
 
 from PySide6.QtCore import QDateTime, QModelIndex, Qt
-from PySide6.QtGui import QIcon, QImage, QImageReader, QPixmap
+from PySide6.QtGui import QIcon, QImage, QPixmap
 from PySide6.QtWidgets import QFileSystemModel
 
 from image_viewer.busy_cursor import busy_cursor
@@ -149,14 +149,15 @@ class ImageFileSystemModel(QFileSystemModel):
         """Pre-load resolution information for all image files.
 
         This is called after thumbnail loading to prepare data for Detail view.
-        Reading image headers is fast and prevents lag when switching to Detail mode.
+        First checks thumbnail DB for cached resolution, then reads headers for new files.
 
         Args:
             root_index: Root index of the folder
             row_count: Number of rows to process
         """
         try:
-            loaded_count = 0
+            # Collect files that need resolution info
+            files_to_check = []
             for row in range(row_count):
                 index = self.index(row, 0, root_index)
                 if not index.isValid() or self.isDir(index):
@@ -166,26 +167,79 @@ class ImageFileSystemModel(QFileSystemModel):
                 if not self._is_image_file(path):
                     continue
 
-                # Skip if resolution already cached
+                # Skip if resolution already in memory cache
                 w, h, _size, _mtime = self._meta.get(path, (None, None, None, None))
                 if w is not None and h is not None:
                     continue
 
-                # Read resolution from image header
+                files_to_check.append(path)
+
+            if not files_to_check:
+                return
+
+            # Check thumbnail DB for resolution info
+            if self._db_cache:
+                db_loaded = 0
+                for path in files_to_check[:]:  # Copy list to modify during iteration
+                    try:
+                        file_path = Path(path)
+                        if not file_path.exists():
+                            files_to_check.remove(path)
+                            continue
+
+                        stat = file_path.stat()
+                        result = self._db_cache.get(path, stat.st_mtime, stat.st_size,
+                                                  self._thumb_size[0], self._thumb_size[1])
+                        if result:
+                            _, orig_width, orig_height = result
+                            if orig_width and orig_height:
+                                prev = self._meta.get(path, (None, None, None, None))
+                                self._meta[path] = (orig_width, orig_height, prev[2], prev[3])
+                                files_to_check.remove(path)
+                                db_loaded += 1
+                    except Exception:
+                        pass
+
+                if db_loaded > 0:
+                    _logger.debug("loaded %d resolution from DB", db_loaded)
+
+            # Read headers for remaining files using libvips (faster than QImageReader)
+            header_loaded = 0
+            for path in files_to_check:
                 try:
-                    reader = QImageReader(path)
-                    size = reader.size()
-                    if size.isValid():
-                        w = int(size.width())
-                        h = int(size.height())
+                    from .decoder import get_image_dimensions
+                    w, h = get_image_dimensions(path)
+                    if w is not None and h is not None:
                         prev = self._meta.get(path, (None, None, None, None))
                         self._meta[path] = (w, h, prev[2], prev[3])
-                        loaded_count += 1
+                        header_loaded += 1
+
+                        # Save resolution to DB for future use (without thumbnail)
+                        try:
+                            self._ensure_db_cache(path)
+                            if self._db_cache:
+                                file_path = Path(path)
+                                if file_path.exists():
+                                    stat = file_path.stat()
+                                    # Save with empty pixmap to store resolution info only
+                                    self._db_cache.set(
+                                        path,
+                                        stat.st_mtime,
+                                        stat.st_size,
+                                        w,
+                                        h,
+                                        self._thumb_size[0],
+                                        self._thumb_size[1],
+                                        QPixmap(),  # Empty pixmap, just storing resolution
+                                    )
+                        except Exception:
+                            pass  # Don't fail if DB save fails
                 except Exception:
                     pass
 
-            if loaded_count > 0:
-                _logger.debug("preloaded %d resolution info", loaded_count)
+            if header_loaded > 0:
+                _logger.debug("loaded %d resolution from headers", header_loaded)
+
         except Exception as exc:
             _logger.debug("_preload_resolution_info failed: %s", exc)
 
@@ -380,19 +434,8 @@ class ImageFileSystemModel(QFileSystemModel):
     def _resolution_str(self, index: QModelIndex) -> str:
         path = self.filePath(index)
         try:
-            # Check cache first (already preloaded)
+            # Use only cached metadata (should be preloaded by batch_load_thumbnails)
             w, h, _size_bytes, _mtime = self._meta.get(path, (None, None, None, None))
-
-            # Only read if not cached (new files)
-            if w is None or h is None:
-                reader = QImageReader(path)
-                size = reader.size()
-                if size.isValid():
-                    w = int(size.width())
-                    h = int(size.height())
-                    # Update cache with resolution only
-                    prev = self._meta.get(path, (None, None, None, None))
-                    self._meta[path] = (w, h, prev[2], prev[3])
 
             if w and h:
                 return f"{w}x{h}"
@@ -435,18 +478,8 @@ class ImageFileSystemModel(QFileSystemModel):
         """Build tooltip with file metadata."""
         try:
             filename = Path(path).name
-            # Use cached metadata (already preloaded)
+            # Use only cached metadata (should be preloaded by batch loading)
             w, h, size_bytes, mtime = self._meta.get(path, (None, None, None, None))
-
-            # Get resolution from cache or read header (new files only)
-            if w is None or h is None:
-                reader = QImageReader(path)
-                size = reader.size()
-                if size.isValid():
-                    w = int(size.width())
-                    h = int(size.height())
-                    prev = self._meta.get(path, (None, None, None, None))
-                    self._meta[path] = (w, h, prev[2], prev[3])
 
             parts = [f"File: {filename}"]
             if w and h:
@@ -527,12 +560,15 @@ class ImageFileSystemModel(QFileSystemModel):
             prev = self._meta.get(path, (None, None, None, None))
             orig_width = prev[0]
             orig_height = prev[1]
-            with contextlib.suppress(Exception):
-                reader = QImageReader(path)
-                size = reader.size()
-                if size.isValid():
-                    orig_width = int(size.width())
-                    orig_height = int(size.height())
+
+            # Only read header if resolution not already cached
+            if orig_width is None or orig_height is None:
+                with contextlib.suppress(Exception):
+                    from .decoder import get_image_dimensions
+                    w, h = get_image_dimensions(path)
+                    if w is not None and h is not None:
+                        orig_width = w
+                        orig_height = h
 
             self._meta[path] = (orig_width, orig_height, prev[2], prev[3])
             self._save_disk_icon(path, scaled, orig_width, orig_height)
