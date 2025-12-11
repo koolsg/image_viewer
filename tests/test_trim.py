@@ -52,6 +52,7 @@ class TestDetectTrimBoxStats(unittest.TestCase):
         # Solid image should not trigger trim (no non-background content)
         self.assertIsNone(result, "Solid color image should not be trimmed")
 
+    @unittest.skipIf(not HAS_DEPS, "pyvips/PIL/numpy not available")
     def test_bordered_image_normal_profile(self):
         import numpy as np
         from PIL import Image
@@ -72,6 +73,7 @@ class TestDetectTrimBoxStats(unittest.TestCase):
             self.assertGreater(width, 0)
             self.assertGreater(height, 0)
 
+    @unittest.skipIf(not HAS_DEPS, "pyvips/PIL/numpy not available")
     def test_small_content_aggressive_profile(self):
         import numpy as np
         from PIL import Image
@@ -128,6 +130,7 @@ class TestDetectTrimBoxStats(unittest.TestCase):
 class TestTrimIntegration(unittest.TestCase):
     """Integration tests for trim module."""
 
+    @unittest.skipIf(not HAS_DEPS, "pyvips/PIL/numpy not available")
     def test_detect_returns_valid_tuple_or_none(self):
         # Create a small image with white background and black rectangle
         import numpy as np
