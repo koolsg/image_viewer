@@ -16,6 +16,8 @@ except Exception:
     HAS_DEPS = False
 
 from image_viewer.ui_trim import TrimBatchWorker
+from image_viewer.ui_trim import TrimReportDialog
+from PySide6.QtWidgets import QApplication
 
 
 class TestTrimBatchWorker(unittest.TestCase):
@@ -31,10 +33,17 @@ class TestTrimBatchWorker(unittest.TestCase):
 
         try:
             worker = TrimBatchWorker([path], profile="normal")
+            collected = []
+            worker.trim_info.connect(lambda p, w, h: collected.append((p, w, h)))
             worker.run()
             # Check that no .trim file was created
             trim_path = os.path.splitext(path)[0] + ".trim" + os.path.splitext(path)[1]
             self.assertFalse(os.path.exists(trim_path), "Batch worker should skip creating identical .trim files")
+            # Collected trim_info should include target resolution equal to original
+            self.assertTrue(collected)
+            _, w, h = collected[-1]
+            self.assertEqual(w, 60)
+            self.assertEqual(h, 50)
         finally:
             for p in (path, os.path.splitext(path)[0] + ".trim" + os.path.splitext(path)[1]):
                 with contextlib.suppress(Exception):
@@ -52,14 +61,35 @@ class TestTrimBatchWorker(unittest.TestCase):
 
         try:
             worker = TrimBatchWorker([path], profile="normal")
+            collected = []
+            worker.trim_info.connect(lambda p, w, h: collected.append((p, w, h)))
             worker.run()
             trim_path = os.path.splitext(path)[0] + ".trim" + os.path.splitext(path)[1]
             # Trim file should be created
             self.assertTrue(os.path.exists(trim_path), "Batch worker should create .trim file for a cropped image")
+            # Collected trim_info should include non-zero width/height
+            self.assertTrue(collected)
+            _, w, h = collected[-1]
+            self.assertGreater(w, 0)
+            self.assertGreater(h, 0)
         finally:
             for p in (path, os.path.splitext(path)[0] + ".trim" + os.path.splitext(path)[1]):
                 with contextlib.suppress(Exception):
                     os.remove(p)
+
+    @unittest.skipIf(not HAS_DEPS, "pyvips/PIL/numpy not available")
+    def test_trim_report_dialog_populates_rows(self):
+        # Build a small sample rows list and ensure the dialog populates correctly
+        rows = [
+            ("/tmp/a.png", 60, 50, 60, 50),  # no change
+            ("/tmp/b.png", 120, 100, 80, 70),  # trimmed
+        ]
+        app = QApplication.instance() or QApplication([])
+        dlg = TrimReportDialog()
+        dlg.populate(rows)
+        self.assertEqual(dlg._table.rowCount(), len(rows))
+        # OK button should be enabled after populate
+        self.assertTrue(dlg._ok_btn.isEnabled())
 
 
 if __name__ == "__main__":
