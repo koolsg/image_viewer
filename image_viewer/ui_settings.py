@@ -87,6 +87,13 @@ class SettingsDialog(QDialog):
         self._spin_press_zoom.setDecimals(2)
         view_form.addRow(QLabel("Left-click zoom multiplier"), self._spin_press_zoom)
 
+        # Hover menu hide delay (milliseconds)
+        self._spin_hover_hide_delay = QSpinBox()
+        self._spin_hover_hide_delay.setRange(20, 2000)
+        self._spin_hover_hide_delay.setSingleStep(10)
+        self._spin_hover_hide_delay.setSuffix(" ms")
+        view_form.addRow(QLabel("Hover menu hide delay (ms)"), self._spin_hover_hide_delay)
+
         self._pages.addWidget(self._page_view)
 
         button_row = QHBoxLayout()
@@ -113,6 +120,7 @@ class SettingsDialog(QDialog):
         self._spin_thumb_h.valueChanged.connect(self._on_setting_changed)
         self._spin_hspacing.valueChanged.connect(self._on_setting_changed)
         self._spin_press_zoom.valueChanged.connect(self._on_setting_changed)
+        self._spin_hover_hide_delay.valueChanged.connect(self._on_setting_changed)
 
         # Button handlers
         self._btn_apply.clicked.connect(self._on_apply_clicked)
@@ -148,9 +156,12 @@ class SettingsDialog(QDialog):
             self._spin_thumb_w.setValue(width)
             self._spin_thumb_h.setValue(height)
             self._spin_hspacing.setValue(hspacing)
-            self._spin_press_zoom.setValue(
-                float(self._viewer._settings_manager.get("press_zoom_multiplier"))
-            )
+            self._spin_press_zoom.setValue(float(self._viewer._settings_manager.get("press_zoom_multiplier")))
+            # hover hide delay (ms)
+            try:
+                self._spin_hover_hide_delay.setValue(int(self._viewer._settings_manager.get("hover_hide_delay", 120)))
+            except Exception:
+                self._spin_hover_hide_delay.setValue(120)
         except Exception as ex:
             _logger.debug("init settings failed: %s", ex)
 
@@ -161,6 +172,7 @@ class SettingsDialog(QDialog):
             "thumbnail_height": int(self._spin_thumb_h.value()),
             "thumbnail_hspacing": int(self._spin_hspacing.value()),
             "press_zoom_multiplier": float(self._spin_press_zoom.value()),
+            "hover_hide_delay": int(self._spin_hover_hide_delay.value()),
         }
 
     def _on_setting_changed(self, *_):
@@ -187,6 +199,13 @@ class SettingsDialog(QDialog):
                 )
             if hasattr(self._viewer, "set_press_zoom_multiplier"):
                 self._viewer.set_press_zoom_multiplier(settings["press_zoom_multiplier"])
+            # Apply hover hide delay and persist
+            try:
+                if hasattr(self._viewer, "_hover_menu") and hasattr(self._viewer, "_save_settings_key"):
+                    self._viewer._hover_menu.set_hide_delay(int(settings["hover_hide_delay"]))
+                    self._viewer._save_settings_key("hover_hide_delay", int(settings["hover_hide_delay"]))
+            except Exception:
+                _logger.debug("failed to apply hover_hide_delay")
             self._initial_settings = settings
             self._dirty = False
             self.accept()
