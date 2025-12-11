@@ -6,14 +6,16 @@ from collections import deque
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import QThread, Signal
+from PySide6.QtCore import QCoreApplication, QThread, Signal
 
 if TYPE_CHECKING:
     import numpy as np
-from PySide6.QtGui import QImage, QKeySequence, QPixmap, QShortcut
-from PySide6.QtWidgets import QMessageBox
+from pathlib import Path
 
-from .image_engine.decoder import get_image_dimensions
+from PySide6.QtGui import QImage, QKeySequence, QPixmap, QShortcut
+from PySide6.QtWidgets import QApplication, QMessageBox
+
+from .image_engine.decoder import decode_image, get_image_dimensions
 from .logger import get_logger
 from .trim import apply_trim_to_file, detect_trim_box_stats, make_trim_preview
 from .ui_trim import TrimBatchWorker, TrimPreviewDialog, TrimReportDialog
@@ -68,59 +70,10 @@ class TrimPreloader(QThread):
                 break
 
             try:
-                # Detect trim box
-                crop = detect_trim_box_stats(path, profile=self.profile)
-                if not crop:
+                candidate = self._load_candidate(path)
+                if candidate is None:
                     continue
 
-                # Load original image
-                from .image_engine.decoder import decode_image
-
-                _, original_array, err = decode_image(path)
-                if original_array is None:
-                    _logger.debug("preloader: failed to load %s: %s", path, err)
-                    continue
-
-                # Convert original to QPixmap
-                h, w, c = original_array.shape
-                if c == RGB_CHANNELS:
-                    qimg_orig = QImage(original_array.data, w, h, w * RGB_CHANNELS, QImage.Format.Format_RGB888)
-                elif c == RGBA_CHANNELS:
-                    qimg_orig = QImage(original_array.data, w, h, w * RGBA_CHANNELS, QImage.Format.Format_RGBA8888)
-                else:
-                    continue
-                original_pixmap = QPixmap.fromImage(qimg_orig)
-
-                # Load trimmed preview
-                preview_array = make_trim_preview(path, crop)
-                if preview_array is None:
-                    continue
-
-                # Convert trimmed to QPixmap
-                trim_h, trim_w, c = preview_array.shape
-                if c == RGB_CHANNELS:
-                    stride = trim_w * RGB_CHANNELS
-                    qimg = QImage(preview_array.data, trim_w, trim_h, stride, QImage.Format.Format_RGB888)
-                elif c == RGBA_CHANNELS:
-                    stride = trim_w * RGBA_CHANNELS
-                    qimg = QImage(preview_array.data, trim_w, trim_h, stride, QImage.Format.Format_RGBA8888)
-                else:
-                    continue
-                trimmed_pixmap = QPixmap.fromImage(qimg)
-
-                # Skip if no actual trimming
-                if trim_w == w and trim_h == h:
-                    _logger.debug("preloader: skipping %s (no trim needed)", path)
-                    continue
-
-                # Create candidate and add to queue
-                candidate = TrimCandidate(
-                    path=path,
-                    crop=crop,
-                    original_pixmap=original_pixmap,
-                    trimmed_pixmap=trimmed_pixmap,
-                    original_array=original_array,
-                )
                 self.queue.append(candidate)
                 self.candidate_ready.emit(candidate)
 
@@ -129,6 +82,51 @@ class TrimPreloader(QThread):
                 continue
 
         self.finished_loading.emit()
+
+    def _load_candidate(self, path: str) -> TrimCandidate | None:
+        """Attempt to build a TrimCandidate for a given path, or return None.
+
+        This isolates the complex logic from `run` to reduce branching.
+        """
+        candidate: TrimCandidate | None = None
+
+        crop = detect_trim_box_stats(path, profile=self.profile)
+        if crop:
+            _, original_array, _err = decode_image(path)
+            if original_array is not None:
+                original_pixmap = self._array_to_pixmap(original_array)
+                if original_pixmap is not None:
+                    preview_array = make_trim_preview(path, crop)
+                    if preview_array is not None:
+                        trimmed_pixmap = self._array_to_pixmap(preview_array)
+                        if trimmed_pixmap is not None:
+                            # Skip if no actual trimming
+                            h, w, _ = original_array.shape
+                            trim_h, trim_w, _ = preview_array.shape
+                            if not (trim_w == w and trim_h == h):
+                                candidate = TrimCandidate(
+                                    path=path,
+                                    crop=crop,
+                                    original_pixmap=original_pixmap,
+                                    trimmed_pixmap=trimmed_pixmap,
+                                    original_array=original_array,
+                                )
+
+        return candidate
+
+    def _array_to_pixmap(self, arr: "np.ndarray") -> "QPixmap | None":
+        """Convert an RGB/RGBA numpy array to a QPixmap. Returns None on unsupported channels.
+
+        Guarded as a separate function to reduce branching complexity in `run`.
+        """
+        h, w, c = arr.shape
+        if c == RGB_CHANNELS:
+            qimg = QImage(arr.data, w, h, w * RGB_CHANNELS, QImage.Format.Format_RGB888)
+        elif c == RGBA_CHANNELS:
+            qimg = QImage(arr.data, w, h, w * RGBA_CHANNELS, QImage.Format.Format_RGBA8888)
+        else:
+            return None
+        return QPixmap.fromImage(qimg)
 
 
 def _select_trim_profile(viewer) -> str | None:
@@ -175,7 +173,6 @@ def _select_save_mode(viewer) -> bool | None:
 
 def _run_batch_trim(viewer, profile: str) -> None:
     """Run batch trim as copies with progress dialog."""
-    from pathlib import Path
 
     paths = viewer.engine.get_image_files()
     report_dlg = TrimReportDialog(viewer)
@@ -199,7 +196,6 @@ def _show_trim_confirmation(preview_dialog) -> tuple[bool, bool]:
     Returns:
         (accepted, should_abort) tuple
     """
-    from PySide6.QtWidgets import QApplication
 
     box = QMessageBox(preview_dialog)
     box.setWindowTitle("Trim")
@@ -288,9 +284,7 @@ def _apply_trim_and_update(viewer, path: str, crop: tuple[int, int, int, int]) -
 
 def _run_overwrite_trim(viewer, profile: str) -> None:
     """Run overwrite trim with per-file confirmation."""
-    from pathlib import Path
-
-    from PySide6.QtCore import QCoreApplication
+    # Path available at module level
 
     engine = viewer.engine
     preview_dialog = None
