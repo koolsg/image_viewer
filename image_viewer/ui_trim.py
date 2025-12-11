@@ -20,6 +20,8 @@ from PySide6.QtWidgets import (
 from image_viewer.logger import get_logger
 from image_viewer.trim import apply_trim_to_file, detect_trim_box_stats
 
+from .image_engine.decoder import get_image_dimensions
+
 _logger = get_logger("ui_trim")
 
 
@@ -40,7 +42,13 @@ class TrimBatchWorker(QObject):
                 try:
                     result = detect_trim_box_stats(p, profile=self.profile)
                     if result:
-                        apply_trim_to_file(p, result, overwrite=False)  # Save as copy
+                        # Skip saving if crop equals original image dimensions
+                        _left, _top, width, height = result
+                        orig_w, orig_h = get_image_dimensions(p)
+                        if orig_w is not None and orig_h is not None and width == orig_w and height == orig_h:
+                            _logger.debug("ui_trim: skipping %s (crop equals original size)", p)
+                        else:
+                            apply_trim_to_file(p, result, overwrite=False)  # Save as copy
                 except Exception as ex:  # keep worker resilient
                     err = str(ex)
                 self.progress.emit(p, idx, total, err)

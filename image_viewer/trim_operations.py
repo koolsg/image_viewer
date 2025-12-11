@@ -13,6 +13,7 @@ if TYPE_CHECKING:
 from PySide6.QtGui import QImage, QKeySequence, QPixmap, QShortcut
 from PySide6.QtWidgets import QMessageBox
 
+from .image_engine.decoder import get_image_dimensions
 from .logger import get_logger
 from .trim import apply_trim_to_file, detect_trim_box_stats, make_trim_preview
 from .ui_trim import TrimBatchWorker, TrimPreviewDialog, TrimProgressDialog
@@ -27,6 +28,7 @@ RGBA_CHANNELS = 4
 @dataclass
 class TrimCandidate:
     """Container for preloaded trim candidate data."""
+
     path: str
     crop: tuple[int, int, int, int]
     original_pixmap: QPixmap
@@ -73,6 +75,7 @@ class TrimPreloader(QThread):
 
                 # Load original image
                 from .image_engine.decoder import decode_image
+
                 _, original_array, err = decode_image(path)
                 if original_array is None:
                     _logger.debug("preloader: failed to load %s: %s", path, err)
@@ -116,7 +119,7 @@ class TrimPreloader(QThread):
                     crop=crop,
                     original_pixmap=original_pixmap,
                     trimmed_pixmap=trimmed_pixmap,
-                    original_array=original_array
+                    original_array=original_array,
                 )
                 self.queue.append(candidate)
                 self.candidate_ready.emit(candidate)
@@ -257,7 +260,13 @@ def _apply_trim_and_update(viewer, path: str, crop: tuple[int, int, int, int]) -
     _logger.debug("[trim] overwrite start: %s, displaying=%s, cached=%s", path, displaying, cached)
 
     try:
-        apply_trim_to_file(path, crop, overwrite=True)
+        # Avoid overwriting if crop equals original image (no-op)
+        orig_w, orig_h = get_image_dimensions(path)
+        _left, _top, width, height = crop
+        if orig_w is not None and orig_h is not None and width == orig_w and height == orig_h:
+            _logger.debug("[trim] overwrite skipped (crop equals original size): %s", path)
+        else:
+            apply_trim_to_file(path, crop, overwrite=True)
         _logger.debug("[trim] overwrite ok: %s", path)
     except Exception:
         _logger.debug("[trim] overwrite error: %s\n%s", path, _tb.format_exc())
