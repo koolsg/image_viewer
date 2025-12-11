@@ -16,7 +16,7 @@ from PySide6.QtWidgets import QMessageBox
 from .image_engine.decoder import get_image_dimensions
 from .logger import get_logger
 from .trim import apply_trim_to_file, detect_trim_box_stats, make_trim_preview
-from .ui_trim import TrimBatchWorker, TrimPreviewDialog, TrimProgressDialog
+from .ui_trim import TrimBatchWorker, TrimPreviewDialog, TrimReportDialog
 
 _logger = get_logger("trim_operations")
 
@@ -178,16 +178,18 @@ def _run_batch_trim(viewer, profile: str) -> None:
     from pathlib import Path
 
     paths = viewer.engine.get_image_files()
-    dlg = TrimProgressDialog(viewer)
+    report_dlg = TrimReportDialog(viewer)
     worker = TrimBatchWorker(paths, profile)
 
     def _on_progress(path: str, index: int, total: int, error: str):
-        dlg.on_progress(total, index, Path(path).name)
+        _logger.debug("trim batch: %s (%d/%d) %s", Path(path).name, index, total, error or "")
 
     worker.progress.connect(_on_progress)
-    worker.finished.connect(dlg.accept)
+    worker.trim_info.connect(lambda *a: None)
     worker.run()
-    dlg.exec()
+    # populate report dialog and show
+    report_dlg.populate(worker.report_rows)
+    report_dlg.exec()
     viewer.maintain_decode_window()
 
 

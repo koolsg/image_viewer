@@ -1,23 +1,30 @@
 from __future__ import annotations
 
 import contextlib
+from pathlib import Path
 
-from PySide6.QtCore import QObject, Qt, Signal, Slot
-from PySide6.QtGui import QFont, QPixmap
+from PySide6.QtCore import QObject, Qt, QTimer, Signal, Slot
+from PySide6.QtGui import QFont, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QDialog,
     QGraphicsPixmapItem,
     QGraphicsScene,
     QGraphicsView,
+    QHBoxLayout,
+    QHeaderView,
     QLabel,
     QProgressBar,
+    QPushButton,
     QSplitter,
+    QTableWidget,
+    QTableWidgetItem,
     QVBoxLayout,
     QWidget,
 )
 
 from image_viewer.logger import get_logger
+from image_viewer.styles import apply_theme
 from image_viewer.trim import apply_trim_to_file, detect_trim_box_stats
 
 from .image_engine.decoder import get_image_dimensions
@@ -27,12 +34,16 @@ _logger = get_logger("ui_trim")
 
 class TrimBatchWorker(QObject):
     progress = Signal(str, int, int, str)  # path, index (1-based), total, error
+    # Emit path, target_width, target_height (0,0 means no trim detected)
+    trim_info = Signal(str, int, int)
     finished = Signal()
 
     def __init__(self, paths: list[str], profile: str):
         super().__init__()
         self.paths = paths
         self.profile = (profile or "normal").lower()
+        # Collect report rows: (path, orig_w, orig_h, trim_w, trim_h)
+        self.report_rows: list[tuple[str, int, int, int, int]] = []
 
     def run(self) -> None:
         try:
@@ -42,13 +53,33 @@ class TrimBatchWorker(QObject):
                 try:
                     result = detect_trim_box_stats(p, profile=self.profile)
                     if result:
-                        # Skip saving if crop equals original image dimensions
                         _left, _top, width, height = result
+                        # Emit info for UI: target resolution
+                        with contextlib.suppress(Exception):
+                            self.trim_info.emit(p, width, height)
+                        # Skip saving if crop equals original image dimensions
                         orig_w, orig_h = get_image_dimensions(p)
+                        if orig_w is None:
+                            orig_w = 0
+                        if orig_h is None:
+                            orig_h = 0
+                        # Register row for report
+                        self.report_rows.append((p, orig_w, orig_h, width, height))
                         if orig_w is not None and orig_h is not None and width == orig_w and height == orig_h:
                             _logger.debug("ui_trim: skipping %s (crop equals original size)", p)
                         else:
                             apply_trim_to_file(p, result, overwrite=False)  # Save as copy
+                    else:
+                        # No crop detected - inform UI
+                        with contextlib.suppress(Exception):
+                            self.trim_info.emit(p, 0, 0)
+                        # Ensure original dims are in report rows (no trim)
+                        orig_w, orig_h = get_image_dimensions(p)
+                        if orig_w is None:
+                            orig_w = 0
+                        if orig_h is None:
+                            orig_h = 0
+                        self.report_rows.append((p, orig_w, orig_h, 0, 0))
                 except Exception as ex:  # keep worker resilient
                     err = str(ex)
                 self.progress.emit(p, idx, total, err)
@@ -56,6 +87,7 @@ class TrimBatchWorker(QObject):
             self.finished.emit()
 
 
+# No use but for later.
 class TrimProgressDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -96,6 +128,52 @@ class TrimProgressDialog(QDialog):
             self._bar.setValue(pct)
         except Exception:
             pass
+
+
+class TrimReportDialog(QDialog):
+    """Dialog that shows a table of files and original vs trimmed resolutions.
+
+    The OK button is disabled until `populate` completes, which should be
+    called after the batch operation finishes.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Trim Report")
+        self.setModal(True)
+        self.setWindowFlags(Qt.WindowType.Window | Qt.WindowType.WindowCloseButtonHint)
+        self.resize(540, 480)
+
+        layout = QVBoxLayout(self)
+        self._table = QTableWidget(0, 3, self)
+        self._table.setHorizontalHeaderLabels(["File", "Original", "Trimmed"])
+        self._table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        layout.addWidget(self._table)
+
+        # OK button initially disabled until report is populated
+        btn_layout = QHBoxLayout()
+        self._ok_btn = QPushButton("OK", self)
+        self._ok_btn.setEnabled(False)
+        self._ok_btn.clicked.connect(self.accept)
+        btn_layout.addStretch(1)
+        btn_layout.addWidget(self._ok_btn)
+        layout.addLayout(btn_layout)
+
+    def add_row(self, filename: str, orig_w: int, orig_h: int, trim_w: int, trim_h: int) -> None:
+        r = self._table.rowCount()
+        self._table.insertRow(r)
+        self._table.setItem(r, 0, QTableWidgetItem(filename))
+        self._table.setItem(r, 1, QTableWidgetItem(f"{orig_w} x {orig_h}" if orig_w and orig_h else "Unknown"))
+        if trim_w and trim_h:
+            self._table.setItem(r, 2, QTableWidgetItem(f"{trim_w} x {trim_h}"))
+        else:
+            self._table.setItem(r, 2, QTableWidgetItem("No trim"))
+
+    def populate(self, rows: list[tuple[str, int, int, int, int]]) -> None:
+        for p, ow, oh, tw, th in rows:
+            self.add_row(Path(p).name, ow, oh, tw, th)
+        # Enable OK button now that the report is complete
+        self._ok_btn.setEnabled(True)
 
 
 class TrimPreviewDialog(QDialog):
@@ -193,7 +271,6 @@ class TrimPreviewDialog(QDialog):
     def showEvent(self, event):
         """Handle show event to fit views after widgets are ready."""
         super().showEvent(event)
-        from PySide6.QtCore import QTimer
 
         QTimer.singleShot(50, self._fit_all_views)
 
@@ -211,8 +288,7 @@ class TrimPreviewDialog(QDialog):
 
     def _create_image_widget(self, pixmap: QPixmap, title: str, width: int, height: int) -> QWidget:
         """Create a widget containing title, resolution info, and image view."""
-        from PySide6.QtCore import Qt as QtCore
-        from PySide6.QtGui import QPainter, QPen
+        # Use the Qt symbol imported at module level
 
         widget = QWidget()
         layout = QVBoxLayout(widget)
@@ -239,7 +315,7 @@ class TrimPreviewDialog(QDialog):
         scene.addItem(pixmap_item)
 
         # Add border around image for clear boundary visibility
-        border_rect = scene.addRect(pixmap_item.boundingRect(), QPen(QtCore.GlobalColor.red, 3))
+        border_rect = scene.addRect(pixmap_item.boundingRect(), QPen(Qt.GlobalColor.red, 3))
         border_rect.setZValue(1)
 
         # Store references to prevent garbage collection
@@ -259,8 +335,6 @@ class TrimPreviewDialog(QDialog):
         try:
             if parent and hasattr(parent, "_settings_manager"):
                 theme = parent._settings_manager.get("theme", "dark")
-                from image_viewer.styles import apply_theme
-
                 app = QApplication.instance()
                 if app:
                     apply_theme(app, theme)
