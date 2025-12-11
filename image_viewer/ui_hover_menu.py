@@ -4,8 +4,9 @@ This module provides a slide-out menu that appears when the mouse
 approaches the left edge of the screen in View mode.
 """
 
-from PySide6.QtCore import QEasingCurve, QPropertyAnimation, QRect, Qt, QTimer, Signal
 import contextlib
+
+from PySide6.QtCore import QEasingCurve, QPropertyAnimation, QRect, Qt, QTimer, Signal
 from PySide6.QtGui import QPainter, QPen
 from PySide6.QtWidgets import QPushButton, QVBoxLayout, QWidget
 
