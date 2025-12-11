@@ -15,6 +15,7 @@ class SettingsManager:
     DEFAULTS: ClassVar[dict[str, Any]] = {
         "background_color": "#000000",
         "fast_view_enabled": False,
+        "hover_hide_delay": 120,
         "press_zoom_multiplier": 3.0,
         "thumbnail_width": 256,
         "thumbnail_height": 195,

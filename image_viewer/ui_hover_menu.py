@@ -5,6 +5,7 @@ approaches the left edge of the screen in View mode.
 """
 
 from PySide6.QtCore import QEasingCurve, QPropertyAnimation, QRect, Qt, QTimer, Signal
+import contextlib
 from PySide6.QtGui import QPainter, QPen
 from PySide6.QtWidgets import QPushButton, QVBoxLayout, QWidget
 
@@ -26,6 +27,8 @@ class HoverDrawerMenu(QWidget):
         self._is_expanded = False
         self._hover_zone_width = 20  # Pixels from left edge to trigger hover
         self._menu_width = 80  # Width of the expanded menu
+        # Hide delay in milliseconds when mouse leaves hover zone
+        self._hide_delay = 120
 
         self._setup_ui()
         self._setup_animations()
@@ -103,6 +106,13 @@ class HoverDrawerMenu(QWidget):
         # Set initial position (hidden)
         self.move(self._hidden_x, y)
 
+    def set_hide_delay(self, ms: int) -> None:
+        """Adjust the hide delay for the hover menu in milliseconds."""
+
+        with contextlib.suppress(Exception):
+            # Prevent too small values which may cause flicker
+            self._hide_delay = max(20, int(ms))
+
     def check_hover_zone(self, mouse_x: int, mouse_y: int, parent_rect: QRect):
         """Check if mouse is in hover zone and show/hide menu accordingly."""
         if not parent_rect.contains(mouse_x, mouse_y):
@@ -154,8 +164,8 @@ class HoverDrawerMenu(QWidget):
         if not self._is_expanded:
             return
 
-        # Start timer to hide after delay
-        self._hide_timer.start(300)  # 300ms delay
+        # Start timer to hide after configured delay
+        self._hide_timer.start(self._hide_delay)
 
     def _hide_menu(self):
         """Hide the menu with slide animation."""

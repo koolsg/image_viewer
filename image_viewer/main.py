@@ -139,6 +139,14 @@ class ImageViewer(QMainWindow):
         self._bg_color = self._settings_manager.determine_startup_background()
         _logger.debug("Settings loaded from: %s", self._settings_path)
 
+        # Apply hover menu hide delay from settings
+        try:
+            if hasattr(self, "_hover_menu") and hasattr(self, "_settings_manager"):
+                delay = int(self._settings_manager.get("hover_hide_delay", 120))
+                self._hover_menu.set_hide_delay(delay)
+        except Exception:
+            pass
+
         if self._settings_manager.fast_view_enabled:
             self.decoding_strategy = FastViewStrategy()
         else:
