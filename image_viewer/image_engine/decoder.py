@@ -26,16 +26,17 @@ if os.name == "nt" and _LIBVIPS_DIR.exists():
         os.add_dll_directory(str(_LIBVIPS_DIR))
 
 
-_pyvips: Any | None = None
+try:
+    import pyvips  # type: ignore
+except Exception:
+    pyvips = None
 
 
 def _get_pyvips_module() -> Any:
-    global _pyvips
-    if _pyvips is None:
-        import pyvips  # type: ignore
-
-        _pyvips = pyvips
-    return _pyvips
+    """Return the pyvips module or raise ImportError if unavailable."""
+    if pyvips is None:
+        raise ImportError("pyvips is not available")
+    return pyvips
 
 
 def _decode_with_pyvips_from_file(

@@ -247,9 +247,7 @@ class ThumbnailGridWidget(QWidget):
                 base_cols = self._model.columnCount() - 1  # resolution column index
                 header.setSectionResizeMode(QHeaderView.ResizeToContents)
                 header.setStretchLastSection(False)
-                header.setDefaultAlignment(
-                    Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter
-                )
+                header.setDefaultAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter)
                 # Desired order: Name, Type, Size, Resolution, Modified
                 header.moveSection(2, 1)  # Type next to Name
                 header.moveSection(base_cols, 3)  # Resolution before Modified
@@ -308,11 +306,7 @@ class ThumbnailGridWidget(QWidget):
     def selected_paths(self) -> list[str]:
         try:
             view = self._list if self._view_mode == "thumbnail" else self._tree
-            return [
-                self._model.filePath(idx)
-                for idx in view.selectedIndexes()
-                if idx.isValid() and idx.column() == 0
-            ]
+            return [self._model.filePath(idx) for idx in view.selectedIndexes() if idx.isValid() and idx.column() == 0]
         except Exception:
             return []
 
@@ -370,11 +364,7 @@ class ThumbnailGridWidget(QWidget):
             _logger.debug("context menu failed: %s", exc)
 
     def _activate_current(self) -> None:
-        idx = (
-            self._list.currentIndex()
-            if self._view_mode == "thumbnail"
-            else self._tree.currentIndex()
-        )
+        idx = self._list.currentIndex() if self._view_mode == "thumbnail" else self._tree.currentIndex()
         if idx.isValid():
             self._on_activated(idx)
 
@@ -420,7 +410,7 @@ class ThumbnailGridWidget(QWidget):
 
         explorer_mode_operations.delete_files_to_recycle_bin(paths, self)
 
-    def rename_first_selected(self) -> None:
+    def rename_first_selected(self) -> None:  # noqa: PLR0911
         """Rename the first selected file using a dialog with dynamic width."""
         if self._view_mode == "thumbnail":
             indexes = self._list.selectedIndexes()
@@ -464,9 +454,7 @@ class ThumbnailGridWidget(QWidget):
         layout.addWidget(line_edit)
 
         # Buttons
-        button_box = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
-        )
+        button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         button_box.accepted.connect(dialog.accept)
         button_box.rejected.connect(dialog.reject)
         layout.addWidget(button_box)
@@ -488,22 +476,14 @@ class ThumbnailGridWidget(QWidget):
         # Check for invalid characters (Windows)
         invalid_chars = '<>:"/\\|?*'
         if any(c in new_name for c in invalid_chars):
-            QMessageBox.warning(
-                self,
-                "Invalid Name",
-                f"Filename cannot contain: {invalid_chars}"
-            )
+            QMessageBox.warning(self, "Invalid Name", f"Filename cannot contain: {invalid_chars}")
             return
 
         new_path = parent_dir / new_name
 
         # Check if target already exists
         if new_path.exists():
-            QMessageBox.warning(
-                self,
-                "File Exists",
-                f"A file named '{new_name}' already exists."
-            )
+            QMessageBox.warning(self, "File Exists", f"A file named '{new_name}' already exists.")
             return
 
         # Perform rename
@@ -522,13 +502,7 @@ class ThumbnailGridWidget(QWidget):
 
         except Exception as exc:
             _logger.error("rename failed: %s", exc)
-            QMessageBox.critical(
-                self,
-                "Rename Failed",
-                f"Failed to rename file:\n{exc}"
-            )
-
-
+            QMessageBox.critical(self, "Rename Failed", f"Failed to rename file:\n{exc}")
 
     # View mode ------------------------------------------------------------------
     def set_view_mode(self, mode: str) -> None:
@@ -550,8 +524,6 @@ class ThumbnailGridWidget(QWidget):
             with contextlib.suppress(Exception):
                 self._tree.setColumnHidden(ImageFileSystemModel.COL_RES, False)
         self.update()
-
-
 
     # QWidget overrides ---------------------------------------------------------
     def keyReleaseEvent(self, event):  # type: ignore[override]

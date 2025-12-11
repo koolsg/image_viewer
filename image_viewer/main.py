@@ -33,9 +33,9 @@ _logger = get_logger("main")
 
 def _apply_cli_logging_options() -> None:
     try:
-        import argparse
-        import os as _os
-        import sys as _sys
+        import argparse  # noqa: PLC0415
+        import os as _os  # noqa: PLC0415
+        import sys as _sys  # noqa: PLC0415
 
         parser = argparse.ArgumentParser(description="Image Viewer", add_help=False)
         parser.add_argument("--log-level", help="Set log level")
@@ -84,7 +84,7 @@ class ExplorerState:
 
 
 class ImageViewer(QMainWindow):
-    def __init__(self):
+    def __init__(self):  # noqa: PLR0915
         super().__init__()
         self.setWindowTitle("Image Viewer")
         # self.resize(1024, 768)
@@ -492,7 +492,7 @@ class ImageViewer(QMainWindow):
         else:
             self._update_status("Image load failed")
 
-    def keyPressEvent(self, event):
+    def keyPressEvent(self, event):  # noqa: PLR0912
         key = event.key()
 
         # F5 refreshes explorer, F11 fullscreen
@@ -885,7 +885,7 @@ class ImageViewer(QMainWindow):
 
     def _update_ui_for_mode(self) -> None:
         """Reconfigure UI based on the current mode"""
-        from image_viewer.explorer_mode_operations import _update_ui_for_mode
+        from image_viewer.explorer_mode_operations import _update_ui_for_mode  # noqa: PLC0415
 
         _update_ui_for_mode(self)
 
@@ -908,7 +908,7 @@ class ImageViewer(QMainWindow):
 
     def _setup_view_mode(self) -> None:
         """Set up View Mode: show only the central canvas"""
-        from image_viewer.explorer_mode_operations import _setup_view_mode
+        from image_viewer.explorer_mode_operations import _setup_view_mode  # noqa: PLC0415
 
         _setup_view_mode(self)
 
@@ -952,13 +952,13 @@ class ImageViewer(QMainWindow):
 
     def _on_explorer_folder_selected(self, folder_path: str, grid) -> None:
         """Handle folder selection in the explorer."""
-        from image_viewer.explorer_mode_operations import _on_explorer_folder_selected
+        from image_viewer.explorer_mode_operations import _on_explorer_folder_selected  # noqa: PLC0415
 
         _on_explorer_folder_selected(self, folder_path, grid)
 
     def _on_explorer_image_selected(self, image_path: str) -> None:
         """Handle image selection in the explorer."""
-        from image_viewer.explorer_mode_operations import _on_explorer_image_selected
+        from image_viewer.explorer_mode_operations import _on_explorer_image_selected  # noqa: PLC0415
 
         _on_explorer_image_selected(self, image_path)
 
@@ -984,11 +984,11 @@ class ImageViewer(QMainWindow):
             theme: Theme name ("dark" or "light")
         """
         try:
-            from image_viewer.styles import apply_theme
+            from image_viewer.styles import apply_theme  # noqa: PLC0415
 
             app = getattr(self, "_current_app", None)
             if app is None:
-                from PySide6.QtWidgets import QApplication
+                from PySide6.QtWidgets import QApplication  # noqa: PLC0415
 
                 app = QApplication.instance()
 
@@ -1000,10 +1000,10 @@ class ImageViewer(QMainWindow):
             logger.error("failed to apply theme: %s", e)
 
 
-def run(argv: list[str] | None = None) -> int:
+def run(argv: list[str] | None = None) -> int:  # noqa: PLR0915
     """Application entrypoint (packaging-friendly)."""
-    import argparse
-    from multiprocessing import freeze_support
+    import argparse  # noqa: PLC0415
+    from multiprocessing import freeze_support  # noqa: PLC0415
 
     freeze_support()
     _logger.debug("Application startup initiated")
@@ -1031,7 +1031,7 @@ def run(argv: list[str] | None = None) -> int:
 
     # Apply theme from settings (default: dark)
     theme = viewer._settings_manager.get("theme", "dark")
-    from image_viewer.styles import apply_theme
+    from image_viewer.styles import apply_theme  # noqa: PLC0415
 
     apply_theme(app, theme)
     _logger.debug("Theme applied: %s", theme)

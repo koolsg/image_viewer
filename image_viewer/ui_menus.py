@@ -12,7 +12,7 @@ if TYPE_CHECKING:
 _logger = get_logger("ui_menus")
 
 
-def build_menus(viewer: "ImageViewer") -> None:
+def build_menus(viewer: "ImageViewer") -> None:  # noqa: PLR0915
     """Build the menu bar and view menu for the viewer.
 
     - English UI text
@@ -52,24 +52,18 @@ def build_menus(viewer: "ImageViewer") -> None:
     viewer.view_group.addAction(viewer.actual_action)
     view_menu.addAction(viewer.actual_action)
 
-    viewer.hq_downscale_action = QAction(
-        "High Quality Downscale (Slow)(&Q)", viewer, checkable=True
-    )
+    viewer.hq_downscale_action = QAction("High Quality Downscale (Slow)(&Q)", viewer, checkable=True)
     viewer.hq_downscale_action.setChecked(False)
     viewer.hq_downscale_action.triggered.connect(viewer.toggle_hq_downscale)
     view_menu.addAction(viewer.hq_downscale_action)
     # Fast view option: Maintain original thumbnail mode behavior
     strategy = getattr(viewer, "decoding_strategy", None)
     is_fast_view = isinstance(strategy, FastViewStrategy)
-    viewer.fast_view_action = QAction(
-        "Fast View", viewer, checkable=True
-    )
+    viewer.fast_view_action = QAction("Fast View", viewer, checkable=True)
     viewer.fast_view_action.setChecked(is_fast_view)
     viewer.fast_view_action.triggered.connect(viewer.toggle_fast_view)
     view_menu.addAction(viewer.fast_view_action)
-    viewer.hq_downscale_action.setEnabled(
-        is_fast_view and strategy.supports_hq_downscale()
-    )
+    viewer.hq_downscale_action.setEnabled(is_fast_view and strategy.supports_hq_downscale())
 
     # Background color submenu
     bg_menu = view_menu.addMenu("Background")
@@ -79,12 +73,8 @@ def build_menus(viewer: "ImageViewer") -> None:
     bg_menu.addAction(viewer.bg_black_action)
     bg_menu.addAction(viewer.bg_white_action)
     bg_menu.addAction(viewer.bg_custom_action)
-    viewer.bg_black_action.triggered.connect(
-        lambda: viewer.set_background_qcolor(QColor(0, 0, 0))
-    )
-    viewer.bg_white_action.triggered.connect(
-        lambda: viewer.set_background_qcolor(QColor(255, 255, 255))
-    )
+    viewer.bg_black_action.triggered.connect(lambda: viewer.set_background_qcolor(QColor(0, 0, 0)))
+    viewer.bg_white_action.triggered.connect(lambda: viewer.set_background_qcolor(QColor(255, 255, 255)))
     viewer.bg_custom_action.triggered.connect(viewer.choose_background_custom)
     if hasattr(viewer, "_sync_bg_checks"):
         viewer._sync_bg_checks()

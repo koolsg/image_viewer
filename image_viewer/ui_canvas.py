@@ -169,11 +169,10 @@ class ImageCanvas(QGraphicsView):
         elif (btn == Qt.MiddleButton) or (btns is not None and (btns & Qt.MiddleButton)):
             if self._handle_middle_click(event):
                 return
-        elif self._handle_auxiliary_buttons(btn, btns, event):
+        elif self._handle_auxiliary_buttons(btn, btns, event) or (
+            btn == Qt.LeftButton and self._zoom_saved is None and self._handle_left_click(event)
+        ):
             return
-        elif btn == Qt.LeftButton and self._zoom_saved is None:
-            if self._handle_left_click(event):
-                return
 
         with contextlib.suppress(Exception):
             super().mousePressEvent(event)
@@ -427,7 +426,7 @@ class ImageCanvas(QGraphicsView):
         except Exception:
             pass
 
-    def drawForeground(self, painter, rect):
+    def drawForeground(self, painter, rect):  # noqa: PLR0912, PLR0915
         try:
             # Since ImageViewer can be inside a QStackedWidget, read overlay info from window() instead of parent().
             viewer = self.window()
@@ -486,14 +485,10 @@ class ImageCanvas(QGraphicsView):
 
             # Debug-only cache summary (View mode): show cached pixmaps and sizes
             try:
-                debug_enabled = logging.getLogger("image_viewer").isEnabledFor(
-                    logging.DEBUG
-                )
+                debug_enabled = logging.getLogger("image_viewer").isEnabledFor(logging.DEBUG)
             except Exception:
                 debug_enabled = False
-            is_view_mode = bool(
-                getattr(getattr(viewer, "explorer_state", None), "view_mode", True)
-            )
+            is_view_mode = bool(getattr(getattr(viewer, "explorer_state", None), "view_mode", True))
             if debug_enabled and is_view_mode:
                 engine = getattr(viewer, "engine", None)
                 cache = getattr(engine, "_pixmap_cache", None) if engine else None
@@ -512,9 +507,7 @@ class ImageCanvas(QGraphicsView):
                             size_bytes = pix.toImage().sizeInBytes()
                         except Exception:
                             try:
-                                size_bytes = max(
-                                    0, pix.width() * pix.height() * 4
-                                )
+                                size_bytes = max(0, pix.width() * pix.height() * 4)
                             except Exception:
                                 size_bytes = 0
                         name = Path(path).name
@@ -537,7 +530,7 @@ class ImageCanvas(QGraphicsView):
         except Exception:
             pass
 
-    def _apply_hq_fit(self):
+    def _apply_hq_fit(self):  # noqa: PLR0911
         pix = self._pix_item.pixmap()
         if pix.isNull():
             return
@@ -551,11 +544,7 @@ class ImageCanvas(QGraphicsView):
         scale = min(sx, sy)
         tw, th = max(1, int(pw * scale)), max(1, int(ph * scale))
 
-        if (
-            self._hq_pixmap is not None
-            and self._hq_pixmap.width() == tw
-            and self._hq_pixmap.height() == th
-        ):
+        if self._hq_pixmap is not None and self._hq_pixmap.width() == tw and self._hq_pixmap.height() == th:
             self._pix_item.setPixmap(self._hq_pixmap)
             self.fitInView(self._pix_item, Qt.KeepAspectRatio)
             return
@@ -570,9 +559,7 @@ class ImageCanvas(QGraphicsView):
             if len(buf) < bpl * height:
                 self.fitInView(self._pix_item, Qt.KeepAspectRatio)
                 return
-            arr = np.frombuffer(buf, dtype=np.uint8).reshape((height, bpl))[
-                :, : (width * 3)
-            ]
+            arr = np.frombuffer(buf, dtype=np.uint8).reshape((height, bpl))[:, : (width * 3)]
             arr = arr.reshape((height, width, 3))
             arr = np.ascontiguousarray(arr)
             try:
@@ -582,14 +569,10 @@ class ImageCanvas(QGraphicsView):
                 self.fitInView(self._pix_item, Qt.KeepAspectRatio)
                 return
             try:
-                vips_img = pyvips.Image.new_from_memory(
-                    arr.tobytes(), width, height, 3, "uchar"
-                )
+                vips_img = pyvips.Image.new_from_memory(arr.tobytes(), width, height, 3, "uchar")
                 scale_x = tw / width
                 scale_y = th / height
-                vips_resized = vips_img.resize(
-                    scale_x, kernel="lanczos3", vscale=scale_y
-                )
+                vips_resized = vips_img.resize(scale_x, kernel="lanczos3", vscale=scale_y)
                 mem = vips_resized.write_to_memory()
                 arr2 = np.frombuffer(mem, dtype=np.uint8).reshape(
                     vips_resized.height, vips_resized.width, vips_resized.bands

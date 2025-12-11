@@ -6,12 +6,18 @@ for fast thumbnail retrieval and reduced disk I/O.
 
 from __future__ import annotations
 
+import platform
 import sqlite3
 import time
 from pathlib import Path
 
 from PySide6.QtCore import QBuffer, QIODevice
 from PySide6.QtGui import QPixmap
+
+try:
+    import ctypes
+except Exception:
+    ctypes = None
 
 from image_viewer.logger import get_logger
 
@@ -166,7 +172,7 @@ class ThumbnailCache:
             _logger.debug("failed to batch get thumbnails: %s", exc)
             return {}
 
-    def set(
+    def set(  # noqa: PLR0913
         self,
         path: str,
         mtime: float,
@@ -235,9 +241,7 @@ class ThumbnailCache:
 
         try:
             cutoff = time.time() - (days * 86400)
-            cursor = self._conn.execute(
-                "DELETE FROM thumbnails WHERE created_at < ?", (cutoff,)
-            )
+            cursor = self._conn.execute("DELETE FROM thumbnails WHERE created_at < ?", (cutoff,))
             self._conn.commit()
             count = cursor.rowcount
             _logger.debug("cleaned up %d old thumbnails", count)
@@ -260,15 +264,14 @@ class ThumbnailCache:
     def _set_hidden_attribute(self) -> None:
         """Set hidden attribute on Windows."""
         try:
-            import platform
-
             if platform.system() != "Windows":
                 return
 
             if not self.db_path.exists():
                 return
 
-            import ctypes
+            if ctypes is None:
+                return
 
             # FILE_ATTRIBUTE_HIDDEN = 0x02
             ctypes.windll.kernel32.SetFileAttributesW(str(self.db_path), 0x02)

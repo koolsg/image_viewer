@@ -119,7 +119,7 @@ def _setup_view_mode(viewer) -> None:
         _logger.error("failed to setup view mode: %s", e)
 
 
-def _setup_explorer_mode(viewer) -> None:
+def _setup_explorer_mode(viewer) -> None:  # noqa: PLR0912, PLR0915
     """Setup Explorer Mode: tree + grid layout.
 
     Args:
@@ -135,8 +135,8 @@ def _setup_explorer_mode(viewer) -> None:
                 viewer.setGeometry(viewer.explorer_state._saved_geometry)
                 _logger.debug("restored explorer window state: normal geometry")
 
-        from image_viewer.ui_explorer_grid import ThumbnailGridWidget
-        from image_viewer.ui_explorer_tree import FolderTreeWidget
+        from image_viewer.ui_explorer_grid import ThumbnailGridWidget  # noqa: PLC0415
+        from image_viewer.ui_explorer_tree import FolderTreeWidget  # noqa: PLC0415
 
         current_widget = viewer.centralWidget()
         stacked_widget = None
@@ -171,7 +171,7 @@ def _setup_explorer_mode(viewer) -> None:
             return
 
         # Initial creation path
-        from PySide6.QtWidgets import QSplitter
+        from PySide6.QtWidgets import QSplitter  # noqa: PLC0415
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
         # Style will be applied by theme system
@@ -190,8 +190,7 @@ def _setup_explorer_mode(viewer) -> None:
         # Apply settings
         try:
             if any(
-                viewer._settings_manager.has(key)
-                for key in ("thumbnail_width", "thumbnail_height", "thumbnail_size")
+                viewer._settings_manager.has(key) for key in ("thumbnail_width", "thumbnail_height", "thumbnail_size")
             ):
                 use_size_only = (
                     viewer._settings_manager.has("thumbnail_size")
@@ -199,24 +198,14 @@ def _setup_explorer_mode(viewer) -> None:
                     and not viewer._settings_manager.has("thumbnail_height")
                 )
                 size = int(viewer._settings_manager.get("thumbnail_size"))
-                width = (
-                    size
-                    if use_size_only
-                    else int(viewer._settings_manager.get("thumbnail_width"))
-                )
-                height = (
-                    size
-                    if use_size_only
-                    else int(viewer._settings_manager.get("thumbnail_height"))
-                )
+                width = size if use_size_only else int(viewer._settings_manager.get("thumbnail_width"))
+                height = size if use_size_only else int(viewer._settings_manager.get("thumbnail_height"))
                 if hasattr(grid, "set_thumbnail_size_wh"):
                     grid.set_thumbnail_size_wh(width, height)
                 elif hasattr(grid, "set_thumbnail_size"):
                     grid.set_thumbnail_size(int(width))
             if viewer._settings_manager.has("thumbnail_hspacing"):
-                grid.set_horizontal_spacing(
-                    int(viewer._settings_manager.get("thumbnail_hspacing"))
-                )
+                grid.set_horizontal_spacing(int(viewer._settings_manager.get("thumbnail_hspacing")))
         except Exception as e:
             _logger.debug("failed to apply grid settings: %s", e)
 
@@ -225,9 +214,7 @@ def _setup_explorer_mode(viewer) -> None:
         splitter.setSizes([300, 700])
 
         # Connect signals
-        tree.folder_selected.connect(
-            lambda p: _on_explorer_folder_selected(viewer, p, grid)
-        )
+        tree.folder_selected.connect(lambda p: _on_explorer_folder_selected(viewer, p, grid))
         grid.image_selected.connect(lambda p: _on_explorer_image_selected(viewer, p))
 
         # Add Page 1 and switch to it
@@ -272,12 +259,10 @@ def _on_explorer_folder_selected(viewer, folder_path: str, grid) -> None:
         grid.load_folder(folder_path)
         _logger.debug("explorer folder selected: %s", folder_path)
     except Exception as e:
-        _logger.error(
-            "failed to load folder in explorer: %s, error=%s", folder_path, e
-        )
+        _logger.error("failed to load folder in explorer: %s, error=%s", folder_path, e)
 
 
-def _on_explorer_image_selected(viewer, image_path: str) -> None:
+def _on_explorer_image_selected(viewer, image_path: str) -> None:  # noqa: PLR0915
     """Handle image selection in explorer.
 
     Args:
@@ -329,7 +314,7 @@ def _on_explorer_image_selected(viewer, image_path: str) -> None:
         if not viewer.explorer_state.view_mode:
             viewer.explorer_state.view_mode = True
             # Only call the main viewer's method which will handle both UI and hover menu
-            if hasattr(viewer, '_update_ui_for_mode'):
+            if hasattr(viewer, "_update_ui_for_mode"):
                 viewer._update_ui_for_mode()
             else:
                 # Fallback to the old function if method doesn't exist
@@ -366,9 +351,7 @@ def _on_explorer_image_selected(viewer, image_path: str) -> None:
         viewer.maintain_decode_window(back=0, ahead=1)
         _logger.debug("explorer image selected done: %s", image_path)
     except Exception as e:
-        _logger.error(
-            "failed to select image in explorer: %s, error=%s", image_path, e
-        )
+        _logger.error("failed to select image in explorer: %s, error=%s", image_path, e)
 
 
 def open_folder_at(viewer, folder_path: str) -> None:
@@ -404,9 +387,7 @@ def open_folder_at(viewer, folder_path: str) -> None:
         viewer.current_index = 0
         viewer._save_last_parent_dir(folder_path)
         first_file = engine.get_file_at_index(0)
-        viewer.setWindowTitle(
-            f"Image Viewer - {os.path.basename(first_file) if first_file else ''}"
-        )
+        viewer.setWindowTitle(f"Image Viewer - {os.path.basename(first_file) if first_file else ''}")
         # Lightweight initial prefetch
         viewer.maintain_decode_window(back=0, ahead=3)
 
@@ -453,9 +434,7 @@ def cut_files_to_clipboard(paths: list[str]) -> None:
     _set_files_to_clipboard(paths, "cut")
 
 
-def paste_files(
-    dest_folder: str, clipboard_paths: list[str], mode: str
-) -> tuple[int, list[str]]:
+def paste_files(dest_folder: str, clipboard_paths: list[str], mode: str) -> tuple[int, list[str]]:
     """Paste files from clipboard to destination folder.
 
     Args:
@@ -500,9 +479,7 @@ def paste_files(
     return success_count, failed_paths
 
 
-def delete_files_to_recycle_bin(
-    paths: list[str], parent_widget=None
-) -> tuple[int, list[str]]:
+def delete_files_to_recycle_bin(paths: list[str], parent_widget=None) -> tuple[int, list[str]]:
     """Delete files to recycle bin with confirmation.
 
     Args:

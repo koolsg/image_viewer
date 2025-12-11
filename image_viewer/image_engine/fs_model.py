@@ -14,6 +14,7 @@ from PySide6.QtWidgets import QFileSystemModel
 from image_viewer.busy_cursor import busy_cursor
 from image_viewer.logger import get_logger
 
+from .decoder import get_image_dimensions
 from .thumbnail_cache import ThumbnailCache
 
 _logger = get_logger("fs_model")
@@ -59,7 +60,7 @@ class ImageFileSystemModel(QFileSystemModel):
         except Exception as exc:
             _logger.debug("set_loader failed: %s", exc)
 
-    def batch_load_thumbnails(self, root_index: QModelIndex | None = None) -> None:
+    def batch_load_thumbnails(self, root_index: QModelIndex | None = None) -> None:  # noqa: PLR0912
         """Pre-load thumbnails for all visible files from cache.
 
         This method should be called after setRootPath to batch-load
@@ -145,7 +146,7 @@ class ImageFileSystemModel(QFileSystemModel):
                 _logger.debug("batch_load_thumbnails failed: %s", exc)
                 self._batch_load_done = True
 
-    def _preload_resolution_info(self, root_index: QModelIndex, row_count: int) -> None:
+    def _preload_resolution_info(self, root_index: QModelIndex, row_count: int) -> None:  # noqa: PLR0912, PLR0915
         """Pre-load resolution information for all image files.
 
         This is called after thumbnail loading to prepare data for Detail view.
@@ -188,8 +189,9 @@ class ImageFileSystemModel(QFileSystemModel):
                             continue
 
                         stat = file_path.stat()
-                        result = self._db_cache.get(path, stat.st_mtime, stat.st_size,
-                                                  self._thumb_size[0], self._thumb_size[1])
+                        result = self._db_cache.get(
+                            path, stat.st_mtime, stat.st_size, self._thumb_size[0], self._thumb_size[1]
+                        )
                         if result:
                             _, orig_width, orig_height = result
                             if orig_width and orig_height:
@@ -207,7 +209,6 @@ class ImageFileSystemModel(QFileSystemModel):
             header_loaded = 0
             for path in files_to_check:
                 try:
-                    from .decoder import get_image_dimensions
                     w, h = get_image_dimensions(path)
                     if w is not None and h is not None:
                         prev = self._meta.get(path, (None, None, None, None))
@@ -398,12 +399,11 @@ class ImageFileSystemModel(QFileSystemModel):
                 return suffix
 
             # Size column -> KB/MB (decimal)
-            if col == self.COL_SIZE and role == Qt.DisplayRole:
-                try:
-                    info = self.fileInfo(index)
-                    return self._fmt_size(int(info.size()))
-                except Exception:
-                    return super().data(index, role)
+            try:
+                info = self.fileInfo(index)
+                return self._fmt_size(int(info.size()))
+            except Exception:
+                return super().data(index, role)
 
             # Text alignment per column
             if role == Qt.TextAlignmentRole:
@@ -500,9 +500,9 @@ class ImageFileSystemModel(QFileSystemModel):
         kb = 1000
         mb = kb * 1000
         if size >= mb:
-            return f"{size/mb:.1f} MB"
+            return f"{size / mb:.1f} MB"
         if size >= kb:
-            return f"{size/kb:.1f} KB"
+            return f"{size / kb:.1f} KB"
         return f"{size} B"
 
     # --- thumbnail load/save ------------------------------------------------
@@ -564,7 +564,6 @@ class ImageFileSystemModel(QFileSystemModel):
             # Only read header if resolution not already cached
             if orig_width is None or orig_height is None:
                 with contextlib.suppress(Exception):
-                    from .decoder import get_image_dimensions
                     w, h = get_image_dimensions(path)
                     if w is not None and h is not None:
                         orig_width = w

@@ -1,4 +1,5 @@
 from PySide6.QtWidgets import (
+    QComboBox,
     QDialog,
     QDoubleSpinBox,
     QFormLayout,
@@ -19,7 +20,7 @@ _logger = get_logger("ui_settings")
 
 
 class SettingsDialog(QDialog):
-    def __init__(self, viewer, parent=None):
+    def __init__(self, viewer, parent=None):  # noqa: PLR0915
         super().__init__(parent or viewer)
         self.setWindowTitle("Preferences")
         self.setModal(True)
@@ -44,7 +45,6 @@ class SettingsDialog(QDialog):
         root.addWidget(pages_container, 1)
 
         # Page: Appearance
-        from PySide6.QtWidgets import QComboBox
 
         self._page_appearance = QWidget()
         appearance_form = QFormLayout(self._page_appearance)
