@@ -16,7 +16,7 @@ from image_viewer.logger import get_logger
 from .decoder import decode_image
 from .fs_model import ImageFileSystemModel
 from .loader import Loader
-from .strategy import DecodingStrategy, FullStrategy
+from .strategy import DecodingStrategy, FastViewStrategy, FullStrategy
 
 if TYPE_CHECKING:
     pass
@@ -58,12 +58,18 @@ class ImageEngine(QObject):
         self._pixmap_cache: OrderedDict[str, QPixmap] = OrderedDict()
         self._cache_size = 20
 
-        # Decoding strategy
-        self._decoding_strategy: DecodingStrategy = FullStrategy()
+        # Decoding strategy - create shared instances to avoid duplicate init/logging
+        self._full_strategy: DecodingStrategy = FullStrategy()
+        self._fast_strategy: DecodingStrategy = FastViewStrategy()
+        self._decoding_strategy: DecodingStrategy = self._full_strategy
+        # Cache last folder and file list to avoid noisy duplicate signals
+        self._last_folder_loaded: str | None = None
+        self._last_file_list: list[str] | None = None
 
         # Internal signal connections
         self._loader.image_decoded.connect(self._on_image_decoded)
         self._fs_model.directoryLoaded.connect(self._on_directory_loaded)
+        _logger.debug("ImageEngine: loader=%s thumb_loader=%s", self._loader, self._thumb_loader)
 
         _logger.debug("ImageEngine initialized")
 
@@ -297,9 +303,7 @@ class ImageEngine(QObject):
         info = {}
         try:
             # Use cached metadata (already preloaded)
-            w, h, size_bytes, mtime = self._fs_model._meta.get(
-                path, (None, None, None, None)
-            )
+            w, h, size_bytes, mtime = self._fs_model._meta.get(path, (None, None, None, None))
             if w and h:
                 info["resolution"] = (w, h)
             if size_bytes is not None:
@@ -342,6 +346,14 @@ class ImageEngine(QObject):
             Current DecodingStrategy instance
         """
         return self._decoding_strategy
+
+        def get_full_strategy(self) -> DecodingStrategy:
+            """Get the full decoding strategy instance."""
+            return self._full_strategy
+
+        def get_fast_strategy(self) -> DecodingStrategy:
+            """Get the fast decoding strategy instance."""
+            return self._fast_strategy
 
     def set_cache_size(self, size: int) -> None:
         """Set pixmap cache size.
@@ -431,6 +443,11 @@ class ImageEngine(QObject):
         if path != current_root:
             return
         files = self._fs_model.get_image_files()
+        # Avoid duplicate emissions when the folder/file list hasn't changed
+        if path == self._last_folder_loaded and files == self._last_file_list:
+            return
+        self._last_folder_loaded = path
+        self._last_file_list = list(files)
         _logger.debug("directory loaded: %s (%d files)", path, len(files))
         self.folder_changed.emit(path, files)
         self.file_list_updated.emit(files)
