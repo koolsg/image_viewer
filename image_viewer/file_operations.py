@@ -5,61 +5,71 @@ This module provides low-level file operation utilities used by:
 - explorer_mode_operations.py: Explorer Mode file operations (copy/cut/paste/delete)
 """
 
+import contextlib
 import shutil
 from pathlib import Path
 
-from PySide6.QtWidgets import QMessageBox
+from PySide6.QtGui import QKeySequence, QPalette
+from PySide6.QtWidgets import QApplication, QMessageBox
 from send2trash import send2trash
 
 from .logger import get_logger
 
 _logger = get_logger("file_operations")
 
-# Shared stylesheet for delete confirmation dialogs
-DELETE_DIALOG_STYLE = """
-    QMessageBox {
-        background-color: #2b2b2b;
-    }
-    QMessageBox QLabel {
-        color: #ffffff;
-        font-size: 13px;
-    }
-    QPushButton {
-        min-width: 80px;
-        min-height: 32px;
-        padding: 6px 16px;
-        font-size: 13px;
-        font-weight: bold;
-        border-radius: 4px;
-        border: 2px solid transparent;
-    }
-    QPushButton[text="Delete"] {
-        background-color: #d32f2f;
-        color: #ffffff;
-        border: 2px solid #f44336;
-    }
-    QPushButton[text="Delete"]:hover {
-        background-color: #f44336;
-        border: 2px solid #ff5252;
-    }
-    QPushButton[text="Delete"]:focus {
-        border: 2px solid #ff5252;
-        outline: none;
-    }
-    QPushButton[text="Cancel"] {
-        background-color: #424242;
-        color: #ffffff;
-        border: 2px solid #616161;
-    }
-    QPushButton[text="Cancel"]:hover {
-        background-color: #616161;
-        border: 2px solid #757575;
-    }
-    QPushButton[text="Cancel"]:focus {
-        border: 2px solid #4A90E2;
-        outline: none;
-    }
-"""
+
+LUMINANCE_DARK_THRESHOLD = 128
+
+
+def _is_palette_dark(pal: QPalette) -> bool:
+    # Estimate whether a palette is dark by checking window color luminance
+    w = pal.color(QPalette.Window)
+    luminance = 0.299 * w.red() + 0.587 * w.green() + 0.114 * w.blue()
+    return luminance < LUMINANCE_DARK_THRESHOLD
+
+
+def build_delete_dialog_style(theme: str | None = None) -> str:
+    """Build a stylesheet for the delete confirmation dialog based on theme.
+
+    If theme is None, determine from current QApplication palette.
+    """
+    if theme is None:
+        try:
+            app = QApplication.instance()
+            theme = "dark" if _is_palette_dark(app.palette()) else "light"
+        except Exception:
+            theme = "dark"
+
+    if theme == "light":
+        cancel_bg = "#e0e0e0"
+        cancel_text = "#000000"
+        cancel_border = "#bdbdbd"
+    else:
+        cancel_bg = "#424242"
+        cancel_text = "#ffffff"
+        cancel_border = "#616161"
+
+    # Colors for both themes - make Yes neutral (no red)
+    delete_bg = cancel_bg
+    delete_bg_hover = cancel_bg
+    delete_border = cancel_border
+    delete_text = cancel_text
+
+    return (
+        "QPushButton { min-width: 80px; min-height: 32px; padding: 6px 16px; font-size: 13px; "
+        "font-weight: bold; border-radius: 4px; border: 2px solid transparent; }"
+        f"\nQPushButton#button-yes {{ background-color: {delete_bg}; "
+        f"color: {delete_text}; border: 2px solid {delete_border}; }}"
+        f"\nQPushButton#button-yes:hover {{ background-color: {delete_bg_hover}; }}"
+        "\nQPushButton#button-yes:focus, QPushButton#button-yes:default { "
+        "border: 2px solid #4A90E2; outline: none; }"
+        f"\nQPushButton#button-no {{ background-color: {cancel_bg}; "
+        f"color: {cancel_text}; border: 2px solid {cancel_border}; }}"
+        "\nQPushButton#button-no:hover { border: 2px solid #757575; }"
+        "\nQPushButton#button-no:focus, QPushButton#button-no:default { "
+        "border: 2px solid #4A90E2; outline: none; }"
+        "\nQPushButton:default { outline: none; }"
+    )
 
 
 def show_delete_confirmation(parent, title: str, text: str, info: str) -> bool:
@@ -80,10 +90,27 @@ def show_delete_confirmation(parent, title: str, text: str, info: str) -> bool:
     msg_box.setText(text)
     msg_box.setInformativeText(info)
 
-    yes_btn = msg_box.addButton("Delete", QMessageBox.ButtonRole.YesRole)
-    no_btn = msg_box.addButton("Cancel", QMessageBox.ButtonRole.NoRole)
-    msg_box.setDefaultButton(no_btn)
-    msg_box.setStyleSheet(DELETE_DIALOG_STYLE)
+    yes_btn = msg_box.addButton("Yes", QMessageBox.ButtonRole.YesRole)
+    yes_btn.setObjectName("button-yes")
+    # Allow Y shortcut to trigger yes
+    with contextlib.suppress(Exception):
+        yes_btn.setShortcut(QKeySequence("Y"))
+    no_btn = msg_box.addButton("No", QMessageBox.ButtonRole.NoRole)
+    no_btn.setObjectName("button-no")
+    with contextlib.suppress(Exception):
+        no_btn.setShortcut(QKeySequence("N"))
+    # Make Yes the default action so pressing Enter confirms (Yes)
+    msg_box.setDefaultButton(yes_btn)
+    # Make Cancel the escape action so pressing Esc cancels
+    msg_box.setEscapeButton(no_btn)
+    # Apply theme-aware stylesheet
+    theme = None
+    try:
+        if hasattr(parent, "_settings_manager"):
+            theme = parent._settings_manager.get("theme", None)
+    except Exception:
+        theme = None
+    msg_box.setStyleSheet(build_delete_dialog_style(theme))
 
     msg_box.exec()
     return msg_box.clickedButton() == yes_btn
@@ -112,21 +139,17 @@ def send_to_recycle_bin(path: str) -> None:
 def generate_unique_filename(dest_dir: str, filename: str) -> str:
     """Generate unique filename if file already exists.
 
-    Args:
         dest_dir: Destination directory
         filename: Original filename
 
     Returns:
-        Unique filename path (e.g., "file - Copy (1).jpg")
     """
     dest = Path(dest_dir) / filename
     if not dest.exists():
         return str(dest)
-
     stem = dest.stem
     suffix = dest.suffix
     counter = 1
-
     while dest.exists():
         dest = Path(dest_dir) / f"{stem} - Copy ({counter}){suffix}"
         counter += 1
