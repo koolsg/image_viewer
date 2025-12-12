@@ -11,7 +11,7 @@ from PySide6.QtWidgets import QApplication, QColorDialog, QFileDialog, QInputDia
 from image_viewer.busy_cursor import busy_cursor
 from image_viewer.explorer_mode_operations import open_folder_at, toggle_view_mode
 from image_viewer.image_engine import ImageEngine
-from image_viewer.image_engine.strategy import DecodingStrategy, FastViewStrategy, FullStrategy
+from image_viewer.image_engine.strategy import DecodingStrategy, FastViewStrategy
 from image_viewer.logger import get_logger
 from image_viewer.settings_manager import SettingsManager
 from image_viewer.status_overlay import StatusOverlayBuilder
@@ -115,7 +115,8 @@ class ImageViewer(QMainWindow):
         self.convert_webp_action = None
         self.cache_size = 20
         self.decode_full = False
-        self.decoding_strategy: DecodingStrategy = FullStrategy()
+        # Use engine's default decoding strategy to avoid duplicate initialization
+        self.decoding_strategy: DecodingStrategy = self.engine.get_decoding_strategy()
 
         self.canvas = ImageCanvas(self)
         self.setCentralWidget(self.canvas)
@@ -148,9 +149,10 @@ class ImageViewer(QMainWindow):
             pass
 
         if self._settings_manager.fast_view_enabled:
-            self.decoding_strategy = FastViewStrategy()
+            self.decoding_strategy = self.engine.get_fast_strategy()
         else:
-            self.decoding_strategy = FullStrategy()
+            # Use engine's strategy instance to avoid duplicate FullStrategy initialization
+            self.decoding_strategy = self.engine.get_decoding_strategy()
 
         build_menus(self)
         self._status_builder = StatusOverlayBuilder(self)
@@ -745,11 +747,11 @@ class ImageViewer(QMainWindow):
         is_fast_view = self.fast_view_action.isChecked()
         # Switch strategy
         if is_fast_view:
-            self.decoding_strategy = FastViewStrategy()
-            logger.debug("switched to FastViewStrategy")
+            self.decoding_strategy = self.engine.get_fast_strategy()
+            logger.debug("switched to FastViewStrategy (reused instance)")
         else:
-            self.decoding_strategy = FullStrategy()
-            logger.debug("switched to FullStrategy")
+            self.decoding_strategy = self.engine.get_full_strategy()
+            logger.debug("switched to FullStrategy (reused instance)")
 
         # Update engine's strategy
         self.engine.set_decoding_strategy(self.decoding_strategy)
