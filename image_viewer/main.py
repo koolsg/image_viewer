@@ -134,7 +134,21 @@ class ImageViewer(QMainWindow):
             pass
         # Don't hide initially - let _update_ui_for_mode handle visibility
 
-        self._settings_path = (_BASE_DIR / "settings.json").as_posix()
+        # Use per-user application config directory for settings by default.
+        # This avoids writing to protected installation directories like
+        # Program Files and follows platform conventions (AppData on Windows).
+        try:
+            from PySide6.QtCore import QStandardPaths  # noqa: PLC0415
+
+            app_config = QStandardPaths.writableLocation(QStandardPaths.AppConfigLocation)
+            if app_config:
+                cfg_dir = Path(app_config) / "image_viewer"
+                os.makedirs(cfg_dir, exist_ok=True)
+                self._settings_path = str((cfg_dir / "settings.json").as_posix())
+            else:
+                self._settings_path = (_BASE_DIR / "settings.json").as_posix()
+        except Exception:
+            self._settings_path = (_BASE_DIR / "settings.json").as_posix()
         self._settings_manager = SettingsManager(self._settings_path)
         self._settings: dict[str, Any] = self._settings_manager.data
         self._bg_color = self._settings_manager.determine_startup_background()
@@ -277,6 +291,10 @@ class ImageViewer(QMainWindow):
             if grid is not None:
                 grid.load_folder(dir_path)
                 grid.resume_pending_thumbnails()
+
+        # Save last opened folder so Open dialog starts here next time
+        with contextlib.suppress(Exception):
+            self._save_last_parent_dir(dir_path)
 
     def _open_folder_in_view_mode(self, dir_path: str) -> None:
         """Handle folder opening when in View mode."""
