@@ -5,19 +5,120 @@ file system operations across all modes (View, Explorer, Trim, Converter).
 """
 
 import contextlib
+import sqlite3
 from pathlib import Path
 
-from PySide6.QtCore import QDateTime, QModelIndex, Qt
+from PySide6.QtCore import QDateTime, QModelIndex, QObject, Qt, QThread, Signal
 from PySide6.QtGui import QIcon, QImage, QPixmap
 from PySide6.QtWidgets import QFileSystemModel
 
-from image_viewer.busy_cursor import busy_cursor
 from image_viewer.logger import get_logger
 
 from .decoder import get_image_dimensions
 from .thumbnail_cache import ThumbnailCache
 
 _logger = get_logger("fs_model")
+
+
+class _ThumbDbLoadWorker(QObject):
+    """Loads cached thumbnails/metadata from SQLite without touching Qt GUI objects."""
+
+    chunk_ready = Signal(list)  # list[(path, thumbnail_bytes|None, width|None, height|None, mtime, size)]
+    missing_ready = Signal(list)  # list[path] that have no cached thumbnail
+    finished = Signal(int)  # generation
+
+    def __init__(  # noqa: PLR0913
+        self,
+        folder_path: str,
+        db_path: Path,
+        thumb_width: int,
+        thumb_height: int,
+        generation: int,
+        prefetch_limit: int = 48,
+    ) -> None:
+        super().__init__()
+        self._folder_path = folder_path
+        self._db_path = db_path
+        self._thumb_width = thumb_width
+        self._thumb_height = thumb_height
+        self._generation = generation
+        self._prefetch_limit = prefetch_limit
+        self._abort = False
+
+    def abort(self) -> None:
+        self._abort = True
+
+    def run(self) -> None:  # noqa: PLR0912
+        try:
+            folder = Path(self._folder_path)
+            if not folder.is_dir():
+                self.finished.emit(self._generation)
+                return
+
+            # Scan folder in the worker thread (no Qt model access).
+            paths_with_stats: list[tuple[str, float, int]] = []
+            for p in folder.iterdir():
+                if self._abort:
+                    self.finished.emit(self._generation)
+                    return
+                if not p.is_file():
+                    continue
+                lower = p.name.lower()
+                if not lower.endswith((".jpg", ".jpeg", ".png", ".bmp", ".gif", ".webp", ".tif", ".tiff")):
+                    continue
+                try:
+                    stat = p.stat()
+                    paths_with_stats.append((str(p), float(stat.st_mtime), int(stat.st_size)))
+                except Exception:
+                    continue
+
+            if not paths_with_stats or not self._db_path.exists():
+                # Nothing cached yet; ask UI to prefetch some thumbnails.
+                self.missing_ready.emit([p for (p, _m, _s) in paths_with_stats[: self._prefetch_limit]])
+                self.finished.emit(self._generation)
+                return
+
+            # SQLite has a max bound-parameter count (commonly 999). Each row uses 3 params.
+            chunk_size = 300
+            have_thumb: set[str] = set()
+
+            conn = sqlite3.connect(str(self._db_path), check_same_thread=False)
+            try:
+                for i in range(0, len(paths_with_stats), chunk_size):
+                    if self._abort:
+                        self.finished.emit(self._generation)
+                        return
+
+                    chunk = paths_with_stats[i : i + chunk_size]
+                    placeholders = ",".join(["(?, ?, ?)"] * len(chunk))
+                    query = f"""
+                        SELECT path, thumbnail, width, height, mtime, size
+                        FROM thumbnails
+                        WHERE thumb_width = ? AND thumb_height = ?
+                          AND (path, mtime, size) IN ({placeholders})
+                    """
+                    params: list[object] = [self._thumb_width, self._thumb_height]
+                    for path, mtime, size in chunk:
+                        params.extend([path, mtime, size])
+
+                    rows = conn.execute(query, params).fetchall()
+                    if rows:
+                        self.chunk_ready.emit(rows)
+                        for path, thumbnail_data, _w, _h, _mtime, _size in rows:
+                            if thumbnail_data is not None:
+                                have_thumb.add(path)
+            finally:
+                with contextlib.suppress(Exception):
+                    conn.close()
+
+            # Trigger initial thumbnail generation for a small number of misses.
+            missing = [p for (p, _m, _s) in paths_with_stats if p not in have_thumb]
+            if missing:
+                self.missing_ready.emit(missing[: self._prefetch_limit])
+
+            self.finished.emit(self._generation)
+        except Exception:
+            self.finished.emit(self._generation)
 
 
 class ImageFileSystemModel(QFileSystemModel):
@@ -47,6 +148,21 @@ class ImageFileSystemModel(QFileSystemModel):
         self._meta: dict[str, tuple[int | None, int | None, int | None, float | None]] = {}
         self._db_cache: ThumbnailCache | None = None
         self._batch_load_done: bool = False
+        self._pending_removed_paths: list[str] = []
+        self._thumb_db_thread: QThread | None = None
+        self._thumb_db_worker: _ThumbDbLoadWorker | None = None
+        self._thumb_load_generation: int = 0
+        self._watcher_ready: bool = False
+        self._internal_data_changed: bool = False
+
+        # QFileSystemModel already uses OS watchers internally; hook its model signals
+        # to keep DB + in-memory caches + UI consistent when files change.
+        self.rowsInserted.connect(self._on_rows_inserted)
+        self.rowsAboutToBeRemoved.connect(self._on_rows_about_to_be_removed)
+        self.rowsRemoved.connect(self._on_rows_removed)
+        self.dataChanged.connect(self._on_model_data_changed)
+        with contextlib.suppress(Exception):
+            self.fileRenamed.connect(self._on_file_renamed)
 
     # --- loader wiring -----------------------------------------------------
     def set_loader(self, loader) -> None:
@@ -65,104 +181,106 @@ class ImageFileSystemModel(QFileSystemModel):
         except Exception as exc:
             _logger.debug("set_loader failed: %s", exc)
 
-    def batch_load_thumbnails(self, root_index: QModelIndex | None = None) -> None:  # noqa: PLR0912, PLR0915
-        """Pre-load thumbnails for all visible files from cache.
+    def batch_load_thumbnails(self, root_index: QModelIndex | None = None) -> None:
+        """Start background loading of cached thumbnails/metadata.
 
-        This method should be called after setRootPath to batch-load
-        thumbnails from the database, avoiding individual queries per item.
-
-        Uses busy_cursor context manager to show wait cursor during loading.
-
-        Args:
-            root_index: Root index to load from (uses current root if None)
+        Must be called after setRootPath. This version is asynchronous to avoid
+        blocking the UI thread on directory scanning + SQLite reads.
         """
         if self._batch_load_done:
             return
 
-        with busy_cursor():
+        root_path = self.rootPath()
+        if not root_path:
+            return
+
+        self._watcher_ready = True
+        self._batch_load_done = True
+        self._start_thumb_db_loader(root_path)
+
+    def _start_thumb_db_loader(self, folder_path: str) -> None:
+        # Stop any previous worker
+        self._stop_thumb_db_loader()
+
+        self._thumb_load_generation += 1
+        generation = self._thumb_load_generation
+
+        db_path = Path(folder_path) / "SwiftView_thumbs.db"
+        worker = _ThumbDbLoadWorker(
+            folder_path,
+            db_path,
+            self._thumb_size[0],
+            self._thumb_size[1],
+            generation,
+        )
+        thread = QThread(self)
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.chunk_ready.connect(self._on_thumb_db_chunk)
+        worker.missing_ready.connect(self._on_thumb_db_missing)
+        worker.finished.connect(self._on_thumb_db_finished)
+        worker.finished.connect(thread.quit)
+        worker.finished.connect(worker.deleteLater)
+        thread.finished.connect(thread.deleteLater)
+
+        self._thumb_db_thread = thread
+        self._thumb_db_worker = worker
+        thread.start()
+
+    def _stop_thumb_db_loader(self) -> None:
+        try:
+            if self._thumb_db_worker is not None:
+                with contextlib.suppress(Exception):
+                    self._thumb_db_worker.abort()
+            if self._thumb_db_thread is not None:
+                with contextlib.suppress(Exception):
+                    self._thumb_db_thread.quit()
+                    self._thumb_db_thread.wait(250)
+        finally:
+            self._thumb_db_thread = None
+            self._thumb_db_worker = None
+
+    def _on_thumb_db_chunk(self, rows: list) -> None:
+        # Runs on the main thread.
+        for row in rows:
             try:
-                if root_index is None:
-                    root_path = self.rootPath()
-                    if not root_path:
-                        return
-                    root_index = self.index(root_path)
+                path, thumbnail_data, orig_width, orig_height, mtime, size = row
 
-                if not root_index.isValid():
-                    return
+                # Update metadata first
+                self._meta[str(path)] = (
+                    orig_width,
+                    orig_height,
+                    int(size) if size is not None else None,
+                    float(mtime) if mtime is not None else None,
+                )
 
-                # Collect all image files with their stats
-                paths_with_stats = []
-                row_count = self.rowCount(root_index)
+                # Materialize thumbnail into QPixmap/QIcon only on the GUI thread.
+                if thumbnail_data is not None:
+                    pixmap = QPixmap()
+                    if pixmap.loadFromData(thumbnail_data):
+                        self._thumb_cache[str(path)] = QIcon(pixmap)
 
-                for row in range(row_count):
-                    index = self.index(row, 0, root_index)
-                    if not index.isValid() or self.isDir(index):
-                        continue
-
-                    path = self.filePath(index)
-                    if not self._is_image_file(path):
-                        continue
-
-                    # Get file stats
-                    file_path = Path(path)
-                    if not file_path.exists():
-                        continue
-
+                idx = self.index(str(path))
+                if idx.isValid():
+                    self._internal_data_changed = True
                     try:
-                        stat = file_path.stat()
-                        paths_with_stats.append((path, stat.st_mtime, stat.st_size))
-                    except Exception:
-                        continue
+                        self.dataChanged.emit(idx, idx, [Qt.DecorationRole, Qt.DisplayRole])
+                    finally:
+                        self._internal_data_changed = False
+            except Exception:
+                continue
 
-                if not paths_with_stats:
-                    self._batch_load_done = True
-                    return
+    def _on_thumb_db_missing(self, paths: list[str]) -> None:
+        # Trigger background thumbnail generation (decode happens off the UI thread).
+        for path in paths:
+            with contextlib.suppress(Exception):
+                self._request_thumbnail(path)
 
-                # Ensure DB cache is initialized
-                if paths_with_stats:
-                    self._ensure_db_cache(paths_with_stats[0][0])
-
-                if not self._db_cache:
-                    self._batch_load_done = True
-                    return
-
-                # Batch load from database
-                results = self._db_cache.get_batch(paths_with_stats, self._thumb_size[0], self._thumb_size[1])
-
-                # If DB had no thumbnails, proactively request thumbnails
-                # for the first few files to populate cache and update UI.
-                if not results:
-                    try:
-                        prefetch_count = min(96, len(paths_with_stats))
-                        _logger.debug("batch_load_thumbnails: no DB results, prefetching %d files", prefetch_count)
-                        for path, _mtime, _size in paths_with_stats[:prefetch_count]:
-                            with contextlib.suppress(Exception):
-                                self._request_thumbnail(path)
-                    except Exception:
-                        pass
-
-                # Update cache and metadata
-                for path, (pixmap, orig_width, orig_height) in results.items():
-                    if pixmap and not pixmap.isNull():
-                        self._thumb_cache[path] = QIcon(pixmap)
-                    prev = self._meta.get(path, (None, None, None, None))
-                    self._meta[path] = (orig_width, orig_height, prev[2], prev[3])
-
-                # Emit dataChanged for all loaded items
-                if results:
-                    first_index = self.index(0, 0, root_index)
-                    last_index = self.index(row_count - 1, 0, root_index)
-                    self.dataChanged.emit(first_index, last_index, [Qt.DecorationRole, Qt.DisplayRole])
-
-                _logger.debug("batch loaded %d thumbnails from cache", len(results))
-
-                # Pre-load resolution info for Detail view
-                self._preload_resolution_info(root_index, row_count)
-
-                self._batch_load_done = True
-            except Exception as exc:
-                _logger.debug("batch_load_thumbnails failed: %s", exc)
-                self._batch_load_done = True
+    def _on_thumb_db_finished(self, generation: int) -> None:
+        # Ignore stale worker completion.
+        if generation != self._thumb_load_generation:
+            return
+        _logger.debug("thumb db loader finished: gen=%d", generation)
 
     def _preload_resolution_info(self, root_index: QModelIndex, row_count: int) -> None:  # noqa: PLR0912, PLR0915
         """Pre-load resolution information for all image files.
@@ -199,26 +317,26 @@ class ImageFileSystemModel(QFileSystemModel):
             # Check thumbnail DB for resolution info
             if self._db_cache:
                 db_loaded = 0
-                for path in files_to_check[:]:  # Copy list to modify during iteration
+                stats: list[tuple[str, float, int]] = []
+                for path in files_to_check:
                     try:
                         file_path = Path(path)
                         if not file_path.exists():
-                            files_to_check.remove(path)
                             continue
-
                         stat = file_path.stat()
-                        result = self._db_cache.get(
-                            path, stat.st_mtime, stat.st_size, self._thumb_size[0], self._thumb_size[1]
-                        )
-                        if result:
-                            _, orig_width, orig_height = result
-                            if orig_width and orig_height:
-                                prev = self._meta.get(path, (None, None, None, None))
-                                self._meta[path] = (orig_width, orig_height, prev[2], prev[3])
-                                files_to_check.remove(path)
-                                db_loaded += 1
+                        stats.append((path, stat.st_mtime, stat.st_size))
                     except Exception:
-                        pass
+                        continue
+
+                if stats:
+                    meta_map = self._db_cache.get_meta_batch(stats)
+                    for path, (orig_width, orig_height) in meta_map.items():
+                        if orig_width and orig_height:
+                            prev = self._meta.get(path, (None, None, None, None))
+                            self._meta[path] = (orig_width, orig_height, prev[2], prev[3])
+                            with contextlib.suppress(ValueError):
+                                files_to_check.remove(path)
+                            db_loaded += 1
 
                 if db_loaded > 0:
                     _logger.debug("loaded %d resolution from DB", db_loaded)
@@ -240,8 +358,7 @@ class ImageFileSystemModel(QFileSystemModel):
                                 file_path = Path(path)
                                 if file_path.exists():
                                     stat = file_path.stat()
-                                    # Save with empty pixmap to store resolution info only
-                                    self._db_cache.set(
+                                    self._db_cache.set_meta(
                                         path,
                                         stat.st_mtime,
                                         stat.st_size,
@@ -249,7 +366,6 @@ class ImageFileSystemModel(QFileSystemModel):
                                         h,
                                         self._thumb_size[0],
                                         self._thumb_size[1],
-                                        QPixmap(),  # Empty pixmap, just storing resolution
                                     )
                         except Exception:
                             pass  # Don't fail if DB save fails
@@ -274,7 +390,193 @@ class ImageFileSystemModel(QFileSystemModel):
         """Override to reset batch load flag when folder changes."""
         # Reset batch load flag for new folder
         self._batch_load_done = False
+        self._watcher_ready = False
+        self._stop_thumb_db_loader()
+        self._thumb_cache.clear()
+        self._thumb_pending.clear()
+        self._meta.clear()
+        self._pending_removed_paths.clear()
         return super().setRootPath(path)
+
+    # --- QFileSystemModel watcher integration -----------------------------
+    def _on_rows_inserted(self, parent: QModelIndex, start: int, end: int) -> None:
+        # Ignore initial model population; batch_load_thumbnails will handle initial load.
+        if not self._watcher_ready:
+            return
+
+        for row in range(start, end + 1):
+            try:
+                idx = self.index(row, 0, parent)
+                if not idx.isValid() or self.isDir(idx):
+                    continue
+                path = self.filePath(idx)
+                if not self._is_image_file(path):
+                    continue
+
+                file_path = Path(path)
+                if not file_path.exists():
+                    continue
+                stat = file_path.stat()
+
+                w, h = (None, None)
+                with contextlib.suppress(Exception):
+                    w, h = get_image_dimensions(path)
+
+                self._meta[path] = (w, h, int(stat.st_size), float(stat.st_mtime))
+                self._thumb_cache.pop(path, None)
+                self._thumb_pending.discard(path)
+
+                try:
+                    self._ensure_db_cache(path)
+                    if self._db_cache:
+                        self._db_cache.set_meta(
+                            path,
+                            stat.st_mtime,
+                            stat.st_size,
+                            w,
+                            h,
+                            self._thumb_size[0],
+                            self._thumb_size[1],
+                        )
+                except Exception:
+                    pass
+
+                # Proactively generate thumbnail for new image.
+                self._request_thumbnail(path)
+            except Exception:
+                continue
+
+    def _on_rows_about_to_be_removed(self, parent: QModelIndex, start: int, end: int) -> None:
+        if not self._watcher_ready:
+            return
+
+        # Collect paths before the model removes them.
+        for row in range(start, end + 1):
+            try:
+                idx = self.index(row, 0, parent)
+                if not idx.isValid() or self.isDir(idx):
+                    continue
+                path = self.filePath(idx)
+                if path:
+                    self._pending_removed_paths.append(path)
+            except Exception:
+                continue
+
+    def _on_rows_removed(self, parent: QModelIndex, start: int, end: int) -> None:
+        if not self._watcher_ready:
+            self._pending_removed_paths.clear()
+            return
+
+        # Delete DB rows and in-memory caches for removed files.
+        for path in self._pending_removed_paths:
+            try:
+                self._thumb_cache.pop(path, None)
+                self._thumb_pending.discard(path)
+                self._meta.pop(path, None)
+
+                # Delete from cache DB (safe even if already missing)
+                self._ensure_db_cache(path)
+                if self._db_cache:
+                    self._db_cache.delete(path)
+            except Exception:
+                continue
+        self._pending_removed_paths.clear()
+
+    def _on_model_data_changed(self, top_left: QModelIndex, bottom_right: QModelIndex, roles=None) -> None:
+        # Ignore initial model population.
+        if not self._watcher_ready:
+            return
+
+        # Ignore our own UI refresh emits.
+        if self._internal_data_changed:
+            return
+
+        parent = top_left.parent()
+        for row in range(top_left.row(), bottom_right.row() + 1):
+            try:
+                idx = self.index(row, 0, parent)
+                if not idx.isValid() or self.isDir(idx):
+                    continue
+                path = self.filePath(idx)
+                if not self._is_image_file(path):
+                    continue
+
+                file_path = Path(path)
+                if not file_path.exists():
+                    continue
+                stat = file_path.stat()
+
+                _prev_w, _prev_h, prev_size, prev_mtime = self._meta.get(path, (None, None, None, None))
+                if prev_size == int(stat.st_size) and prev_mtime == float(stat.st_mtime):
+                    continue
+
+                # File changed: keep DB + memory consistent, then regenerate thumbnail.
+                w, h = (None, None)
+                with contextlib.suppress(Exception):
+                    w, h = get_image_dimensions(path)
+
+                self._meta[path] = (w, h, int(stat.st_size), float(stat.st_mtime))
+                self._thumb_cache.pop(path, None)
+                self._thumb_pending.discard(path)
+
+                try:
+                    self._ensure_db_cache(path)
+                    if self._db_cache:
+                        # This also clears any existing thumbnail blob (meta-only until re-decoded).
+                        self._db_cache.set_meta(
+                            path,
+                            stat.st_mtime,
+                            stat.st_size,
+                            w,
+                            h,
+                            self._thumb_size[0],
+                            self._thumb_size[1],
+                        )
+                except Exception:
+                    pass
+
+                self._request_thumbnail(path)
+            except Exception:
+                continue
+
+    def _on_file_renamed(self, directory: str, old_name: str, new_name: str) -> None:
+        if not self._watcher_ready:
+            return
+
+        try:
+            old_path = str(Path(directory) / old_name)
+            new_path = str(Path(directory) / new_name)
+
+            # Drop old entry and treat new one as inserted.
+            self._thumb_cache.pop(old_path, None)
+            self._thumb_pending.discard(old_path)
+            self._meta.pop(old_path, None)
+            self._ensure_db_cache(old_path)
+            if self._db_cache:
+                self._db_cache.delete(old_path)
+
+            file_path = Path(new_path)
+            if not file_path.exists() or not self._is_image_file(new_path):
+                return
+            stat = file_path.stat()
+            w, h = (None, None)
+            with contextlib.suppress(Exception):
+                w, h = get_image_dimensions(new_path)
+            self._meta[new_path] = (w, h, int(stat.st_size), float(stat.st_mtime))
+            self._ensure_db_cache(new_path)
+            if self._db_cache:
+                self._db_cache.set_meta(
+                    new_path,
+                    stat.st_mtime,
+                    stat.st_size,
+                    w,
+                    h,
+                    self._thumb_size[0],
+                    self._thumb_size[1],
+                )
+            self._request_thumbnail(new_path)
+        except Exception:
+            return
 
     # --- file list access (for unified model) ------------------------------
     def get_image_files(self) -> list[str]:
@@ -389,7 +691,7 @@ class ImageFileSystemModel(QFileSystemModel):
         except Exception:
             return super().headerData(section, orientation, role)
 
-    def data(self, index: QModelIndex, role: int):  # type: ignore[override]  # noqa: PLR0911, PLR0912
+    def data(self, index: QModelIndex, role: int):  # type: ignore[override]  # noqa: PLR0911, PLR0912, PLR0915
         try:
             if not index.isValid():
                 return None
@@ -438,8 +740,42 @@ class ImageFileSystemModel(QFileSystemModel):
             # Decoration for thumbnails
             if role == Qt.DecorationRole and self._view_mode == "thumbnail" and col == self.COL_NAME:
                 if icon := self._thumb_cache.get(path):
-                    # Cached icon available; return it (no per-file debug to avoid noise)
-                    return icon
+                    # Avoid serving stale thumbnails if the file changed.
+                    try:
+                        file_path = Path(path)
+                        if file_path.exists():
+                            stat = file_path.stat()
+                            _w, _h, cached_size, cached_mtime = self._meta.get(path, (None, None, None, None))
+                            if (
+                                cached_size is not None
+                                and cached_mtime is not None
+                                and (
+                                    int(cached_size) != int(stat.st_size) or float(cached_mtime) != float(stat.st_mtime)
+                                )
+                            ):
+                                self._thumb_cache.pop(path, None)
+                                self._thumb_pending.discard(path)
+                                self._meta[path] = (None, None, int(stat.st_size), float(stat.st_mtime))
+                                try:
+                                    self._ensure_db_cache(path)
+                                    if self._db_cache:
+                                        self._db_cache.set_meta(
+                                            path,
+                                            stat.st_mtime,
+                                            stat.st_size,
+                                            None,
+                                            None,
+                                            self._thumb_size[0],
+                                            self._thumb_size[1],
+                                        )
+                                except Exception:
+                                    pass
+                    except Exception:
+                        pass
+
+                    # Cached icon still valid; return it (no per-file debug to avoid noise)
+                    if path in self._thumb_cache:
+                        return icon
                 # Cache miss; request thumbnail (no per-file debug to reduce verbosity)
                 self._request_thumbnail(path)
                 # Return OS-provided icon as a fallback so the item shows something.
@@ -720,5 +1056,8 @@ class ImageFileSystemModel(QFileSystemModel):
                 self._thumb_size[1],
                 pixmap,
             )
+
+            # Keep in-memory meta consistent with what we just persisted.
+            self._meta[path] = (orig_width, orig_height, int(size), float(mtime))
         except Exception as exc:
             _logger.debug("failed to save thumbnail to cache: %s", exc)
