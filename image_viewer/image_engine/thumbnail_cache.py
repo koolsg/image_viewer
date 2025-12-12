@@ -118,14 +118,13 @@ class ThumbnailCache:
         thumb_width: int,
         thumb_height: int,
     ) -> None:
-        """Upsert metadata without a thumbnail (thumbnail remains NULL).
-
-        Keeps everything in the same unified table, without writing invalid pixmap blobs.
-        """
+        """Upsert metadata without writing any thumbnail bytes."""
         if not self._conn:
             return
 
         try:
+            # Keep schema coherent: meta can exist even when thumbnail is not yet generated.
+            # If the file changed (mtime/size), any previous thumbnail is treated as stale.
             self._conn.execute(
                 """
                 INSERT INTO thumbnails
@@ -138,6 +137,7 @@ class ThumbnailCache:
                     height=excluded.height,
                     thumb_width=excluded.thumb_width,
                     thumb_height=excluded.thumb_height,
+                    thumbnail=NULL,
                     created_at=excluded.created_at
                 """,
                 (
@@ -178,39 +178,6 @@ class ThumbnailCache:
             _logger.debug("failed to get metadata from cache: %s", exc)
             return None
 
-    def get_meta_batch(
-        self, paths_with_stats: list[tuple[str, float, int]]
-    ) -> dict[str, tuple[int | None, int | None]]:
-        """Get metadata for multiple files in a single query.
-
-        Args:
-            paths_with_stats: List of (path, mtime, size) tuples
-
-        Returns:
-            Dict mapping path -> (width, height)
-        """
-        if not self._conn or not paths_with_stats:
-            return {}
-
-        try:
-            placeholders = ",".join(["(?, ?, ?)"] * len(paths_with_stats))
-            query = f"""
-                SELECT path, width, height
-                FROM thumbnails
-                WHERE (path, mtime, size) IN ({placeholders})
-            """
-
-            params: list[object] = []
-            for path, mtime, size in paths_with_stats:
-                params.extend([path, mtime, size])
-
-            cursor = self._conn.execute(query, params)
-            rows = cursor.fetchall()
-            return {path: (width, height) for (path, width, height) in rows}
-        except Exception as exc:
-            _logger.debug("failed to batch get metadata: %s", exc)
-            return {}
-
     def clear_thumbnail(self, path: str) -> None:
         """Clear only the thumbnail blob for a path (preserve metadata)."""
         if not self._conn:
@@ -238,15 +205,8 @@ class ThumbnailCache:
     ) -> tuple[QPixmap, int | None, int | None] | None:
         """Get thumbnail from cache.
 
-        Args:
-            path: Image file path
-            mtime: File modification time
-            size: File size in bytes
-            thumb_width: Expected thumbnail width
-            thumb_height: Expected thumbnail height
-
         Returns:
-            Tuple of (pixmap, original_width, original_height) or None if not found
+            Tuple of (pixmap, original_width, original_height) or None if not found.
         """
         if not self._conn:
             return None
@@ -274,7 +234,6 @@ class ThumbnailCache:
             if cached_tw != thumb_width or cached_th != thumb_height:
                 return None
 
-            # Load pixmap from blob
             pixmap = QPixmap()
             if not pixmap.loadFromData(thumbnail_data):
                 _logger.debug("failed to load pixmap from cache: %s (corrupt blob)", path)
@@ -291,69 +250,6 @@ class ThumbnailCache:
         except Exception as exc:
             _logger.debug("failed to get thumbnail from cache: %s", exc)
             return None
-
-    def get_batch(
-        self, paths_with_stats: list[tuple[str, float, int]], thumb_width: int, thumb_height: int
-    ) -> dict[str, tuple[QPixmap, int | None, int | None]]:
-        """Get multiple thumbnails from cache in a single query.
-
-        Args:
-            paths_with_stats: List of (path, mtime, size) tuples
-            thumb_width: Expected thumbnail width
-            thumb_height: Expected thumbnail height
-
-        Returns:
-            Dictionary mapping path to (pixmap, original_width, original_height)
-        """
-        if not self._conn or not paths_with_stats:
-            return {}
-
-        try:
-            # Build query with multiple conditions
-            placeholders = ",".join(["(?, ?, ?)"] * len(paths_with_stats))
-            query = f"""
-                SELECT path, thumbnail, width, height, thumb_width, thumb_height
-                FROM thumbnails
-                WHERE (path, mtime, size) IN ({placeholders})
-            """
-
-            # Flatten the list of tuples for query parameters
-            params = []
-            for path, mtime, size in paths_with_stats:
-                params.extend([path, mtime, size])
-
-            cursor = self._conn.execute(query, params)
-            rows = cursor.fetchall()
-
-            # Process results
-            results = {}
-            for row in rows:
-                path, thumbnail_data, orig_width, orig_height, cached_tw, cached_th = row
-
-                # Check if thumbnail size matches
-                if cached_tw != thumb_width or cached_th != thumb_height:
-                    continue
-
-                if thumbnail_data is None:
-                    continue
-
-                # Load pixmap from blob
-                pixmap = QPixmap()
-                if pixmap.loadFromData(thumbnail_data):
-                    results[path] = (pixmap, orig_width, orig_height)
-                else:
-                    _logger.debug("batch_get: clearing corrupt thumbnail blob for %s", path)
-                    try:
-                        self._conn.execute("UPDATE thumbnails SET thumbnail = NULL WHERE path = ?", (path,))
-                        self._conn.commit()
-                    except Exception:
-                        pass
-
-            _logger.debug("batch loaded %d/%d thumbnails", len(results), len(paths_with_stats))
-            return results
-        except Exception as exc:
-            _logger.debug("failed to batch get thumbnails: %s", exc)
-            return {}
 
     def set(  # noqa: PLR0913
         self,
