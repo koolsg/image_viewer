@@ -163,6 +163,7 @@ def _setup_explorer_mode(viewer) -> None:  # noqa: PLR0912, PLR0915
                 if grid is not None:
                     with contextlib.suppress(Exception):
                         grid.set_loader(viewer.engine.thumb_loader)
+                        _logger.debug("reused grid: re-attached thumb_loader=%s", viewer.engine.thumb_loader)
                         grid.resume_pending_thumbnails()
             except Exception:
                 pass
@@ -186,6 +187,8 @@ def _setup_explorer_mode(viewer) -> None:  # noqa: PLR0912, PLR0915
             grid.set_loader(viewer.engine.thumb_loader)
         except Exception as ex:
             _logger.debug("failed to attach thumb_loader: %s", ex)
+        else:
+            _logger.debug("attached thumb_loader to grid: %s", viewer.engine.thumb_loader)
 
         # Apply settings
         try:
