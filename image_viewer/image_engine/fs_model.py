@@ -56,11 +56,16 @@ class ImageFileSystemModel(QFileSystemModel):
                     self._loader.image_decoded.disconnect(self._on_thumbnail_ready)
             self._loader = loader
             if self._loader and hasattr(self._loader, "image_decoded"):
+                _logger.debug(
+                    "set_loader: connecting loader image_decoded -> _on_thumbnail_ready: loader=%s", self._loader
+                )
                 self._loader.image_decoded.connect(self._on_thumbnail_ready)
+            else:
+                _logger.debug("set_loader: loader is None or lacks signal: %s", self._loader)
         except Exception as exc:
             _logger.debug("set_loader failed: %s", exc)
 
-    def batch_load_thumbnails(self, root_index: QModelIndex | None = None) -> None:  # noqa: PLR0912
+    def batch_load_thumbnails(self, root_index: QModelIndex | None = None) -> None:  # noqa: PLR0912, PLR0915
         """Pre-load thumbnails for all visible files from cache.
 
         This method should be called after setRootPath to batch-load
@@ -124,9 +129,22 @@ class ImageFileSystemModel(QFileSystemModel):
                 # Batch load from database
                 results = self._db_cache.get_batch(paths_with_stats, self._thumb_size[0], self._thumb_size[1])
 
+                # If DB had no thumbnails, proactively request thumbnails
+                # for the first few files to populate cache and update UI.
+                if not results:
+                    try:
+                        prefetch_count = min(96, len(paths_with_stats))
+                        _logger.debug("batch_load_thumbnails: no DB results, prefetching %d files", prefetch_count)
+                        for path, _mtime, _size in paths_with_stats[:prefetch_count]:
+                            with contextlib.suppress(Exception):
+                                self._request_thumbnail(path)
+                    except Exception:
+                        pass
+
                 # Update cache and metadata
                 for path, (pixmap, orig_width, orig_height) in results.items():
-                    self._thumb_cache[path] = QIcon(pixmap)
+                    if pixmap and not pixmap.isNull():
+                        self._thumb_cache[path] = QIcon(pixmap)
                     prev = self._meta.get(path, (None, None, None, None))
                     self._meta[path] = (orig_width, orig_height, prev[2], prev[3])
 
@@ -399,11 +417,12 @@ class ImageFileSystemModel(QFileSystemModel):
                 return suffix
 
             # Size column -> KB/MB (decimal)
-            try:
-                info = self.fileInfo(index)
-                return self._fmt_size(int(info.size()))
-            except Exception:
-                return super().data(index, role)
+            if col == self.COL_SIZE and role == Qt.DisplayRole:
+                try:
+                    info = self.fileInfo(index)
+                    return self._fmt_size(int(info.size()))
+                except Exception:
+                    return super().data(index, role)
 
             # Text alignment per column
             if role == Qt.TextAlignmentRole:
@@ -419,8 +438,42 @@ class ImageFileSystemModel(QFileSystemModel):
             # Decoration for thumbnails
             if role == Qt.DecorationRole and self._view_mode == "thumbnail" and col == self.COL_NAME:
                 if icon := self._thumb_cache.get(path):
+                    # Cached icon available; return it (no per-file debug to avoid noise)
                     return icon
+                # Cache miss; request thumbnail (no per-file debug to reduce verbosity)
                 self._request_thumbnail(path)
+                # Return OS-provided icon as a fallback so the item shows something.
+                # Scale to requested thumbnail size to ensure display in large icon grids.
+                try:
+                    super_icon = super().data(index, role)
+                    if super_icon:
+                        try:
+                            # If it's a QIcon, get a pixmap for the size and return scaled
+                            if isinstance(super_icon, QIcon):
+                                pix = super_icon.pixmap(self._thumb_size[0], self._thumb_size[1])
+                                if not pix.isNull():
+                                    scaled = pix.scaled(
+                                        self._thumb_size[0],
+                                        self._thumb_size[1],
+                                        Qt.KeepAspectRatio,
+                                        Qt.SmoothTransformation,
+                                    )
+                                    # Using scaled OS icon as fallback
+                                    return QIcon(scaled)
+                            # If it's a QPixmap, scale and return as QIcon
+                            if isinstance(super_icon, QPixmap) and not super_icon.isNull():
+                                scaled = super_icon.scaled(
+                                    self._thumb_size[0],
+                                    self._thumb_size[1],
+                                    Qt.KeepAspectRatio,
+                                    Qt.SmoothTransformation,
+                                )
+                                # Using scaled OS pixmap as fallback
+                                return QIcon(scaled)
+                        except Exception:
+                            return super_icon
+                except Exception:
+                    pass
 
             # Tooltip for thumbnails
             if role == Qt.ToolTipRole and self._view_mode == "thumbnail" and col == self.COL_NAME:
@@ -510,10 +563,13 @@ class ImageFileSystemModel(QFileSystemModel):
         # Skip if not a file (e.g., directory)
         if not Path(path).is_file():
             return
+        # Skip if not an image (don't attempt to decode non-image files)
+        if not self._is_image_file(path):
+            return
         if path in self._thumb_cache:
             return
         icon = self._load_disk_icon(path)
-        if icon is not None:
+        if icon is not None and not icon.isNull():
             self._thumb_cache[path] = icon
             idx = self.index(path)
             if idx.isValid():
@@ -525,6 +581,7 @@ class ImageFileSystemModel(QFileSystemModel):
         # Don't start busy cursor here - it's managed by batch_load_thumbnails
         # Individual thumbnail requests happen during scrolling, not initial load
         self._thumb_pending.add(path)
+        _logger.debug("_request_thumbnail: queued thumbnail for %s (pending=%d)", path, len(self._thumb_pending))
         try:
             self._loader.request_load(
                 path,
@@ -538,7 +595,11 @@ class ImageFileSystemModel(QFileSystemModel):
     def _on_thumbnail_ready(self, path: str, image_data, error) -> None:
         try:
             self._thumb_pending.discard(path)
+            # If this is not an image file, ignore background decode results silently
+            if not self._is_image_file(path):
+                return
             if error or image_data is None:
+                _logger.debug("_on_thumbnail_ready: error for %s: %s", path, error)
                 return
             thumb_height, thumb_width, _ = image_data.shape
             bytes_per_line = 3 * thumb_width
@@ -555,6 +616,9 @@ class ImageFileSystemModel(QFileSystemModel):
                 Qt.SmoothTransformation,
             )
             self._thumb_cache[path] = QIcon(scaled)
+            sw = scaled.width()
+            sh = scaled.height()
+            _logger.debug("_on_thumbnail_ready: thumbnail cached for %s pixmap_size=%dx%d", path, sw, sh)
 
             # Read original image resolution (not thumbnail size)
             prev = self._meta.get(path, (None, None, None, None))
@@ -573,7 +637,20 @@ class ImageFileSystemModel(QFileSystemModel):
             self._save_disk_icon(path, scaled, orig_width, orig_height)
             idx = self.index(path)
             if idx.isValid():
+                _logger.debug("_on_thumbnail_ready: emitting dataChanged for %s at index valid", path)
                 self.dataChanged.emit(idx, idx, [Qt.DecorationRole, Qt.DisplayRole])
+            else:
+                _logger.debug(
+                    "_on_thumbnail_ready: index invalid for %s; emitting dataChanged for current root range", path
+                )
+                try:
+                    root = self.rootPath()
+                    root_idx = self.index(root)
+                    first = self.index(0, 0, root_idx)
+                    last = self.index(self.rowCount(root_idx) - 1, 0, root_idx)
+                    self.dataChanged.emit(first, last, [Qt.DecorationRole, Qt.DisplayRole])
+                except Exception:
+                    pass
         except Exception as exc:
             _logger.debug("thumbnail_ready failed: %s", exc)
 
@@ -604,6 +681,9 @@ class ImageFileSystemModel(QFileSystemModel):
                 return None
 
             pixmap, orig_width, orig_height = result
+            if pixmap is None or pixmap.isNull():
+                _logger.debug("_load_disk_icon: cached pixmap is null for %s", path)
+                return None
 
             # Update metadata
             prev = self._meta.get(path, (None, None, None, None))
