@@ -55,7 +55,8 @@ class _ImageOnlyIconProvider(QFileIconProvider):
     def icon(self, file_info):  # type: ignore[override]
         try:
             icn = super().icon(file_info)
-            if not icn.isNull():
+            if icn and not icn.isNull():
+                # OS icon available; return it without per-file debug noise
                 return icn
         except Exception:
             pass
@@ -134,7 +135,7 @@ class ThumbnailGridWidget(QWidget):
 
     image_selected = Signal(str)
 
-    def __init__(self, parent=None, model: ImageFileSystemModel | None = None) -> None:
+    def __init__(self, parent=None, model: ImageFileSystemModel | None = None) -> None:  # noqa: PLR0915
         super().__init__(parent)
         self._current_folder: str | None = None
         self._clipboard_paths: list[str] = []
@@ -144,8 +145,22 @@ class ThumbnailGridWidget(QWidget):
         # Use provided model or create new one (for backward compatibility)
         if model is not None:
             self._model = model
+            # Ensure explorer grid shows all files (including non-images) and uses OS icons
+            try:
+                self._model.setNameFilters([])
+                self._model.setNameFilterDisables(True)
+                self._model.setIconProvider(_ImageOnlyIconProvider())
+                _logger.debug("ThumbnailGridWidget: provided model adjusted to show all files and use OS icons")
+            except Exception:
+                pass
         else:
             self._model = ImageFileSystemModel(self)
+        _logger.debug(
+            "ThumbnailGridWidget: nameFilters=%s nameFilterDisables=%s",
+            self._model.nameFilters(),
+            self._model.nameFilterDisables(),
+        )
+        _logger.debug("ThumbnailGridWidget: model provided=%s filter=%s", model is not None, self._model.filter())
 
         # Configure model if not already configured
         if self._model.filter() == QDir.Filter.NoFilter:
@@ -215,6 +230,7 @@ class ThumbnailGridWidget(QWidget):
     # Compatibility hooks -------------------------------------------------------
     def set_loader(self, loader) -> None:
         try:
+            _logger.debug("set_loader called: loader=%s has_signal=%s", loader, hasattr(loader, "image_decoded"))
             self._model.set_loader(loader)
         except Exception as exc:
             _logger.debug("set_loader failed: %s", exc)
@@ -230,6 +246,7 @@ class ThumbnailGridWidget(QWidget):
         This method only sets up the folder structure.
         """
         try:
+            _logger.debug("load_folder called: %s", folder_path)
             # Check through model, not direct file access
             folder_index = self._model.index(folder_path)
             if not folder_index.isValid() or not self._model.isDir(folder_index):
@@ -238,6 +255,14 @@ class ThumbnailGridWidget(QWidget):
             idx = self._model.setRootPath(folder_path)
             self._list.setRootIndex(idx)
             self._tree.setRootIndex(idx)
+            # Debug: log DecorationRole for visible items (helps diagnose missing OS icons)
+            try:
+                row_count = self._model.rowCount(idx)
+                _logger.debug("load_folder: visible row_count=%d", row_count)
+                # Sample a few decorations; move to helper to reduce function complexity
+                self._log_sample_decorations(idx, row_count)
+            except Exception:
+                pass
             self._current_folder = folder_path
             self._list.clearSelection()
             self._tree.clearSelection()
@@ -257,6 +282,22 @@ class ThumbnailGridWidget(QWidget):
                     self._tree.setColumnWidth(col, width + margin)
             # Batch load thumbnails from cache
             self._model.batch_load_thumbnails(idx)
+
+            # Force request thumbnails for the first N files to ensure the loader
+            # starts decoding even if the view doesn't immediately request them.
+            try:
+                files = self._model.get_image_files()
+                max_prefetch = min(96, len(files))
+                _logger.debug("load_folder: prefetching %d thumbnails", max_prefetch)
+                for path in files[:max_prefetch]:
+                    with contextlib.suppress(Exception):
+                        # Use internal request to avoid relying on DecorationRole
+                        self._model._request_thumbnail(path)
+                # Force a repaint to ensure the view picks up DecorationRole updates
+                with contextlib.suppress(Exception):
+                    self._list.viewport().update()
+            except Exception:
+                pass
         except Exception as exc:
             _logger.error("failed to load_folder %s: %s", folder_path, exc)
 
@@ -275,6 +316,26 @@ class ThumbnailGridWidget(QWidget):
             self._model.set_thumb_size(w, h)
         except Exception as exc:
             _logger.debug("set_thumbnail_size_wh failed: %s", exc)
+
+    def _log_sample_decorations(self, root_index, row_count: int, sample_count: int = 3) -> None:
+        """Log a small sample of decoration values for the given root index."""
+        try:
+            if row_count <= 0:
+                return
+            # Build sample indices (first, middle, last) depending on row_count
+            samples = [0]
+            if row_count > sample_count:
+                mid = max(1, row_count // 2)
+                samples = [0, mid, row_count - 1]
+            sample_info = []
+            for row in samples:
+                with contextlib.suppress(Exception):
+                    child = self._model.index(row, 0, root_index)
+                    dec = self._model.data(child, Qt.DecorationRole)
+                    sample_info.append((row, self._model.filePath(child), bool(dec)))
+            _logger.debug("load_folder: sample decorations=%s", sample_info)
+        except Exception:
+            pass
 
     def set_thumbnail_size(self, size: int) -> None:
         self.set_thumbnail_size_wh(size, size)
