@@ -23,9 +23,88 @@ from image_viewer.logger import get_logger
 
 _logger = get_logger("thumbnail_cache")
 
+_DRIVE_PREFIX_LEN = 2
+_EPOCH_MS_THRESHOLD = 10**11
+
 
 class ThumbnailCache:
     """Manages thumbnail cache using SQLite database."""
+
+    @staticmethod
+    def _to_mtime_ms(mtime: float | int) -> int:
+        """Convert a filesystem mtime to an integer millisecond timestamp.
+
+        For backward compatibility, callers may pass either:
+        - seconds (float/int, typical `stat().st_mtime`)
+        - milliseconds since epoch (int, typical `st_mtime_ns // 1_000_000`)
+        """
+        try:
+            value = float(mtime)
+        except Exception:
+            return 0
+
+        # If it's already in epoch-milliseconds, it will be around ~1.7e12.
+        if value >= _EPOCH_MS_THRESHOLD:
+            return int(value)
+        return round(value * 1000.0)
+
+    @staticmethod
+    def _norm_path(path: str) -> str:
+        # Normalize Windows separators so DB keys remain stable.
+        p = path.replace("\\", "/")
+        # Normalize drive letter casing on Windows (case-insensitive filesystem).
+        if len(p) >= _DRIVE_PREFIX_LEN and p[1] == ":":
+            p = p[0].upper() + p[1:]
+        return p
+
+    @staticmethod
+    def _mtime_matches(db_mtime: float | None, current_mtime: float | int) -> bool:
+        if db_mtime is None:
+            return False
+        try:
+            return int(db_mtime) == ThumbnailCache._to_mtime_ms(current_mtime)
+        except Exception:
+            return False
+
+    def probe(self, path: str) -> dict[str, object] | None:
+        """Probe a cache row by path for debugging/diagnostics.
+
+        Returns a dict with keys: path, mtime, size, thumb_width, thumb_height, has_thumbnail, thumbnail_len.
+        """
+        if not self._conn:
+            return None
+
+        path_norm = self._norm_path(path)
+
+        def _fetch(p: str):
+            return self._conn.execute(
+                """
+                SELECT path, mtime, size, thumb_width, thumb_height, thumbnail, LENGTH(thumbnail)
+                FROM thumbnails
+                WHERE path = ?
+                """,
+                (p,),
+            ).fetchone()
+
+        try:
+            row = _fetch(path_norm)
+            if not row and path_norm != path:
+                row = _fetch(path)
+            if not row:
+                return None
+
+            db_path, db_mtime, db_size, tw, th, thumb_blob, thumb_len = row
+            return {
+                "path": db_path,
+                "mtime": int(db_mtime) if db_mtime is not None else None,
+                "size": int(db_size) if db_size is not None else None,
+                "thumb_width": int(tw) if tw is not None else None,
+                "thumb_height": int(th) if th is not None else None,
+                "has_thumbnail": thumb_blob is not None,
+                "thumbnail_len": int(thumb_len) if thumb_len is not None else 0,
+            }
+        except Exception:
+            return None
 
     def __init__(self, cache_dir: Path, db_name: str = "thumbs.db"):
         """Initialize thumbnail cache.
@@ -122,6 +201,10 @@ class ThumbnailCache:
         if not self._conn:
             return
 
+        path = self._norm_path(path)
+
+        mtime_ms = self._to_mtime_ms(mtime)
+
         try:
             # Keep schema coherent: meta can exist even when thumbnail is not yet generated.
             # If the file changed (mtime/size), any previous thumbnail is treated as stale.
@@ -137,12 +220,16 @@ class ThumbnailCache:
                     height=excluded.height,
                     thumb_width=excluded.thumb_width,
                     thumb_height=excluded.thumb_height,
-                    thumbnail=NULL,
+                    thumbnail=CASE
+                        WHEN thumbnails.mtime != excluded.mtime OR thumbnails.size != excluded.size
+                        THEN NULL
+                        ELSE thumbnails.thumbnail
+                    END,
                     created_at=excluded.created_at
                 """,
                 (
                     path,
-                    mtime,
+                    mtime_ms,
                     size,
                     width,
                     height,
@@ -160,19 +247,29 @@ class ThumbnailCache:
         if not self._conn:
             return None
 
+        path_norm = self._norm_path(path)
+
         try:
-            cursor = self._conn.execute(
-                """
-                SELECT width, height
-                FROM thumbnails
-                WHERE path = ? AND mtime = ? AND size = ?
-                """,
-                (path, mtime, size),
-            )
-            row = cursor.fetchone()
+
+            def _fetch(p: str):
+                return self._conn.execute(
+                    """
+                    SELECT width, height, mtime, size
+                    FROM thumbnails
+                    WHERE path = ?
+                    """,
+                    (p,),
+                ).fetchone()
+
+            row = _fetch(path_norm)
+            if not row and path_norm != path:
+                row = _fetch(path)
             if not row:
                 return None
-            width, height = row
+
+            width, height, db_mtime, db_size = row
+            if int(db_size) != int(size) or not self._mtime_matches(db_mtime, mtime):
+                return None
             return width, height
         except Exception as exc:
             _logger.debug("failed to get metadata from cache: %s", exc)
@@ -182,6 +279,8 @@ class ThumbnailCache:
         """Clear only the thumbnail blob for a path (preserve metadata)."""
         if not self._conn:
             return
+
+        path = self._norm_path(path)
 
         try:
             self._conn.execute("UPDATE thumbnails SET thumbnail = NULL WHERE path = ?", (path,))
@@ -194,6 +293,8 @@ class ThumbnailCache:
         if not self._conn:
             return
 
+        path = self._norm_path(path)
+
         try:
             self._conn.execute("DELETE FROM thumbnails WHERE path = ?", (path,))
             self._conn.commit()
@@ -201,7 +302,7 @@ class ThumbnailCache:
             _logger.debug("failed to delete cache entry for %s: %s", path, exc)
 
     def get(  # noqa: PLR0911
-        self, path: str, mtime: float, size: int, thumb_width: int, thumb_height: int
+        self, path: str, mtime: float | int, size: int, thumb_width: int, thumb_height: int
     ) -> tuple[QPixmap, int | None, int | None] | None:
         """Get thumbnail from cache.
 
@@ -211,37 +312,47 @@ class ThumbnailCache:
         if not self._conn:
             return None
 
+        path_norm = self._norm_path(path)
+
         try:
-            cursor = self._conn.execute(
-                """
-                SELECT thumbnail, width, height, thumb_width, thumb_height
-                FROM thumbnails
-                WHERE path = ? AND mtime = ? AND size = ?
-                """,
-                (path, mtime, size),
-            )
-            row = cursor.fetchone()
+
+            def _fetch(p: str):
+                return self._conn.execute(
+                    """
+                    SELECT thumbnail, width, height, thumb_width, thumb_height, mtime, size
+                    FROM thumbnails
+                    WHERE path = ?
+                    """,
+                    (p,),
+                ).fetchone()
+
+            row = _fetch(path_norm)
+            if not row and path_norm != path:
+                row = _fetch(path)
             if not row:
                 return None
 
-            thumbnail_data, orig_width, orig_height, cached_tw, cached_th = row
+            thumbnail_data, orig_width, orig_height, _cached_tw, _cached_th, db_mtime, db_size = row
+
+            # Verify the cache still matches the current file.
+            if int(db_size) != int(size) or not self._mtime_matches(db_mtime, mtime):
+                return None
 
             # Metadata rows may exist without a thumbnail.
             if thumbnail_data is None:
                 return None
 
-            # Check if thumbnail size matches
-            if cached_tw != thumb_width or cached_th != thumb_height:
-                return None
+            # Do not treat thumbnail size mismatch as a cache miss.
+            # The UI can scale a cached pixmap to its current cell size.
 
             pixmap = QPixmap()
             if not pixmap.loadFromData(thumbnail_data):
-                _logger.debug("failed to load pixmap from cache: %s (corrupt blob)", path)
+                _logger.debug("failed to load pixmap from cache: %s (corrupt blob)", path_norm)
                 # Keep metadata but drop the corrupt thumbnail so future loads can re-decode.
                 try:
-                    self._conn.execute("UPDATE thumbnails SET thumbnail = NULL WHERE path = ?", (path,))
+                    self._conn.execute("UPDATE thumbnails SET thumbnail = NULL WHERE path = ?", (path_norm,))
                     self._conn.commit()
-                    _logger.debug("cleared corrupt thumbnail blob for path: %s", path)
+                    _logger.debug("cleared corrupt thumbnail blob for path: %s", path_norm)
                 except Exception:
                     pass
                 return None
@@ -254,7 +365,7 @@ class ThumbnailCache:
     def set(  # noqa: PLR0913
         self,
         path: str,
-        mtime: float,
+        mtime: float | int,
         size: int,
         width: int | None,
         height: int | None,
@@ -277,18 +388,25 @@ class ThumbnailCache:
         if not self._conn:
             return
 
+        path = self._norm_path(path)
+
+        mtime_ms = self._to_mtime_ms(mtime)
+
         try:
             # Convert pixmap to PNG bytes
             if pixmap.isNull():
+                _logger.debug("thumb_db_write: stored=NULL path=%s", path)
                 return
 
             buffer = QBuffer()
             buffer.open(QIODevice.OpenModeFlag.WriteOnly)
             if not pixmap.save(buffer, "PNG"):
+                _logger.debug("thumb_db_write: stored=NULL path=%s", path)
                 return
 
             thumbnail_data = buffer.data().data()
             if not thumbnail_data:
+                _logger.debug("thumb_db_write: stored=NULL path=%s", path)
                 return
 
             self._conn.execute(
@@ -299,7 +417,7 @@ class ThumbnailCache:
                 """,
                 (
                     path,
-                    mtime,
+                    mtime_ms,
                     size,
                     width,
                     height,
@@ -310,6 +428,20 @@ class ThumbnailCache:
                 ),
             )
             self._conn.commit()
+
+            try:
+                row = self._conn.execute(
+                    "SELECT thumbnail IS NULL FROM thumbnails WHERE path = ?",
+                    (path,),
+                ).fetchone()
+                is_null = bool(row[0]) if row else True
+                _logger.debug(
+                    "thumb_db_write: stored=%s path=%s",
+                    "NULL" if is_null else "BLOB",
+                    path,
+                )
+            except Exception:
+                _logger.debug("thumb_db_write: stored=? path=%s", path)
         except Exception as exc:
             _logger.debug("failed to save thumbnail to cache: %s", exc)
 
