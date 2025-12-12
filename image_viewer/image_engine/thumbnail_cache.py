@@ -111,7 +111,14 @@ class ThumbnailCache:
             # Load pixmap from blob
             pixmap = QPixmap()
             if not pixmap.loadFromData(thumbnail_data):
-                _logger.debug("failed to load pixmap from cache: %s", path)
+                _logger.debug("failed to load pixmap from cache: %s (corrupt blob)", path)
+                # Remove the corrupt DB entry so future loads can re-decode
+                try:
+                    self._conn.execute("DELETE FROM thumbnails WHERE path = ?", (path,))
+                    self._conn.commit()
+                    _logger.debug("removed corrupt thumbnail entry for path: %s", path)
+                except Exception:
+                    pass
                 return None
 
             return pixmap, orig_width, orig_height
@@ -165,6 +172,13 @@ class ThumbnailCache:
                 pixmap = QPixmap()
                 if pixmap.loadFromData(thumbnail_data):
                     results[path] = (pixmap, orig_width, orig_height)
+                else:
+                    _logger.debug("batch_get: corrupt thumbnail blob removed for %s", path)
+                    try:
+                        self._conn.execute("DELETE FROM thumbnails WHERE path = ?", (path,))
+                        self._conn.commit()
+                    except Exception:
+                        pass
 
             _logger.debug("batch loaded %d/%d thumbnails", len(results), len(paths_with_stats))
             return results
