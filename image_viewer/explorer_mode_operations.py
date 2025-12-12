@@ -496,14 +496,21 @@ def delete_files_to_recycle_bin(paths: list[str], parent_widget=None) -> tuple[i
         return 0, []
 
     # Confirmation dialog
-    if parent_widget and not show_delete_confirmation(
-        parent_widget,
-        "Delete Files",
-        f"Delete {len(paths)} item(s)?",
-        "They will be moved to Recycle Bin when possible.",
-    ):
-        _logger.debug("delete cancelled by user")
-        return 0, paths
+    if parent_widget:
+        if len(paths) == 1:
+            # For single selections, show the filename for clarity (match View Mode)
+            fname = str(Path(paths[0]).name)
+            title = "Delete File"
+            text = "Delete this file?"
+            info = f"{fname}\n\nIt will be moved to Recycle Bin."
+        else:
+            title = "Delete Files"
+            text = f"Delete {len(paths)} item(s)?"
+            info = "They will be moved to Recycle Bin when possible."
+
+        if not show_delete_confirmation(parent_widget, title, text, info):
+            _logger.debug("delete cancelled by user")
+            return 0, paths
 
     success_count = 0
     failed_paths = []
