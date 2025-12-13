@@ -15,6 +15,9 @@ Usage:
     engine.request_decode(path)
 """
 
-from .engine import ImageEngine
+try:
+    from .engine import ImageEngine
+except Exception:  # pragma: no cover - allow importing submodules without PySide6 in tests
+    ImageEngine = None
 
 __all__ = ["ImageEngine"]
