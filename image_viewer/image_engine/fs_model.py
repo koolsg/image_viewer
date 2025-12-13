@@ -2,19 +2,26 @@
 
 This module provides ImageFileSystemModel, the single source of truth for
 file system operations across all modes (View, Explorer, Trim, Converter).
+
+Responsibility boundary: UI components do not perform file or DB writes directly.
+When the user requests file or cache operations via the UI, those requests are
+handled by `ImageFileSystemModel` and the image engine (e.g., `ThumbnailCache`,
+`FSDBLoadWorker`, `ThumbDB`). Thumbnail reads/generation and file updates are
+performed by the image engine; the UI issues commands and displays results only.
 """
 
 import contextlib
-import sqlite3
 from pathlib import Path
 
-from PySide6.QtCore import QDateTime, QModelIndex, QObject, Qt, QThread, Signal
+from PySide6.QtCore import QDateTime, QModelIndex, Qt, QThread, Signal
 from PySide6.QtGui import QIcon, QImage, QPixmap
 from PySide6.QtWidgets import QFileSystemModel
 
 from image_viewer.logger import get_logger
 
 from .decoder import get_image_dimensions
+from .fs_db_worker import FSDBLoadWorker
+from .meta_utils import to_mtime_ms_from_stat as _to_mtime_ms_from_stat
 from .thumbnail_cache import ThumbnailCache
 
 _logger = get_logger("fs_model")
@@ -22,148 +29,9 @@ _logger = get_logger("fs_model")
 _EPOCH_MS_THRESHOLD = 10**11
 
 
-def _to_mtime_ms_from_stat(stat_result) -> int:
-    try:
-        # Prefer ns precision when available.
-        return int(stat_result.st_mtime_ns) // 1_000_000
-    except Exception:
-        try:
-            # Fall back to seconds.
-            return round(float(stat_result.st_mtime) * 1000.0)
-        except Exception:
-            return 0
-
-
-def _to_mtime_ms(value: float | int | None) -> int | None:
-    if value is None:
-        return None
-    try:
-        v = float(value)
-    except Exception:
-        return None
-    if v >= _EPOCH_MS_THRESHOLD:
-        return int(v)
-    return round(v * 1000.0)
-
-
-class _ThumbDbLoadWorker(QObject):
-    """Loads cached thumbnails/metadata from SQLite without touching Qt GUI objects."""
-
-    chunk_ready = Signal(list)  # list[(path, thumbnail_bytes|None, width|None, height|None, mtime, size)]
-    missing_ready = Signal(list)  # list[path] that have no cached thumbnail
-    finished = Signal(int)  # generation
-
-    def __init__(  # noqa: PLR0913
-        self,
-        folder_path: str,
-        db_path: Path,
-        thumb_width: int,
-        thumb_height: int,
-        generation: int,
-        prefetch_limit: int = 48,
-    ) -> None:
-        super().__init__()
-        self._folder_path = folder_path
-        self._db_path = db_path
-        self._thumb_width = thumb_width
-        self._thumb_height = thumb_height
-        self._generation = generation
-        self._prefetch_limit = prefetch_limit
-        self._abort = False
-
-    def abort(self) -> None:
-        self._abort = True
-
-    def run(self) -> None:  # noqa: PLR0912, PLR0915
-        try:
-            folder = Path(self._folder_path)
-            if not folder.is_dir():
-                self.finished.emit(self._generation)
-                return
-
-            # Scan folder in the worker thread (no Qt model access).
-            paths_with_stats: list[tuple[str, int, int]] = []
-            for p in folder.iterdir():
-                if self._abort:
-                    self.finished.emit(self._generation)
-                    return
-                if not p.is_file():
-                    continue
-                lower = p.name.lower()
-                if not lower.endswith((".jpg", ".jpeg", ".png", ".bmp", ".gif", ".webp", ".tif", ".tiff")):
-                    continue
-                try:
-                    stat = p.stat()
-                    # Normalize path format (Qt often uses forward slashes on Windows).
-                    paths_with_stats.append((p.as_posix(), _to_mtime_ms_from_stat(stat), int(stat.st_size)))
-                except Exception:
-                    continue
-
-            if not paths_with_stats or not self._db_path.exists():
-                # Nothing cached yet; ask UI to prefetch some thumbnails.
-                self.missing_ready.emit([p for (p, _m, _s) in paths_with_stats[: self._prefetch_limit]])
-                self.finished.emit(self._generation)
-                return
-
-            # SQLite has a max bound-parameter count (commonly 999).
-            # We query by path (1 param per row) and verify (mtime,size) in Python.
-            chunk_size = 800
-            have_thumb: set[str] = set()
-
-            conn = sqlite3.connect(str(self._db_path), check_same_thread=False)
-            try:
-                for i in range(0, len(paths_with_stats), chunk_size):
-                    if self._abort:
-                        self.finished.emit(self._generation)
-                        return
-
-                    chunk = paths_with_stats[i : i + chunk_size]
-                    current_stats = {path: (mtime_ms, size) for (path, mtime_ms, size) in chunk}
-                    placeholders = ",".join(["?"] * len(chunk))
-                    query = f"""
-                        SELECT path, thumbnail, width, height, mtime, size
-                        FROM thumbnails
-                        WHERE path IN ({placeholders})
-                    """
-                    params: list[object] = [path for (path, _m, _s) in chunk]
-
-                    rows = conn.execute(query, params).fetchall()
-                    if rows:
-                        filtered: list[tuple] = []
-                        for path, thumbnail_data, w, h, db_mtime, db_size in rows:
-                            current = current_stats.get(path)
-                            if current is None:
-                                continue
-                            cur_mtime_ms, cur_size = current
-                            try:
-                                if int(db_size) != int(cur_size):
-                                    continue
-                                if int(db_mtime) != int(cur_mtime_ms):
-                                    continue
-                            except Exception:
-                                continue
-
-                            filtered.append((path, thumbnail_data, w, h, db_mtime, db_size))
-                            if thumbnail_data is not None:
-                                have_thumb.add(path)
-
-                        if filtered:
-                            self.chunk_ready.emit(filtered)
-            finally:
-                with contextlib.suppress(Exception):
-                    conn.close()
-
-            # Trigger initial thumbnail generation for a small number of misses.
-            missing = [p for (p, _m, _s) in paths_with_stats if p not in have_thumb]
-            if missing:
-                self.missing_ready.emit(missing[: self._prefetch_limit])
-
-            self.finished.emit(self._generation)
-        except Exception:
-            self.finished.emit(self._generation)
-
-
 class ImageFileSystemModel(QFileSystemModel):
+    progress = Signal(int, int)
+
     """FS model with loader-backed thumbnail cache and extra Resolution column.
 
     This is the unified model used by all features:
@@ -185,6 +53,7 @@ class ImageFileSystemModel(QFileSystemModel):
         self._thumb_cache: dict[str, QIcon] = {}
         self._thumb_pending: set[str] = set()
         self._loader = None
+        self._db_loader_factory = None
         self._thumb_size: tuple[int, int] = (256, 195)
         self._view_mode: str = "thumbnail"
         self._meta: dict[str, tuple[int | None, int | None, int | None, int | None]] = {}
@@ -192,9 +61,10 @@ class ImageFileSystemModel(QFileSystemModel):
         self._batch_load_done: bool = False
         self._pending_removed_paths: list[str] = []
         self._thumb_db_thread: QThread | None = None
-        self._thumb_db_worker: _ThumbDbLoadWorker | None = None
+        self._thumb_db_worker: FSDBLoadWorker | None = None
         self._thumb_load_generation: int = 0
         self._watcher_ready: bool = False
+        self._db_read_use_operator: bool = True
         self._internal_data_changed: bool = False
         self._decode_reason_logs_left: int = 0
 
@@ -224,6 +94,21 @@ class ImageFileSystemModel(QFileSystemModel):
         except Exception as exc:
             _logger.debug("set_loader failed: %s", exc)
 
+    def set_db_loader_factory(self, factory) -> None:
+        """Inject a DB loader factory. The factory will be called with keyword args:
+        folder_path, db_path, thumb_width, thumb_height, generation
+        The returned object must be a QObject with signals and a `run()` method.
+        If None, legacy inline worker is used.
+        """
+        self._db_loader_factory = factory
+
+    def set_db_read_strategy(self, use_operator_for_reads: bool) -> None:
+        """Configure whether DB reads should be routed via DbOperator (serialized).
+
+        Default is False (direct reads). Pass True to force operator-mediated reads.
+        """
+        self._db_read_use_operator = bool(use_operator_for_reads)
+
     def batch_load_thumbnails(self, root_index: QModelIndex | None = None) -> None:
         """Start background loading of cached thumbnails/metadata.
 
@@ -251,19 +136,72 @@ class ImageFileSystemModel(QFileSystemModel):
         generation = self._thumb_load_generation
 
         db_path = Path(folder_path) / "SwiftView_thumbs.db"
-        worker = _ThumbDbLoadWorker(
-            folder_path,
-            db_path,
-            self._thumb_size[0],
-            self._thumb_size[1],
-            generation,
+        # Ensure a ThumbnailCache exists so we can pass operator instance into worker
+        with contextlib.suppress(Exception):
+            self._ensure_db_cache(folder_path)
+        # If a custom DB loader factory was injected, use it. The factory must
+        # return a QObject-like worker with signals: chunk_loaded/missing_paths/finished/error
+        # and a `run()` method. Otherwise fall back to legacy inline worker.
+        if self._db_loader_factory:
+            try:
+                worker = self._db_loader_factory(
+                    folder_path=folder_path,
+                    db_path=db_path,
+                    thumb_width=self._thumb_size[0],
+                    thumb_height=self._thumb_size[1],
+                    generation=generation,
+                )
+            except Exception as exc:
+                _logger.debug("db_loader_factory raised: %s", exc)
+                worker = None
+
+            if worker is not None:
+                thread = QThread(self)
+                worker.moveToThread(thread)
+                thread.started.connect(worker.run)
+                # New loader signals (dict payloads)
+                with contextlib.suppress(Exception):
+                    worker.chunk_loaded.connect(self._on_thumb_db_chunk)
+                with contextlib.suppress(Exception):
+                    worker.missing_paths.connect(self._on_thumb_db_missing)
+                with contextlib.suppress(Exception):
+                    worker.finished.connect(self._on_thumb_db_finished)
+                with contextlib.suppress(Exception):
+                    worker.error.connect(self._on_thumb_db_error)
+                with contextlib.suppress(Exception):
+                    worker.progress.connect(self._on_thumb_db_progress)
+
+                # Ensure thread cleanup
+                with contextlib.suppress(Exception):
+                    worker.finished.connect(thread.quit)
+                    worker.finished.connect(worker.deleteLater)
+                    thread.finished.connect(thread.deleteLater)
+
+                self._thumb_db_thread = thread
+                self._thumb_db_worker = worker
+                thread.start()
+                return
+
+        # Default worker: use FSDBLoadWorker implementation
+        worker = FSDBLoadWorker(
+            folder_path=folder_path,
+            db_path=str(db_path),
+            db_operator=(self._db_cache._db_operator if self._db_cache else None),
+            use_operator_for_reads=self._db_read_use_operator,
+            thumb_width=self._thumb_size[0],
+            thumb_height=self._thumb_size[1],
+            generation=generation,
+            prefetch_limit=48,
+            chunk_size=800,
         )
         thread = QThread(self)
         worker.moveToThread(thread)
         thread.started.connect(worker.run)
-        worker.chunk_ready.connect(self._on_thumb_db_chunk)
-        worker.missing_ready.connect(self._on_thumb_db_missing)
+        worker.chunk_loaded.connect(self._on_thumb_db_chunk)
+        worker.missing_paths.connect(self._on_thumb_db_missing)
         worker.finished.connect(self._on_thumb_db_finished)
+        with contextlib.suppress(Exception):
+            worker.progress.connect(self._on_thumb_db_progress)
         worker.finished.connect(thread.quit)
         worker.finished.connect(worker.deleteLater)
         thread.finished.connect(thread.deleteLater)
@@ -276,7 +214,7 @@ class ImageFileSystemModel(QFileSystemModel):
         try:
             if self._thumb_db_worker is not None:
                 with contextlib.suppress(Exception):
-                    self._thumb_db_worker.abort()
+                    self._thumb_db_worker.stop()
             if self._thumb_db_thread is not None:
                 with contextlib.suppress(Exception):
                     self._thumb_db_thread.quit()
@@ -289,7 +227,16 @@ class ImageFileSystemModel(QFileSystemModel):
         # Runs on the main thread.
         for row in rows:
             try:
-                path, thumbnail_data, orig_width, orig_height, mtime, size = row
+                # Support both legacy tuple rows and new dict payloads from injected worker.
+                if isinstance(row, dict):
+                    path = row.get("path")
+                    thumbnail_data = row.get("thumbnail")
+                    orig_width = row.get("width")
+                    orig_height = row.get("height")
+                    mtime = row.get("mtime")
+                    size = row.get("size")
+                else:
+                    path, thumbnail_data, orig_width, orig_height, mtime, size = row
 
                 # Update metadata first
                 self._meta[str(path)] = (
@@ -315,6 +262,10 @@ class ImageFileSystemModel(QFileSystemModel):
             except Exception:
                 continue
 
+    def _on_thumb_db_error(self, info: dict) -> None:
+        with contextlib.suppress(Exception):
+            _logger.debug("thumb db worker error: %s", info)
+
     def _on_thumb_db_missing(self, paths: list[str]) -> None:
         # Trigger background thumbnail generation (decode happens off the UI thread).
         for path in paths:
@@ -327,6 +278,13 @@ class ImageFileSystemModel(QFileSystemModel):
             return
         _logger.debug("thumb db loader finished: gen=%d", generation)
         self._watcher_ready = True
+
+    def _on_thumb_db_progress(self, processed: int, total: int) -> None:
+        # Forward worker progress to interested UI consumers
+        try:
+            self.progress.emit(int(processed), int(total))
+        except Exception:
+            return
 
     def set_thumb_size(self, width: int, height: int) -> None:
         self._thumb_size = (width, height)
