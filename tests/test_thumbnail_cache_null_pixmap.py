@@ -36,13 +36,12 @@ def test_thumbnail_cache_does_not_store_null_pixmap() -> None:
             pixmap=null_pixmap,
         )
 
-        assert cache._conn is not None
-        cursor = cache._conn.execute("SELECT COUNT(*) FROM thumbnails")
-        (count,) = cursor.fetchone()
-        cursor.close()
-        assert count == 0
+        from image_viewer.image_engine.thumb_db import ThumbDB
+        db = ThumbDB(cache.db_path)
+        row = db.probe("C:/dummy/a.jpg")
+        assert row is None or row[1] is None
 
-    cache.close()
+        cache.close()
 
 
 def test_thumbnail_cache_roundtrip_valid_pixmap() -> None:

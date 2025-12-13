@@ -15,12 +15,16 @@ def test_set_and_probe_thumbdb(tmp_path: Path):
     db = ThumbDB(cache.db_path)
     row = db.probe(str(p))
     assert row is not None
-    assert row[0] == str(p)
-    assert row[4] == 12345
+    # DB stores normalized path strings; compare as Paths to be platform-agnostic
+    assert Path(row[0]) == p
+    # mtime stored in database is in milliseconds
+    assert row[4] == 12345000
     # Set thumbnail
     pixmap = QPixmap(100, 50)
     cache.set(str(p), 12345.0, 100, 200, 100, 128, 128, pixmap)
     row2 = db.probe(str(p))
     assert row2 is not None
     assert row2[1] is not None
+    db.close()
+    cache.close()
 

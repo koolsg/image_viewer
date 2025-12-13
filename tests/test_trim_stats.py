@@ -13,8 +13,10 @@ from __future__ import annotations
 import os
 from typing import Optional, Tuple
 
-import numpy as np  # type: ignore
-import pyvips  # type: ignore
+import pytest
+np = pytest.importorskip("numpy")
+pyvips = pytest.importorskip("pyvips")
+pytestmark = pytest.mark.imaging
 os.add_dll_directory("C:\\Projects\\libraries\\vips-dev-8.17\\bin")
 
 def detect_trim_box_stats_verbose(path: str) -> Tuple[Optional[Tuple[int, int, int, int]], list[str]]:

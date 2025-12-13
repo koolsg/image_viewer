@@ -28,12 +28,10 @@ import sys
 from typing import Tuple
 
 # 전역 import (함수 내부 import 지양)
-try:
-    import pyvips  # type: ignore
-    import numpy as np  # type: ignore
-except Exception as exc:
-    print(f"[오류] 필요한 모듈 로드 실패: {exc}", file=sys.stderr)
-    raise
+import pytest
+pyvips = pytest.importorskip("pyvips")
+np = pytest.importorskip("numpy")
+pytestmark = pytest.mark.imaging
 os.add_dll_directory("C:\\Projects\\libraries\\vips-dev-8.17\\bin")
 
 def _load_image_vips(path: str):

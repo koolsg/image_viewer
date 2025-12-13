@@ -9,6 +9,7 @@ from image_viewer.ui_explorer_grid import _ImageOnlyIconProvider
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QIcon
 
+sys.path.insert(0, str(Path(__file__).parent.parent))
 from image_viewer.image_engine.engine import ImageEngine
 
 
@@ -66,3 +67,13 @@ def test_fs_model_returns_icons_for_files():
         else:
             # May be QPixmap-like; treat as truthy
             assert hasattr(val, "isNull")
+
+    # Cleanup: ensure background threads are stopped
+    try:
+        model._stop_thumb_db_loader()
+    except Exception:
+        pass
+    try:
+        engine.shutdown()
+    except Exception:
+        pass

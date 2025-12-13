@@ -1,4 +1,6 @@
-import pyvips
+import pytest
+pyvips = pytest.importorskip("pyvips")
+pytestmark = pytest.mark.imaging
 import os
 
 

@@ -7,20 +7,17 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-try:
-    import numpy as np
-    import pyvips
-    from PIL import Image
-
-    HAS_DEPS = True
-except Exception:
-    HAS_DEPS = False
+import pytest
+np = pytest.importorskip("numpy")
+pyvips = pytest.importorskip("pyvips")
+pytestmark = pytest.mark.imaging
+HAS_DEPS = True
 
 from image_viewer.trim import apply_trim_to_file, detect_trim_box_stats
 
 
 class TestApplyTrimToFile(unittest.TestCase):
-    @unittest.skipIf(not HAS_DEPS, "pyvips/PIL/numpy not available")
+    @unittest.skipIf(not HAS_DEPS, "pyvips/numpy not available")
     def test_apply_trim_writes_cropped_dimensions(self):
         # Create an image with white background and black rectangle
         img = (np.ones((100, 120, 3), dtype=np.uint8) * 255).copy()
@@ -28,7 +25,8 @@ class TestApplyTrimToFile(unittest.TestCase):
         img[10:90, 20:100] = 0
 
         with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
-            Image.fromarray(img).save(f.name)
+            v = pyvips.Image.new_from_memory(img.tobytes(), img.shape[1], img.shape[0], img.shape[2], 'uchar')
+            v.write_to_file(f.name)
             path = f.name
 
         try:

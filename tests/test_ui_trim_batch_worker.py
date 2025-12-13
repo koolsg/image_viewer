@@ -7,13 +7,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-try:
-    import numpy as np
-    from PIL import Image
-
-    HAS_DEPS = True
-except Exception:
-    HAS_DEPS = False
+import pytest
+np = pytest.importorskip("numpy")
+pyvips = pytest.importorskip("pyvips")
+pytestmark = pytest.mark.imaging
+HAS_DEPS = True
 
 from image_viewer.ui_trim import TrimBatchWorker
 from image_viewer.ui_trim import TrimReportDialog
@@ -21,14 +19,15 @@ from PySide6.QtWidgets import QApplication
 
 
 class TestTrimBatchWorker(unittest.TestCase):
-    @unittest.skipIf(not HAS_DEPS, "pyvips/PIL/numpy not available")
+    @unittest.skipIf(not HAS_DEPS, "pyvips/numpy not available")
     def test_batch_worker_skips_full_size_crop(self):
         # Create an image that should detect a crop equal to the full image
         # A fully black image triggers a detection that covers the full extents
         img = (np.zeros((50, 60, 3), dtype=np.uint8)).copy()
 
         with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
-            Image.fromarray(img).save(f.name)
+            v = pyvips.Image.new_from_memory(img.tobytes(), img.shape[1], img.shape[0], img.shape[2], 'uchar')
+            v.write_to_file(f.name)
             path = f.name
 
         try:
@@ -49,14 +48,15 @@ class TestTrimBatchWorker(unittest.TestCase):
                 with contextlib.suppress(Exception):
                     os.remove(p)
 
-    @unittest.skipIf(not HAS_DEPS, "pyvips/PIL/numpy not available")
+    @unittest.skipIf(not HAS_DEPS, "pyvips/numpy not available")
     def test_batch_worker_creates_trim_for_non_full_crop(self):
         # Create an image with a white background and central black rectangle
         img = (np.ones((60, 80, 3), dtype=np.uint8) * 255).copy()
         img[10:50, 20:70] = 0
 
         with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
-            Image.fromarray(img).save(f.name)
+            v = pyvips.Image.new_from_memory(img.tobytes(), img.shape[1], img.shape[0], img.shape[2], 'uchar')
+            v.write_to_file(f.name)
             path = f.name
 
         try:
@@ -77,7 +77,7 @@ class TestTrimBatchWorker(unittest.TestCase):
                 with contextlib.suppress(Exception):
                     os.remove(p)
 
-    @unittest.skipIf(not HAS_DEPS, "pyvips/PIL/numpy not available")
+    @unittest.skipIf(not HAS_DEPS, "pyvips/numpy not available")
     def test_trim_report_dialog_populates_rows(self):
         # Build a small sample rows list and ensure the dialog populates correctly
         rows = [

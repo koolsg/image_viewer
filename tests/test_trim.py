@@ -12,15 +12,12 @@ from pathlib import Path
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-try:
-    import numpy as np
+import pytest
 
-    # pyvips import removed to avoid unused-import in tests
-    from PIL import Image
-
-    HAS_DEPS = True
-except ImportError:
-    HAS_DEPS = False
+# Tests in this module depend on imaging libraries; skip them cleanly when unavailable.
+np = pytest.importorskip("numpy")
+pyvips = pytest.importorskip("pyvips")
+pytestmark = pytest.mark.imaging
 
 from image_viewer.trim import detect_trim_box_stats
 
@@ -37,25 +34,25 @@ class TestDetectTrimBoxStats(unittest.TestCase):
         """Clean up temporary directory."""
         self.test_dir.cleanup()
 
-    @unittest.skipIf(not HAS_DEPS, "pyvips/PIL/numpy not available")
+    @unittest.skipIf(False, "pyvips/numpy not available")
     def test_solid_color_image(self):
         """Test detection on solid color image (no trim).
 
         Expected: Should return None (no trim detected, image is uniform).
         """
         # Create solid white image
-        img = Image.new("RGB", (200, 150), color="white")
+        img = (np.ones((150, 200, 3), dtype=np.uint8) * 255).copy()
+        v = pyvips.Image.new_from_memory(img.tobytes(), img.shape[1], img.shape[0], img.shape[2], 'uchar')
         img_path = os.path.join(self.test_path, "solid_white.png")
-        img.save(img_path)
+        v.write_to_file(img_path)
 
         result = detect_trim_box_stats(img_path, profile="normal")
         # Solid image should not trigger trim (no non-background content)
         self.assertIsNone(result, "Solid color image should not be trimmed")
 
-    @unittest.skipIf(not HAS_DEPS, "pyvips/PIL/numpy not available")
+    @unittest.skipIf(False, "pyvips/numpy not available")
     def test_bordered_image_normal_profile(self):
         import numpy as np
-        from PIL import Image
 
         # Create image with a black border inside white background
         img_array = np.ones((100, 100, 3), dtype=np.uint8) * 255
@@ -63,8 +60,8 @@ class TestDetectTrimBoxStats(unittest.TestCase):
         import tempfile
 
         with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
-            pil_img = Image.fromarray(img_array)
-            pil_img.save(f.name)
+            v = pyvips.Image.new_from_memory(img_array.tobytes(), img_array.shape[1], img_array.shape[0], img_array.shape[2], 'uchar')
+            v.write_to_file(f.name)
             img_path = f.name
         result = detect_trim_box_stats(img_path)
         self.assertTrue(result is None or isinstance(result, tuple))
@@ -73,10 +70,9 @@ class TestDetectTrimBoxStats(unittest.TestCase):
             self.assertGreater(width, 0)
             self.assertGreater(height, 0)
 
-    @unittest.skipIf(not HAS_DEPS, "pyvips/PIL/numpy not available")
+    @unittest.skipIf(False, "pyvips/numpy not available")
     def test_small_content_aggressive_profile(self):
         import numpy as np
-        from PIL import Image
 
         # Create image with a very small black rectangle
         img_array = np.ones((100, 100, 3), dtype=np.uint8) * 255
@@ -86,8 +82,8 @@ class TestDetectTrimBoxStats(unittest.TestCase):
         import tempfile
 
         with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
-            pil_img = Image.fromarray(img_array)
-            pil_img.save(f.name)
+            v = pyvips.Image.new_from_memory(img_array.tobytes(), img_array.shape[1], img_array.shape[0], img_array.shape[2], 'uchar')
+            v.write_to_file(f.name)
             img_path = f.name
         result = detect_trim_box_stats(img_path)
         self.assertIsNotNone(result, "Small content should be detected with aggressive profile")
@@ -96,22 +92,22 @@ class TestDetectTrimBoxStats(unittest.TestCase):
             self.assertGreater(width, 5)
             self.assertGreater(height, 5)
 
-    @unittest.skipIf(not HAS_DEPS, "pyvips/PIL/numpy not available")
+    @unittest.skipIf(False, "pyvips/numpy not available")
     def test_invalid_path_returns_none(self):
         """Test that invalid path returns None gracefully."""
         result = detect_trim_box_stats("/nonexistent/path/image.png", profile="normal")
         self.assertIsNone(result, "Invalid path should return None without exception")
 
-    @unittest.skipIf(not HAS_DEPS, "pyvips/PIL/numpy not available")
+    @unittest.skipIf(False, "pyvips/numpy not available")
     def test_profile_parameter(self):
         """Test that profile parameter affects detection."""
         # Create test image
         img_array = np.zeros((200, 200, 3), dtype=np.uint8)
         img_array[50:150, 50:150, :] = 100  # gray content
 
-        pil_img = Image.fromarray(img_array)
+        v = pyvips.Image.new_from_memory(img_array.tobytes(), img_array.shape[1], img_array.shape[0], img_array.shape[2], 'uchar')
         img_path = os.path.join(self.test_path, "profile_test.png")
-        pil_img.save(img_path)
+        v.write_to_file(img_path)
 
         result_normal = detect_trim_box_stats(img_path, profile="normal")
         result_aggressive = detect_trim_box_stats(img_path, profile="aggressive")
@@ -130,18 +126,18 @@ class TestDetectTrimBoxStats(unittest.TestCase):
 class TestTrimIntegration(unittest.TestCase):
     """Integration tests for trim module."""
 
-    @unittest.skipIf(not HAS_DEPS, "pyvips/PIL/numpy not available")
+    @unittest.skipIf(False, "pyvips/numpy not available")
     def test_detect_returns_valid_tuple_or_none(self):
         # Create a small image with white background and black rectangle
         import numpy as np
-        from PIL import Image
 
         img = (np.ones((200, 300, 3), dtype=np.uint8) * 255).copy()
         img[30:170, 50:250] = 0
         import tempfile
 
         with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
-            Image.fromarray(img).save(f.name)
+            v = pyvips.Image.new_from_memory(img.tobytes(), img.shape[1], img.shape[0], img.shape[2], 'uchar')
+            v.write_to_file(f.name)
             result = detect_trim_box_stats(f.name)
             self.assertTrue(
                 result is None or (isinstance(result, tuple) and len(result) == 4),
