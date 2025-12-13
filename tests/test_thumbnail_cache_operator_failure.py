@@ -1,7 +1,7 @@
 from pathlib import Path
 import pytest
 
-from image_viewer.image_engine.db.thumbnail_db import ThumbDBBytesAdapter
+from image_viewer.image_engine.db.thumbdb_bytes_adapter import ThumbDBBytesAdapter
 from image_viewer.image_engine import db_operator as dbop
 
 

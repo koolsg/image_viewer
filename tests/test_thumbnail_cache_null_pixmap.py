@@ -13,7 +13,7 @@ from PySide6.QtWidgets import QApplication
 root = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(root))
 
-from image_viewer.image_engine.db.thumbnail_db import ThumbDBBytesAdapter
+from image_viewer.image_engine.db.thumbdb_bytes_adapter import ThumbDBBytesAdapter
 
 
 def test_thumbnail_cache_does_not_store_null_pixmap() -> None:
@@ -36,7 +36,7 @@ def test_thumbnail_cache_does_not_store_null_pixmap() -> None:
             thumbnail_data = buf.data().data()
             cache.upsert_meta("C:/dummy/a.jpg", 1, 123, meta={"thumbnail": bytes(thumbnail_data), "width": 100, "height": 50, "thumb_width": 64, "thumb_height": 64, "created_at": time.time()})
 
-        from image_viewer.image_engine.thumb_db import ThumbDB
+        from image_viewer.image_engine.thumbdb_core import ThumbDB
         db = ThumbDB(cache.db_path)
         row = db.probe("C:/dummy/a.jpg")
         assert row is None or row[1] is None

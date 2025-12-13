@@ -2,8 +2,8 @@ import threading
 import time
 from pathlib import Path
 
-from image_viewer.image_engine.db.thumbnail_db import ThumbDBBytesAdapter
-from image_viewer.image_engine.thumb_db import ThumbDB
+from image_viewer.image_engine.db.thumbdb_bytes_adapter import ThumbDBBytesAdapter
+from image_viewer.image_engine.thumbdb_core import ThumbDB
 
 
 def _setter(cache: ThumbDBBytesAdapter, base: str, count: int, barrier: threading.Barrier):

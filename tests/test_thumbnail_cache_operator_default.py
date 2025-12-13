@@ -1,5 +1,5 @@
 from pathlib import Path
-from image_viewer.image_engine.db.thumbnail_db import ThumbDBBytesAdapter
+from image_viewer.image_engine.db.thumbdb_bytes_adapter import ThumbDBBytesAdapter
 
 
 def test_thumbnail_cache_operator_default(tmp_path: Path):

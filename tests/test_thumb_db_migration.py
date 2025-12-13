@@ -2,7 +2,7 @@ from pathlib import Path
 import sqlite3
 import time
 
-from image_viewer.image_engine.thumb_db import ThumbDB
+from image_viewer.image_engine.thumbdb_core import ThumbDB
 from image_viewer.image_engine.migrations import apply_migrations
 
 

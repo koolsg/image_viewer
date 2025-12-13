@@ -2,8 +2,8 @@ import time
 from pathlib import Path
 import sqlite3
 
-from image_viewer.image_engine.db.thumbnail_db import ThumbDBBytesAdapter
-from image_viewer.image_engine.thumb_db import ThumbDB
+from image_viewer.image_engine.db.thumbdb_bytes_adapter import ThumbDBBytesAdapter
+from image_viewer.image_engine.thumbdb_core import ThumbDB
 
 
 def test_thumbnail_cache_uses_operator(tmp_path: Path):
