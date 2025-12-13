@@ -5,6 +5,7 @@ A fast, feature-rich desktop image viewer built with PySide6 and multi-process i
 ## Overview
 
 - **Modern Architecture**: PySide6 GUI with pyvips-based multi-process image decoding
+- **Responsibility Boundary**: UI components issue commands and display results; file/DB writes, thumbnail generation, and file operations are performed by the image-engine and `ImageFileSystemModel` only (not the UI).
 - **Dual Modes**: View mode for immersive image viewing, Explorer mode for file browsing
 - **Performance Optimized**: Thumbnail mode for fast browsing, Full mode for original quality
 - **Cross-Platform**: Windows-optimized with Linux/macOS support
@@ -24,7 +25,7 @@ A fast, feature-rich desktop image viewer built with PySide6 and multi-process i
 - **Performance**: Lazy loading and caching for large folders
 
 ### Image Processing
-- **Decoding Strategies**: 
+- **Decoding Strategies**:
   - Thumbnail mode: Fast, screen-sized decoding
   - Full mode: Original resolution decoding
 - **Multi-processing**: Parallel image decoding with pyvips
@@ -167,8 +168,11 @@ uv run pyright
 
 ### Project Structure
 - Follow the documented workflow in `AGENTS.md`
-- Track tasks in `TASKS.md` and `control.yaml`
+ - Track tasks in `TASKS.md` and log completed work in `SESSIONS.md`
 - Log completed work in `SESSIONS.md`
+
+### Metrics
+Minimal metrics are available via `image_viewer.image_engine.metrics.metrics` to capture counters and timing for DB operations and migrations. See `dev-docs/metrics.md` for details.
 
 ### Adding Features
 1. Plan in `TASKS.md`
@@ -218,6 +222,14 @@ Location: `image_viewer/settings.json`
 - Enable Thumbnail mode for faster loading
 - Use SQLite thumbnail cache for persistent performance
 - Check Explorer Mode performance settings
+
+### Migration tools
+If you have older thumbnail DB files and the viewer complains about missing schema columns, there's a migration helper under `scripts/migrate_thumb_db.py` that applies schema upgrades.
+
+```
+python scripts/migrate_thumb_db.py /path/to/SwiftView_thumbs.db
+```
+This prints the current `user_version` and migrates the DB to the latest schema supported by the application.
 
 **Memory usage with large images**
 - Use Thumbnail mode for browsing
