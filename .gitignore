@@ -2,11 +2,16 @@
 /.venv
 /.serena
 /.vscode
+
+
 __pycache__
+# Python package metadata
+*.egg-info/
 
 /tools
 /.githooks
 /.cache
+/dev-docs/
 
 
 *.md
@@ -14,6 +19,4 @@ __pycache__
 image_viewer\settings.json
 /image_viewer/settings.json
 /image_viewer/libvips/
-CONTROL_PANEL.md.backup
-control.yaml
 swiftview*.db
