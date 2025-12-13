@@ -3,8 +3,8 @@ import time
 from pathlib import Path
 import sqlite3
 from PySide6.QtGui import QPixmap
-from image_viewer.image_engine.db.thumbnail_db import ThumbDBBytesAdapter
-from image_viewer.image_engine.thumb_db import ThumbDB
+from image_viewer.image_engine.db.thumbdb_bytes_adapter import ThumbDBBytesAdapter
+from image_viewer.image_engine.thumbdb_core import ThumbDB
 
 def test_set_and_probe_thumbdb(tmp_path: Path):
     cache_dir = tmp_path / "cache"
@@ -12,7 +12,7 @@ def test_set_and_probe_thumbdb(tmp_path: Path):
     p = tmp_path / "file1.jpg"
     p.write_text("filecontent")
     # Set metadata (mtime in ms)
-    cache.set_meta(str(p), 12345_000, 100, width=200, height=100, thumb_width=128, thumb_height=128)
+    cache.set_meta(str(p), 12345_000, 100, orig_width=200, orig_height=100)
     db = ThumbDB(cache.db_path)
     row = db.probe(str(p))
     assert row is not None
