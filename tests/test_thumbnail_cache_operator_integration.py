@@ -2,17 +2,23 @@ import time
 from pathlib import Path
 import sqlite3
 
-from image_viewer.image_engine.thumbnail_cache import ThumbnailCache
+from image_viewer.image_engine.db.thumbnail_db import ThumbDBBytesAdapter
 from image_viewer.image_engine.thumb_db import ThumbDB
 
 
 def test_thumbnail_cache_uses_operator(tmp_path: Path):
     cache_dir = tmp_path / "cache"
     cache_dir.mkdir()
-    cache = ThumbnailCache(cache_dir)
+    cache = ThumbDBBytesAdapter(cache_dir / "thumbs.db")
 
     path = str((tmp_path / "file1.jpg").as_posix())
-    cache.set_meta(path, time.time(), 123, 200, 100, 128, 128)
+    cache.upsert_meta(path, int(time.time() * 1000), 123, meta={
+        "width": 200,
+        "height": 100,
+        "thumb_width": 128,
+        "thumb_height": 128,
+        "created_at": time.time(),
+    })
 
     # Directly inspect DB with ThumbDB to verify that row persisted
     with ThumbDB(cache.db_path) as db:

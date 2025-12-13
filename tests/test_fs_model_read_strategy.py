@@ -1,7 +1,6 @@
 from pathlib import Path
 from PySide6.QtWidgets import QApplication
 from image_viewer.image_engine.fs_model import ImageFileSystemModel
-from image_viewer.image_engine.thumbnail_cache import ThumbnailCache
 
 
 def test_fs_model_passes_operator_to_worker(tmp_path: Path):

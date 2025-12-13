@@ -2,24 +2,30 @@ import threading
 import time
 from pathlib import Path
 
-from image_viewer.image_engine.thumbnail_cache import ThumbnailCache
+from image_viewer.image_engine.db.thumbnail_db import ThumbDBBytesAdapter
 from image_viewer.image_engine.thumb_db import ThumbDB
 
 
-def _setter(cache: ThumbnailCache, base: str, count: int, barrier: threading.Barrier):
+def _setter(cache: ThumbDBBytesAdapter, base: str, count: int, barrier: threading.Barrier):
     barrier.wait()
     for i in range(count):
         try:
-            cache.set_meta(f"{base}-{i}.jpg", time.time(), i, 100, 100, 128, 128)
+            cache.upsert_meta(f"{base}-{i}.jpg", int(time.time() * 1000), i, meta={
+                "width": 100,
+                "height": 100,
+                "thumb_width": 128,
+                "thumb_height": 128,
+                "created_at": time.time(),
+            })
         except Exception:
             pass
 
 
-def _getter(cache: ThumbnailCache, base: str, count: int, barrier: threading.Barrier, results: list):
+def _getter(cache: ThumbDBBytesAdapter, base: str, count: int, barrier: threading.Barrier, results: list):
     barrier.wait()
     for i in range(count):
         try:
-            row = cache.get_meta(f"{base}-{i}.jpg", time.time(), i)
+            row = cache.probe(f"{base}-{i}.jpg")
             results.append(row is not None)
         except Exception:
             results.append(False)
@@ -27,7 +33,7 @@ def _getter(cache: ThumbnailCache, base: str, count: int, barrier: threading.Bar
 
 def test_thumbnail_cache_concurrent_set_and_get(tmp_path: Path):
     cache_dir = tmp_path / "cache"
-    cache = ThumbnailCache(cache_dir)
+    cache = ThumbDBBytesAdapter(cache_dir / "thumbs.db")
 
     writer_threads = 4
     writer_loop = 50
