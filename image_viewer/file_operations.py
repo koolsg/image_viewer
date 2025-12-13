@@ -90,20 +90,24 @@ def show_delete_confirmation(parent, title: str, text: str, info: str) -> bool:
     msg_box.setText(text)
     msg_box.setInformativeText(info)
 
-    yes_btn = msg_box.addButton("Yes", QMessageBox.ButtonRole.YesRole)
+    # Use & for mnemonics (standard Windows behavior: underlines Y/N)
+    yes_btn = msg_box.addButton("&Yes", QMessageBox.ButtonRole.YesRole)
     yes_btn.setObjectName("button-yes")
-    # Allow Y shortcut to trigger yes
+    # Allow simple Y shortcut (without Alt) for convenience
     with contextlib.suppress(Exception):
         yes_btn.setShortcut(QKeySequence("Y"))
-    no_btn = msg_box.addButton("No", QMessageBox.ButtonRole.NoRole)
+
+    no_btn = msg_box.addButton("&No", QMessageBox.ButtonRole.NoRole)
     no_btn.setObjectName("button-no")
     with contextlib.suppress(Exception):
         no_btn.setShortcut(QKeySequence("N"))
-    # Make Yes the default action so pressing Enter confirms (Yes)
+
+    # Make Yes the default action
     msg_box.setDefaultButton(yes_btn)
-    # Make Cancel the escape action so pressing Esc cancels
+    # Make Cancel the escape action
     msg_box.setEscapeButton(no_btn)
-    # Apply theme-aware stylesheet
+
+    # Apply theme
     theme = None
     try:
         if hasattr(parent, "_settings_manager"):
@@ -111,6 +115,13 @@ def show_delete_confirmation(parent, title: str, text: str, info: str) -> bool:
     except Exception:
         theme = None
     msg_box.setStyleSheet(build_delete_dialog_style(theme))
+
+    # Make the dialog wider
+    # Using a spacer logic or minimum width.
+    # QMessageBox layout is tricky, usually setMinimumWidth works if called before exec.
+    # To ensure it looks wide enough for improved readability:
+    msg_box.layout().setSpacing(20)  # Add some spacing
+    msg_box.setMinimumWidth(500)
 
     msg_box.exec()
     return msg_box.clickedButton() == yes_btn
