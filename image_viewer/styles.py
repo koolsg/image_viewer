@@ -78,7 +78,7 @@ COMMON_QSS = """
     }
 
     QMenu {
-        background-color: {{surface}}; # card-like
+        background-color: {{surface}}; /* card-like */
         color: {{text}};
         border: 1px solid {{border}};
         border-radius: 6px;
@@ -104,22 +104,24 @@ COMMON_QSS = """
        Scrollbars (Modern Thin)
        ------------------------------------------------------------------------- */
     QScrollBar:vertical {
-        border: none;
-        background: transparent;
-        width: 10px;
+        border-left: 1px solid {{border}};
+        background: {{scroll_bg}};
+        width: 16px;
         margin: 0px;
     }
     QScrollBar::handle:vertical {
-        background: {{text_sec}}; /* Use secondary text color for scrollbar */
+        background: {{scroll_handle}}; 
         min-height: 30px;
-        border-radius: 5px;
-        margin: 1px;
+        border-radius: 6px;
+        margin: 3px;
+        border: 1px solid {{window}};
     }
     QScrollBar::handle:vertical:hover {
-        background-color: {{text}};
+        background-color: {{scroll_handle_hover}};
     }
     QScrollBar::handle:vertical:pressed {
-        background-color: {{accent}};
+        background-color: {{scroll_handle_pressed}};
+        border: 1px solid {{accent}};
     }
     QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
         height: 0px;
@@ -129,22 +131,24 @@ COMMON_QSS = """
     }
 
     QScrollBar:horizontal {
-        border: none;
-        background: transparent;
-        height: 10px;
+        border-top: 1px solid {{border}};
+        background: {{scroll_bg}};
+        height: 16px;
         margin: 0px;
     }
     QScrollBar::handle:horizontal {
-        background: {{text_sec}};
+        background: {{scroll_handle}}; 
         min-width: 30px;
-        border-radius: 5px;
-        margin: 1px;
+        border-radius: 6px;
+        margin: 3px;
+        border: 1px solid {{window}};
     }
     QScrollBar::handle:horizontal:hover {
-        background-color: {{text}};
+        background-color: {{scroll_handle_hover}};
     }
     QScrollBar::handle:horizontal:pressed {
-        background-color: {{accent}};
+        background-color: {{scroll_handle_pressed}};
+        border: 1px solid {{accent}};
     }
     QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {
         width: 0px;
@@ -393,6 +397,11 @@ def apply_theme(app: QApplication, theme: str = "dark", font_size: int = 10) -> 
             "text_sec": FluentColors.LIGHT_TEXT_SEC,
             "accent": FluentColors.LIGHT_ACCENT,
             "accent_text": FluentColors.LIGHT_ACCENT_TEXT,
+            # Scrollbar specific (High Contrast)
+            "scroll_bg": "#E0E0E0",  # Distinct Light Gray
+            "scroll_handle": "#888888",  # Medium Gray
+            "scroll_handle_hover": "#666666",
+            "scroll_handle_pressed": FluentColors.LIGHT_ACCENT,
         }
     else:
         pal_def = {
@@ -404,6 +413,11 @@ def apply_theme(app: QApplication, theme: str = "dark", font_size: int = 10) -> 
             "text_sec": FluentColors.DARK_TEXT_SEC,
             "accent": FluentColors.DARK_ACCENT,
             "accent_text": FluentColors.DARK_ACCENT_TEXT,
+            # Scrollbar specific (High Contrast)
+            "scroll_bg": "#101010",  # Very Dark Gray/Black (Darker than window)
+            "scroll_handle": "#777777",  # Light Gray
+            "scroll_handle_hover": "#999999",
+            "scroll_handle_pressed": FluentColors.DARK_ACCENT,
         }
 
     _apply_style(app, pal_def, font_size)
