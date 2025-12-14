@@ -55,7 +55,7 @@ reportUndefinedVariable = true
 reportInvalidTypeForm = true
 # 프로젝트 범위
 include = ["image_viewer"]
-exclude = [".venv", ".cache", ".pytest_cache", ".ruff_cache", ".uv-cache", "tests"]
+exclude = [".venv", ".cache", ".pytest_cache", ".ruff_cache", ".uv-cache", "tests",  "**/build","**/dist"]
 
 [tool.pytest.ini_options]
 markers = ["imaging: marks tests that require imaging libraries (pyvips/numpy)"]
