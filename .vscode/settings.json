@@ -4,6 +4,12 @@
     "python.testing.pytestArgs": [
         "tests"
     ],
+    "files.exclude": {
+        "**/.git": true,
+        "**/.venv": true,
+        "**/build": true,
+        "**/dist": true
+    },
     "python.testing.unittestEnabled": false,
     "python.testing.pytestEnabled": true,
     "windsurfPyright.disableLanguageServices": false,
