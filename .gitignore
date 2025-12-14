@@ -1,7 +1,16 @@
-/.github
+
 /.venv
 /.serena
-/.vscode
+
+# IDE
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+!.vscode/tasks.json
+!.vscode/launch.json
+
+
+
 
 
 __pycache__
