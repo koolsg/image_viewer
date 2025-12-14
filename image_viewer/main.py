@@ -23,6 +23,8 @@ from image_viewer.ui_menus import build_menus
 from image_viewer.ui_settings import SettingsDialog
 from image_viewer.view_mode_operations import delete_current_file
 
+from . import ui_shortcuts
+
 _logger = get_logger("main")
 
 # --- CLI logging options -----------------------------------------------------
@@ -512,7 +514,8 @@ class ImageViewer(QMainWindow):
         else:
             self._update_status("Image load failed")
 
-    def keyPressEvent(self, event):  # noqa: PLR0912
+    def keyPressEvent(self, event) -> None:
+        """Handle key press events."""
         key = event.key()
 
         # F5 refreshes explorer, F11 fullscreen
@@ -538,46 +541,17 @@ class ImageViewer(QMainWindow):
                 return
 
         # Other keys require images to be loaded
-        if not self.image_files:
-            super().keyPressEvent(event)
-            return
-
-        # Keys that should only work in VIEW mode (single image view)
-        view_mode_only_keys = (
-            Qt.Key.Key_Right,
-            Qt.Key.Key_Left,
-            Qt.Key.Key_Up,
-            Qt.Key.Key_Down,
-            Qt.Key.Key_A,
-            Qt.Key.Key_D,
-            Qt.Key.Key_Delete,
-        )
-
-        is_view_mode = getattr(self.explorer_state, "view_mode", True)
-        if key in view_mode_only_keys:
-            # If in Explorer Mode, let the active widget handle it (e.g., arrow navigation)
-            if not is_view_mode:
-                # Except Delete - we might want global delete, but explorer grid has its own handler
-                # Let's pass it through to the widget first.
-                super().keyPressEvent(event)
+        # Centralized key dispatching via ui_shortcuts
+        # This handles View vs Explorer mode logic (e.g. allowing Arrows in Explorer)
+        try:
+            if ui_shortcuts.dispatch_key_event(self, event):
+                event.accept()
                 return
+        except Exception as ex:
+            _logger.error("key dispatch failed: %s", ex)
 
-            # In View Mode, handle navigation/rotation
-            if key == Qt.Key.Key_Right:
-                self.next_image()
-            elif key == Qt.Key.Key_Left:
-                self.prev_image()
-            elif key == Qt.Key.Key_A:
-                with contextlib.suppress(Exception):
-                    self.canvas.rotate_by(-90)
-            elif key == Qt.Key.Key_D:
-                with contextlib.suppress(Exception):
-                    self.canvas.rotate_by(90)
-            elif key == Qt.Key.Key_Delete:
-                self.delete_current_file()
-            return
-
-        super().keyPressEvent(event)
+        with contextlib.suppress(Exception):
+            super().keyPressEvent(event)
 
     def maintain_decode_window(self, back: int = 3, ahead: int = 5) -> None:
         """Prefetch images around the current index."""

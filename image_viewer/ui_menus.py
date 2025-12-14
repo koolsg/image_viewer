@@ -1,7 +1,6 @@
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QAction, QActionGroup, QColor, QKeySequence, QShortcut
+from PySide6.QtGui import QAction, QActionGroup, QColor, QKeySequence
 
 from .image_engine.strategy import FastViewStrategy
 from .logger import get_logger
@@ -126,36 +125,10 @@ def build_menus(viewer: "ImageViewer") -> None:  # noqa: PLR0915
         _logger.debug("tools menu unavailable: %s", ex)
 
     # Keyboard shortcuts (QShortcut: window-wide, similar to ApplicationShortcut)
-    try:
-        viewer._shortcut_next = QShortcut(QKeySequence(Qt.Key_Right), viewer)
-        viewer._shortcut_next.setContext(Qt.WindowShortcut)
-        viewer._shortcut_next.activated.connect(viewer.next_image)
-
-        viewer._shortcut_prev = QShortcut(QKeySequence(Qt.Key_Left), viewer)
-        viewer._shortcut_prev.setContext(Qt.WindowShortcut)
-        viewer._shortcut_prev.activated.connect(viewer.prev_image)
-
-        viewer._shortcut_first = QShortcut(QKeySequence(Qt.Key_Home), viewer)
-        viewer._shortcut_first.setContext(Qt.WindowShortcut)
-        viewer._shortcut_first.activated.connect(viewer.first_image)
-
-        viewer._shortcut_last = QShortcut(QKeySequence(Qt.Key_End), viewer)
-        viewer._shortcut_last.setContext(Qt.WindowShortcut)
-        viewer._shortcut_last.activated.connect(viewer.last_image)
-
-        viewer._shortcut_space = QShortcut(QKeySequence(Qt.Key_Space), viewer)
-        viewer._shortcut_space.setContext(Qt.WindowShortcut)
-        viewer._shortcut_space.activated.connect(viewer.snap_to_global_view)
-
-        viewer._shortcut_zoom_in = QShortcut(QKeySequence(Qt.Key_Up), viewer)
-        viewer._shortcut_zoom_in.setContext(Qt.WindowShortcut)
-        viewer._shortcut_zoom_in.activated.connect(lambda: viewer.zoom_by(1.25))
-
-        viewer._shortcut_zoom_out = QShortcut(QKeySequence(Qt.Key_Down), viewer)
-        viewer._shortcut_zoom_out.setContext(Qt.WindowShortcut)
-        viewer._shortcut_zoom_out.activated.connect(lambda: viewer.zoom_by(0.75))
-    except Exception as ex:
-        _logger.debug("shortcuts unavailable: %s", ex)
+    # Keyboard shortcuts (QShortcut: window-wide, similar to ApplicationShortcut)
+    # NOTE: Navigation/Zoom shortcuts are now handled via main.py -> ui_shortcuts.dispatch_key_event
+    # to allow correct delegation in Explorer Mode (prevent conflicts with Grid navigation).
+    pass
 
     # Settings menu
     try:
