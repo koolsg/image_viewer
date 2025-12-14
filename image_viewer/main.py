@@ -543,7 +543,15 @@ class ImageViewer(QMainWindow):
             return
 
         # Keys that should only work in VIEW mode (single image view)
-        view_mode_only_keys = (Qt.Key.Key_Right, Qt.Key.Key_Left, Qt.Key.Key_A, Qt.Key.Key_D, Qt.Key.Key_Delete)
+        view_mode_only_keys = (
+            Qt.Key.Key_Right,
+            Qt.Key.Key_Left,
+            Qt.Key.Key_Up,
+            Qt.Key.Key_Down,
+            Qt.Key.Key_A,
+            Qt.Key.Key_D,
+            Qt.Key.Key_Delete,
+        )
 
         is_view_mode = getattr(self.explorer_state, "view_mode", True)
         if key in view_mode_only_keys:

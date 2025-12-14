@@ -245,6 +245,9 @@ def _setup_explorer_mode(viewer) -> None:  # noqa: PLR0912, PLR0915
                 with contextlib.suppress(Exception):
                     grid.resume_pending_thumbnails()
 
+        # Force focus to grid to ensure keyboard navigation works immediately
+        grid.setFocus()
+
         _logger.debug("switched to Explorer Mode")
     except Exception as e:
         _logger.error("failed to setup explorer mode: %s", e)
