@@ -1,0 +1,31 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"type": "shell",
+			"label": "Run Image Viewer with Debug Logging",
+			"command": "uv",
+			"args": [
+				"run",
+				"python",
+				"-m",
+				"image_viewer",
+				"--log-level",
+				"debug"
+			],
+			"group": {
+				"kind": "test",
+				"isDefault": false
+			},
+			"isBackground": true,
+			"presentation": {
+				"echo": true,
+				"reveal": "never",
+				"focus": true,
+				"panel": "dedicated",
+				"showReuseMessage": false,
+				"clear": false
+			}
+		}
+	]
+}
