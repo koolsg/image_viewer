@@ -290,6 +290,7 @@ Short, focused guidance so an agent can start a session and know how to plan, im
 - Single-prompt tasks: Record only in `SESSIONS.md` (short entry: date, summary, files, checks).  (사용자 기준 1-prompt 작업은 `SESSIONS.md`만 기록)
 - Multi-step tasks: Add a `TASKS.md` entry with steps, files, and decision points before starting and update it as you progress.
 - Always run `uv run ruff check . --fix` and `uv run pyright` before marking work complete. Include the results in `SESSIONS.md`.
+- **Commit Messages**: All automated or agent-generated commit messages must be in English.
 
 ## Reporting & Completion
 
