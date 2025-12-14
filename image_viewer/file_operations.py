@@ -5,12 +5,21 @@ This module provides low-level file operation utilities used by:
 - explorer_mode_operations.py: Explorer Mode file operations (copy/cut/paste/delete)
 """
 
-import contextlib
 import shutil
 from pathlib import Path
 
+from PySide6.QtCore import QSize, Qt
 from PySide6.QtGui import QKeySequence, QPalette
-from PySide6.QtWidgets import QApplication, QMessageBox
+from PySide6.QtWidgets import (
+    QApplication,
+    QDialog,
+    QHBoxLayout,
+    QLabel,
+    QPushButton,
+    QSizePolicy,
+    QStyle,
+    QVBoxLayout,
+)
 from send2trash import send2trash
 
 from .logger import get_logger
@@ -28,11 +37,82 @@ def _is_palette_dark(pal: QPalette) -> bool:
     return luminance < LUMINANCE_DARK_THRESHOLD
 
 
-def build_delete_dialog_style(theme: str | None = None) -> str:
-    """Build a stylesheet for the delete confirmation dialog based on theme.
+class DeleteConfirmationDialog(QDialog):
+    def __init__(self, parent, title: str, text: str, info: str):
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self.setModal(True)
+        # self.setMinimumWidth(500)
 
-    If theme is None, determine from current QApplication palette.
-    """
+        # Main Layout
+        layout = QVBoxLayout(self)
+        layout.setSpacing(16)
+        layout.setContentsMargins(20, 20, 20, 20)
+
+        # Header Area (Icon + Main Text)
+        header_layout = QHBoxLayout()
+        header_layout.setSpacing(16)
+
+        # Icon
+        icon_label = QLabel()
+        icon = self.style().standardIcon(QStyle.StandardPixmap.SP_MessageBoxWarning)
+        icon_label.setPixmap(icon.pixmap(QSize(48, 48)))
+        icon_label.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
+        icon_label.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        header_layout.addWidget(icon_label)
+
+        # Text Container (Title + Info)
+        text_layout = QVBoxLayout()
+        text_layout.setSpacing(8)
+
+        # Main Title (Bold)
+        title_label = QLabel(text)
+        title_label.setStyleSheet("font-size: 14px; font-weight: bold;")
+        title_label.setWordWrap(True)
+        text_layout.addWidget(title_label)
+
+        # Detail Info (File path etc)
+        info_label = QLabel(info)
+        info_label.setWordWrap(True)
+        # Use appropriate styling for secondary text if needed, or rely on global theme
+        text_layout.addWidget(info_label)
+
+        header_layout.addLayout(text_layout)
+        layout.addLayout(header_layout)
+
+        # Buttons
+        btn_layout = QHBoxLayout()
+        btn_layout.addStretch()
+
+        self.btn_yes = QPushButton("Yes(&Y)")
+        self.btn_yes.setObjectName("button-yes")
+        self.btn_yes.setMinimumWidth(80)
+
+        self.btn_no = QPushButton("No(&N)")
+        self.btn_no.setObjectName("button-no")
+        self.btn_no.setMinimumWidth(80)
+
+        btn_layout.addWidget(self.btn_yes)
+        btn_layout.addWidget(self.btn_no)
+        layout.addLayout(btn_layout)
+
+        # Button connections
+        self.btn_yes.clicked.connect(self.accept)
+        self.btn_no.clicked.connect(self.reject)
+
+        # Shortcuts
+        pass  # Handle in keyPressEvent or shortcuts if standard mnemonics don't work well
+        # Note: Mnemonics like &Yes work on button text automaticlly in some contexts, but let's be explicit if needed.
+        # Shortcuts for Y/N
+        self.btn_yes.setShortcut(QKeySequence("Y"))
+        self.btn_no.setShortcut(QKeySequence("N"))
+
+    def sizeHint(self):
+        return QSize(550, 200)
+
+
+def build_delete_dialog_style(theme: str | None = None) -> str:
+    """Build a stylesheet for the delete confirmation dialog based on theme."""
     if theme is None:
         try:
             app = QApplication.instance()
@@ -84,28 +164,7 @@ def show_delete_confirmation(parent, title: str, text: str, info: str) -> bool:
     Returns:
         True if user confirmed deletion
     """
-    msg_box = QMessageBox(parent)
-    msg_box.setWindowTitle(title)
-    msg_box.setIcon(QMessageBox.Icon.Warning)
-    msg_box.setText(text)
-    msg_box.setInformativeText(info)
-
-    # Use & for mnemonics (standard Windows behavior: underlines Y/N)
-    yes_btn = msg_box.addButton("&Yes", QMessageBox.ButtonRole.YesRole)
-    yes_btn.setObjectName("button-yes")
-    # Allow simple Y shortcut (without Alt) for convenience
-    with contextlib.suppress(Exception):
-        yes_btn.setShortcut(QKeySequence("Y"))
-
-    no_btn = msg_box.addButton("&No", QMessageBox.ButtonRole.NoRole)
-    no_btn.setObjectName("button-no")
-    with contextlib.suppress(Exception):
-        no_btn.setShortcut(QKeySequence("N"))
-
-    # Make Yes the default action
-    msg_box.setDefaultButton(yes_btn)
-    # Make Cancel the escape action
-    msg_box.setEscapeButton(no_btn)
+    dlg = DeleteConfirmationDialog(parent, title, text, info)
 
     # Apply theme
     theme = None
@@ -114,17 +173,9 @@ def show_delete_confirmation(parent, title: str, text: str, info: str) -> bool:
             theme = parent._settings_manager.get("theme", None)
     except Exception:
         theme = None
-    msg_box.setStyleSheet(build_delete_dialog_style(theme))
+    dlg.setStyleSheet(build_delete_dialog_style(theme))
 
-    # Make the dialog wider
-    # Using a spacer logic or minimum width.
-    # QMessageBox layout is tricky, usually setMinimumWidth works if called before exec.
-    # To ensure it looks wide enough for improved readability:
-    msg_box.layout().setSpacing(20)  # Add some spacing
-    msg_box.setMinimumWidth(500)
-
-    msg_box.exec()
-    return msg_box.clickedButton() == yes_btn
+    return dlg.exec() == QDialog.DialogCode.Accepted
 
 
 def send_to_recycle_bin(path: str) -> None:
