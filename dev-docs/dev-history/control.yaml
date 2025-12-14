@@ -1,0 +1,241 @@
+version: 1
+project: image_viewer
+
+# Current in-progress tasks only
+current_tasks:
+  - id: T-008
+    title: "Pyright Configuration Setup"
+    status: completed
+    started: "2025-12-03"
+    files:
+      - pyproject.toml
+    notes: "Configured pyright to ignore PySide6/pyvips stub issues while catching real bugs. Configured ruff to exclude tests folder. Both tools now focus on image_viewer/ only."
+
+  - id: T-005
+    title: "Explorer Mode Phase 3 - Performance Optimization"
+    status: in-progress
+    started: "2025-11-29"
+    files:
+      - image_viewer/ui_explorer_grid.py
+      - image_viewer/thumbnail_cache.py
+      - image_viewer/image_engine/thumb_db.py
+      - image_viewer/image_engine/fs_db_worker.py
+      - image_viewer/main.py:318
+      - image_viewer/explorer_mode_operations.py:48
+    notes: "SQLite-based thumbnail cache implemented (thumbs.db). LRU cache limits and lazy loading pending. Enter key toggle and window state restoration completed. Fixed Enter key in Explorer Mode to activate selected image. Fixed path normalization issue causing folder reload. Fixed directory decode attempt on startup. Added thumbnail tooltips with file metadata. Modernized Explorer UI styling. Fixed old image flash by showing blank canvas with loading state. Enhanced tooltips to follow mouse cursor with theme support."
+
+  - id: T-009
+    title: "Busy Cursor for Heavy Operations"
+    status: completed
+    started: "2025-12-04"
+    files:
+      - image_viewer/busy_cursor.py
+      - image_viewer/main.py
+      - image_viewer/ui_explorer_grid.py
+      - image_viewer/file_operations.py
+    notes: "Implemented context manager for busy cursor (hourglass). Applied to: folder load, image display/navigation, file delete, thumbnail settings apply, thumbnail loading (async). Tracks thumbnail loading state with _busy_cursor_active flag. Provides visual feedback during heavy operations."
+
+  - id: T-010
+    title: "Refactor Explorer File Operations to file_operations.py"
+    status: completed
+    started: "2025-12-04"
+    completed: "2025-12-04"
+    files:
+      - image_viewer/file_operations.py
+      - image_viewer/ui_explorer_grid.py
+    notes: "Separated file operation logic from UI. Added 6 functions to file_operations.py (copy/cut/paste/delete/send_to_recycle_bin/generate_unique_filename). Refactored delete_current_file() to use send_to_recycle_bin() internally. ui_explorer_grid.py now only handles UI state. Reduced ui_explorer_grid.py by 172 lines, file_operations.py increased by 137 lines (net -35 lines). Removed unused imports (send2trash, ctypes from grid)."
+
+  - id: T-011
+    title: "WebP Converter Multiprocessing"
+    status: completed
+    started: "2025-12-05"
+    completed: "2025-12-05"
+    files:
+      - image_viewer/webp_converter.py
+    notes: "Converted from QThreadPool to ProcessPoolExecutor for true parallel processing. Uses all CPU cores (os.cpu_count()) for batch image conversion. Maintains cancel functionality and progress reporting. Follows same pattern as Loader class."
+
+  - id: T-012
+    title: "Trim Preview in Separate Window"
+    status: completed
+    started: "2025-12-05"
+    completed: "2025-12-05"
+    files:
+      - image_viewer/trim_operations.py
+    notes: "Removed View/Explorer mode switching logic from trim workflow. Created TrimPreviewDialog class with QGraphicsView for zoom/pan support. Preview now shows in separate dialog window instead of canvas. Simplified workflow by removing mode restoration code."
+
+  - id: T-013
+    title: "View Mode Auto-Reload with QFileSystemModel"
+    status: completed
+    started: "2025-12-07"
+    completed: "2025-12-07"
+    files:
+      - image_viewer/main.py
+      - image_viewer/display_controller.py
+      - image_viewer/trim_operations.py
+    notes: "Integrated QFileSystemModel into View mode for automatic file change detection. Added _fs_watcher to ExplorerState. Created _setup_fs_watcher() and _reload_image_files() methods. View mode now auto-detects file additions/deletions like Explorer mode. Removed manual folder reload after batch trim (now automatic)."
+
+  - id: T-014
+    title: "Unified QFileSystemModel Architecture - Phase 1"
+    status: completed
+    started: "2025-12-07"
+    completed: "2025-12-07"
+    files:
+      - image_viewer/ui_explorer_grid.py
+      - image_viewer/main.py
+      - dev-docs/REFACTOR_UNIFIED_FILESYSTEM_MODEL.md
+    notes: "Added file list access methods to ImageFileSystemModel: get_image_files(), get_file_at_index(), get_file_index(), get_file_count(), get_current_folder(), _is_image_file(). Created shared fs_model in ImageViewer.__init__. Added _on_fs_directory_loaded() handler for automatic file list synchronization. Prepared foundation for unified model architecture across all modes."
+
+  - id: T-015
+    title: "Unified QFileSystemModel Architecture - Phase 2"
+    status: completed
+    started: "2025-12-07"
+    completed: "2025-12-07"
+    files:
+      - image_viewer/display_controller.py
+      - image_viewer/main.py
+    notes: "Refactored DisplayController.open_folder() to use shared fs_model. Removed _setup_fs_watcher() and _reload_image_files() methods (now handled by shared model). Removed _fs_watcher from ExplorerState. View mode now gets file list directly from fs_model.get_image_files(). Eliminated ~60 lines of duplicate file scanning code."
+
+  - id: T-016
+    title: "Unified QFileSystemModel Architecture - Phase 3"
+    status: completed
+    started: "2025-12-07"
+    completed: "2025-12-07"
+    files:
+      - image_viewer/ui_explorer_grid.py
+      - image_viewer/explorer_mode_operations.py
+    notes: "Modified ThumbnailGridWidget to accept external model via constructor. Added model parameter with backward compatibility (creates new model if not provided). Updated _setup_explorer_mode() to pass viewer.fs_model to grid. Explorer mode now uses shared model instead of creating its own. Both View and Explorer modes now share single QFileSystemModel instance."
+
+  - id: T-017
+    title: "Unified QFileSystemModel Architecture - Phase 4 & 5"
+    status: completed
+    started: "2025-12-07"
+    completed: "2025-12-07"
+    files:
+      - image_viewer/trim_operations.py
+      - image_viewer/main.py
+    notes: "Phase 4: Modified trim workflow to use fs_model.get_image_files() for both batch and overwrite modes. Phase 5: Updated open_convert_dialog() to use fs_model.get_current_folder(). All major features (View/Explorer/Trim/Converter) now use shared model as single source of truth."
+
+  - id: T-018
+    title: "Unified QFileSystemModel Architecture - Complete (Phase 1-6)"
+    status: completed
+    started: "2025-12-07"
+    completed: "2025-12-07"
+    files:
+      - image_viewer/fs_model.py (new core module)
+      - image_viewer/ui_explorer_grid.py
+      - image_viewer/main.py
+      - image_viewer/display_controller.py
+      - image_viewer/explorer_mode_operations.py
+      - image_viewer/trim_operations.py
+      - dev-docs/REFACTOR_UNIFIED_FILESYSTEM_MODEL.md
+    notes: "Complete refactoring: All features (View/Explorer/Trim/Converter) now share single ImageFileSystemModel. Phase 1: Added file access methods. Phase 2: View mode integration. Phase 3: Explorer mode integration. Phase 4-5: Trim/Converter integration. Phase 6: Module extraction to fs_model.py (~450 lines). Total code reduction: ~520 lines. Benefits: single source of truth, automatic synchronization, memory savings, clean architecture."
+
+# Key architectural decisions only
+key_decisions:
+  - date: "2025-11-11"
+    decision: "QStackedWidget container for View/Explorer mode switching"
+    rationale: "Prevents canvas GC issues when switching modes"
+
+  - date: "2025-11-29"
+    decision: "QFileSystemModel + QListView for Explorer grid"
+    rationale: "Leverage built-in file watching and Windows-like multi-select/file operations"
+
+  - date: "2025-12-03"
+    decision: "Enter key toggles View↔Explorer with window state preservation"
+    rationale: "Better UX for mode switching, prevents jarring fullscreen transitions"
+
+  - date: "2025-12-03"
+    decision: "SQLite-based thumbnail cache (thumbs.db)"
+    rationale: "Single file cache like Windows Thumbs.db, faster queries, easier cleanup, reduced filesystem overhead"
+
+  - date: "2025-12-04"
+    decision: "Centralized file operations in file_operations.py"
+    rationale: "Separates UI logic from business logic, enables code reuse between View and Explorer modes, improves testability, centralizes platform-specific code (Windows ctypes)"
+
+  - date: "2025-12-07"
+    decision: "QFileSystemModel for View mode auto-reload"
+    rationale: "Consistent file watching between View and Explorer modes. Eliminates manual folder reload logic. Auto-detects external file changes (trim output, user additions/deletions)"
+
+  - date: "2025-12-07"
+    decision: "Unified QFileSystemModel as single source of truth"
+    rationale: "All features (View/Explorer/Trim/Converter) share one model. Eliminates data duplication, ensures consistency, simplifies code. Model = data layer, UI = presentation layer, tools = business logic."
+
+  - id: T-019
+    title: "Image Engine Architecture - Phase 1"
+    status: completed
+    started: "2025-12-07"
+    completed: "2025-12-07"
+    files:
+      - image_viewer/image_engine/__init__.py (new)
+      - image_viewer/image_engine/engine.py (new)
+      - image_viewer/image_engine/fs_model.py (new)
+      - image_viewer/image_engine/loader.py (new)
+      - image_viewer/image_engine/decoder.py (new)
+      - image_viewer/image_engine/strategy.py (new)
+      - image_viewer/image_engine/thumbnail_cache.py (new)
+      - image_viewer/fs_model.py (re-export)
+      - image_viewer/loader.py (re-export)
+      - image_viewer/decoder.py (re-export)
+      - image_viewer/strategy.py (re-export)
+      - image_viewer/thumbnail_cache.py (re-export)
+    notes: "Created image_engine subpackage as backend/server layer. Copied data/processing modules to image_engine/. Original files now re-export from image_engine for backward compatibility. ImageEngine class provides unified API for all data/processing operations."
+
+  - id: T-020
+    title: "Image Engine Architecture - Phase 2"
+    status: completed
+    started: "2025-12-07"
+    completed: "2025-12-07"
+    files:
+      - image_viewer/main.py
+      - image_viewer/display_controller.py
+    notes: "Integrated ImageEngine into main.py. Replaced direct loader/pixmap_cache usage with engine API. Added _on_engine_image_ready and _on_engine_folder_changed handlers. display_controller now uses engine.request_decode(), engine.get_cached_pixmap(), engine.prefetch(). Backward compatibility maintained via properties."
+
+  - id: T-021
+    title: "Image Engine Architecture - Phase 3-4 (Trim/Explorer Integration)"
+    status: completed
+    started: "2025-12-07"
+    completed: "2025-12-07"
+    files:
+      - image_viewer/trim_operations.py
+      - image_viewer/explorer_mode_operations.py
+    notes: "Refactored trim_operations.py and explorer_mode_operations.py to use ImageEngine API instead of accessing viewer internals directly. Replaced viewer.fs_model, viewer.image_files, viewer.pixmap_cache with engine.get_image_files(), engine.get_file_at_index(), engine.is_cached(), etc."
+
+  - id: T-022
+    title: "Image Engine Architecture - Phase 5-6 (DisplayController Removal & Cleanup)"
+    status: completed
+    started: "2025-12-07"
+    completed: "2025-12-07"
+    files:
+      - image_viewer/main.py
+      - image_viewer/display_controller.py (deleted)
+    notes: "Removed DisplayController class entirely. Moved open_folder(), display_image(), maintain_decode_window() methods directly into ImageViewer. Simplified architecture: ImageViewer now directly uses ImageEngine API. Reduced indirection and improved code clarity."
+
+- id: T-023
+    title: "Code Review & Lint Fixes"
+    status: completed
+    started: "2025-12-07"
+    completed: "2025-12-07"
+    files:
+      - image_viewer/ui_canvas.py
+      - image_viewer/file_operations.py
+      - image_viewer/trim_operations.py
+      - image_viewer/main.py
+      - image_viewer/image_engine/decoder.py
+    notes: "Comprehensive code review and refactoring. Phase 1: mousePressEvent split into button handlers, delete_current_file split into helper functions. Phase 2: start_trim_workflow split into 6 helper functions. Phase 3: Magic numbers replaced with constants (RGB_CHANNELS, ROTATION_MAX, FLOAT_EPSILON, etc.). Results: pyright 0 errors, ruff 67→45 issues. Remaining issues are intentional lazy imports (PLC0415) and complex functions requiring larger refactoring."
+
+  - id: T-024
+    title: "View Mode Hover Drawer Menu"
+    status: completed
+    started: "2025-12-10"
+    completed: "2025-12-10"
+    files:
+      - image_viewer/ui_hover_menu.py (new)
+      - image_viewer/main.py
+    notes: "Created left-side hover drawer menu for View mode. Menu slides in when mouse approaches left edge (20px zone). Includes Crop button that triggers trim workflow. Uses QPropertyAnimation for smooth slide animation. Menu shows only in View mode, hidden in Explorer mode."
+
+next_action: "Continue with remaining high priority tasks or new features"
+
+pointers:
+  tasks: TASKS.md
+  sessions: SESSIONS.md
+  readme: README.md
