@@ -1,6 +1,6 @@
 from pathlib import Path
 import sqlite3
-from image_viewer.image_engine.thumbdb_core import ThumbDB
+from image_viewer.image_engine.db.thumbdb_core import ThumbDB
 
 
 def _create_test_db(db_path: Path) -> None:

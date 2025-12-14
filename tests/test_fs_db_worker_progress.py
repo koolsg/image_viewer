@@ -1,7 +1,7 @@
 import sqlite3
 from pathlib import Path
 from image_viewer.image_engine.fs_db_worker import FSDBLoadWorker
-from image_viewer.image_engine.thumbdb_core import ThumbDB
+from image_viewer.image_engine.db.thumbdb_core import ThumbDB
 
 
 def _create_db_with_thumb(db_path: Path, path: str, mtime: int, size: int):

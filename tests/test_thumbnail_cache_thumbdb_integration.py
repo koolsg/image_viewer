@@ -4,7 +4,7 @@ from pathlib import Path
 import sqlite3
 from PySide6.QtGui import QPixmap
 from image_viewer.image_engine.db.thumbdb_bytes_adapter import ThumbDBBytesAdapter
-from image_viewer.image_engine.thumbdb_core import ThumbDB
+from image_viewer.image_engine.db.thumbdb_core import ThumbDB
 
 def test_set_and_probe_thumbdb(tmp_path: Path):
     cache_dir = tmp_path / "cache"

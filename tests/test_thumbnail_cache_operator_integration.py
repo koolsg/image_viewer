@@ -3,7 +3,7 @@ from pathlib import Path
 import sqlite3
 
 from image_viewer.image_engine.db.thumbdb_bytes_adapter import ThumbDBBytesAdapter
-from image_viewer.image_engine.thumbdb_core import ThumbDB
+from image_viewer.image_engine.db.thumbdb_core import ThumbDB
 
 
 def test_thumbnail_cache_uses_operator(tmp_path: Path):
