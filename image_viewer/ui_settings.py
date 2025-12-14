@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from .busy_cursor import busy_cursor
 from .logger import get_logger
 
 _logger = get_logger("ui_settings")
@@ -196,30 +197,31 @@ class SettingsDialog(QDialog):
             _logger.debug("settings change tracking failed: %s", ex)
 
     def _on_apply_clicked(self):
-        try:
-            settings = self._collect_settings()
-
-            # Apply theme
-            if hasattr(self._viewer, "apply_theme"):
-                self._viewer.apply_theme(str(settings["theme"]), int(settings["font_size"]))
-
-            if hasattr(self._viewer, "apply_thumbnail_settings"):
-                self._viewer.apply_thumbnail_settings(
-                    width=settings["thumbnail_width"],
-                    height=settings["thumbnail_height"],
-                    hspacing=settings["thumbnail_hspacing"],
-                )
-            if hasattr(self._viewer, "set_press_zoom_multiplier"):
-                self._viewer.set_press_zoom_multiplier(settings["press_zoom_multiplier"])
-            # Apply hover hide delay and persist
+        with busy_cursor():
             try:
-                if hasattr(self._viewer, "_hover_menu") and hasattr(self._viewer, "_save_settings_key"):
-                    self._viewer._hover_menu.set_hide_delay(int(settings["hover_hide_delay"]))
-                    self._viewer._save_settings_key("hover_hide_delay", int(settings["hover_hide_delay"]))
-            except Exception:
-                _logger.debug("failed to apply hover_hide_delay")
-            self._initial_settings = settings
-            self._dirty = False
-            self.accept()
-        except Exception as ex:
-            _logger.debug("apply settings failed: %s", ex)
+                settings = self._collect_settings()
+
+                # Apply theme
+                if hasattr(self._viewer, "apply_theme"):
+                    self._viewer.apply_theme(str(settings["theme"]), int(settings["font_size"]))
+
+                if hasattr(self._viewer, "apply_thumbnail_settings"):
+                    self._viewer.apply_thumbnail_settings(
+                        width=settings["thumbnail_width"],
+                        height=settings["thumbnail_height"],
+                        hspacing=settings["thumbnail_hspacing"],
+                    )
+                if hasattr(self._viewer, "set_press_zoom_multiplier"):
+                    self._viewer.set_press_zoom_multiplier(settings["press_zoom_multiplier"])
+                # Apply hover hide delay and persist
+                try:
+                    if hasattr(self._viewer, "_hover_menu") and hasattr(self._viewer, "_save_settings_key"):
+                        self._viewer._hover_menu.set_hide_delay(int(settings["hover_hide_delay"]))
+                        self._viewer._save_settings_key("hover_hide_delay", int(settings["hover_hide_delay"]))
+                except Exception:
+                    _logger.debug("failed to apply hover_hide_delay")
+                self._initial_settings = settings
+                self._dirty = False
+                self.accept()
+            except Exception as ex:
+                _logger.debug("apply settings failed: %s", ex)
