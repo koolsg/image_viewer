@@ -1,7 +1,8 @@
-"""SQLite-based thumbnail cache manager.
+"""ThumbnailCache: UI-facing cache that stores thumbnails in SQLite.
 
-This module provides persistent thumbnail caching using SQLite database
-for fast thumbnail retrieval and reduced disk I/O.
+This class uses the pure-DB adapter available under
+`image_viewer.image_engine.db.thumbnail_db.ThumbDBBytesAdapter` and keeps
+`QPixmap`/`QBuffer` conversions in the UI layer.
 """
 
 from __future__ import annotations
@@ -9,23 +10,21 @@ from __future__ import annotations
 import contextlib
 import platform
 import time
+import weakref
 from pathlib import Path
 
 from PySide6.QtCore import QBuffer, QIODevice
 from PySide6.QtGui import QPixmap
 
-from .db_operator import DbOperator
-from .migrations import apply_migrations
-from .thumb_db import ThumbDB, ThumbDBOperatorAdapter
+from image_viewer.image_engine.db.db_operator import DbOperator
+from image_viewer.image_engine.db.migrations import apply_migrations
+from image_viewer.image_engine.db.thumbdb_bytes_adapter import ThumbDBBytesAdapter
+from image_viewer.logger import get_logger
 
 try:
     import ctypes
 except Exception:
     ctypes = None
-
-import weakref
-
-from image_viewer.logger import get_logger
 
 _logger = get_logger("thumbnail_cache")
 
@@ -34,31 +33,21 @@ _EPOCH_MS_THRESHOLD = 10**11
 
 
 class ThumbnailCache:
-    """Manages thumbnail cache using SQLite database."""
+    """Manages thumbnail cache using SQLite database and Qt Pixmaps."""
 
     @staticmethod
     def _to_mtime_ms(mtime: float | int) -> int:
-        """Convert a filesystem mtime to an integer millisecond timestamp.
-
-        For backward compatibility, callers may pass either:
-        - seconds (float/int, typical `stat().st_mtime`)
-        - milliseconds since epoch (int, typical `st_mtime_ns // 1_000_000`)
-        """
         try:
             value = float(mtime)
         except Exception:
             return 0
-
-        # If it's already in epoch-milliseconds, it will be around ~1.7e12.
         if value >= _EPOCH_MS_THRESHOLD:
             return int(value)
         return round(value * 1000.0)
 
     @staticmethod
     def _norm_path(path: str) -> str:
-        # Normalize Windows separators so DB keys remain stable.
         p = path.replace("\\", "/")
-        # Normalize drive letter casing on Windows (case-insensitive filesystem).
         if len(p) >= _DRIVE_PREFIX_LEN and p[1] == ":":
             p = p[0].upper() + p[1:]
         return p
@@ -73,13 +62,7 @@ class ThumbnailCache:
             return False
 
     def probe(self, path: str) -> dict[str, object] | None:
-        """Probe a cache row by path for debugging/diagnostics.
-
-        Returns a dict with keys: path, mtime, size, thumb_width, thumb_height, has_thumbnail, thumbnail_len.
-        """
         path_norm = self._norm_path(path)
-
-        # Prefer operator-backed probe if available
         if self._thumb_db is not None:
             try:
                 row = self._thumb_db.probe(path_norm)
@@ -98,40 +81,25 @@ class ThumbnailCache:
                     "thumbnail_len": len(thumbnail) if thumbnail is not None else 0,
                 }
             except Exception:
-                # fall through to direct conn fallback
                 pass
-
-        if self._thumb_db is None:
-            return None
-
-        # If operator can do the probe, we already returned above
         return None
 
     def __init__(self, cache_dir: Path, db_name: str = "thumbs.db"):
-        """Initialize thumbnail cache.
-
-        Args:
-            cache_dir: Directory to store the cache database
-            db_name: Name of the database file
-        """
         self.cache_dir = cache_dir
         self.db_path = cache_dir / db_name
-        self._thumb_db: ThumbDB | None = None
-        # Try to create operator early so we can use it for DB initialization
+        self._thumb_db: ThumbDBBytesAdapter | None = None
         try:
+            # Prefer operator-backed adapter
             self._db_operator: DbOperator | None = DbOperator(self.db_path)
             self._operator_owned = True
-            self._thumb_db = ThumbDBOperatorAdapter(self._db_operator, self.db_path)
+            self._thumb_db = ThumbDBBytesAdapter(self.db_path, operator=self._db_operator)
         except Exception:
             self._db_operator = None
             self._operator_owned = False
             self._thumb_db = None
-        # Initialize DB schema (operator-backed if available)
         self._init_db()
-        # If operator not created, fail fast (no legacy fallback allowed)
         if self._thumb_db is None:
             raise RuntimeError("ThumbnailCache requires a DbOperator; operator creation failed")
-        # Ensure automatic clean-up if GC'd
         self._finalizer = weakref.finalize(self, self.close)
 
     def _init_db(self) -> None:
