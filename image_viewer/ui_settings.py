@@ -54,6 +54,12 @@ class SettingsDialog(QDialog):
         self._combo_theme.addItem("Light", "light")
         appearance_form.addRow(QLabel("Theme"), self._combo_theme)
 
+        self._spin_font_size = QSpinBox()
+        self._spin_font_size.setRange(8, 24)
+        self._spin_font_size.setSingleStep(1)
+        self._spin_font_size.setSuffix(" pt")
+        appearance_form.addRow(QLabel("Font Size"), self._spin_font_size)
+
         self._pages.addWidget(self._page_appearance)
 
         # Page: Thumbnail
@@ -116,6 +122,7 @@ class SettingsDialog(QDialog):
 
         # Track changes
         self._combo_theme.currentIndexChanged.connect(self._on_setting_changed)
+        self._spin_font_size.valueChanged.connect(self._on_setting_changed)
         self._spin_thumb_w.valueChanged.connect(self._on_setting_changed)
         self._spin_thumb_h.valueChanged.connect(self._on_setting_changed)
         self._spin_hspacing.valueChanged.connect(self._on_setting_changed)
@@ -133,6 +140,10 @@ class SettingsDialog(QDialog):
             idx = self._combo_theme.findData(theme)
             if idx >= 0:
                 self._combo_theme.setCurrentIndex(idx)
+
+            # Font Size
+            font_size = int(self._viewer._settings_manager.get("font_size", 10))
+            self._spin_font_size.setValue(font_size)
 
             width = 256
             height = 195
@@ -168,6 +179,7 @@ class SettingsDialog(QDialog):
     def _collect_settings(self) -> dict[str, float | int | str]:
         return {
             "theme": str(self._combo_theme.currentData()),
+            "font_size": int(self._spin_font_size.value()),
             "thumbnail_width": int(self._spin_thumb_w.value()),
             "thumbnail_height": int(self._spin_thumb_h.value()),
             "thumbnail_hspacing": int(self._spin_hspacing.value()),
@@ -189,7 +201,7 @@ class SettingsDialog(QDialog):
 
             # Apply theme
             if hasattr(self._viewer, "apply_theme"):
-                self._viewer.apply_theme(settings["theme"])
+                self._viewer.apply_theme(str(settings["theme"]), int(settings["font_size"]))
 
             if hasattr(self._viewer, "apply_thumbnail_settings"):
                 self._viewer.apply_thumbnail_settings(

@@ -37,7 +37,7 @@ class FluentColors:
 COMMON_QSS = """
     * {
         font-family: "Segoe UI", "Malgun Gothic", sans-serif;
-        font-size: 10pt;
+        font-size: {{font_size}}pt;
     }
     
     /* -------------------------------------------------------------------------
@@ -49,7 +49,7 @@ COMMON_QSS = """
         border: 1px solid {{border}};
         padding: 6px;
         border-radius: 4px;
-        font-size: 9pt;
+        font-size: {{tooltip_font_size}}pt;
     }
     
     QStatusBar {
@@ -114,11 +114,9 @@ COMMON_QSS = """
         min-height: 30px;
         border-radius: 5px;
         margin: 1px;
-        /* Make it semi-transparent if possible, or just lighter */
-        background-color: rgba(128, 128, 128, 0.4); 
     }
     QScrollBar::handle:vertical:hover {
-        background-color: rgba(128, 128, 128, 0.7);
+        background-color: {{text}};
     }
     QScrollBar::handle:vertical:pressed {
         background-color: {{accent}};
@@ -137,13 +135,13 @@ COMMON_QSS = """
         margin: 0px;
     }
     QScrollBar::handle:horizontal {
-        background-color: rgba(128, 128, 128, 0.4);
+        background: {{text_sec}};
         min-width: 30px;
         border-radius: 5px;
         margin: 1px;
     }
     QScrollBar::handle:horizontal:hover {
-        background-color: rgba(128, 128, 128, 0.7);
+        background-color: {{text}};
     }
     QScrollBar::handle:horizontal:pressed {
         background-color: {{accent}};
@@ -291,7 +289,6 @@ COMMON_QSS = """
         background-color: {{surface}}; /* Sidebar look */
         border: none;
         border-right: 1px solid {{border}};
-        font-size: 10pt;
     }
     #explorerFolderTree::item {
         padding: 6px 4px;
@@ -321,7 +318,7 @@ COMMON_QSS = """
 """
 
 
-def _apply_style(app: QApplication, pal_def: dict) -> None:
+def _apply_style(app: QApplication, pal_def: dict, font_size: int = 10) -> None:
     """Apply palette and QSS based on definition dict."""
     app.setStyle("Fusion")
 
@@ -360,7 +357,7 @@ def _apply_style(app: QApplication, pal_def: dict) -> None:
     # Prefer Segoe UI (Windows standard), then Malgun Gothic (Korean standard), then Generic
     font = QFont("Segoe UI")
     font.setStyleHint(QFont.SansSerif)
-    font.setPointSize(10)  # 10pt is readable
+    font.setPointSize(font_size)
 
     # Check if Segoe UI exists, otherwise fallback?
     # Qt usually handles "Segoe UI" gracefully on Windows.
@@ -368,19 +365,23 @@ def _apply_style(app: QApplication, pal_def: dict) -> None:
 
     # 3. Process and Set Stylesheet
     # Simple template replacement
-    qss = COMMON_QSS
+    qss = COMMON_QSS.replace("{{font_size}}", str(font_size))
+    # Make tooltip slightly smaller
+    qss = qss.replace("{{tooltip_font_size}}", str(max(8, font_size - 1)))
+
     for key, val in pal_def.items():
         qss = qss.replace(f"{{{{{key}}}}}", val)
 
     app.setStyleSheet(qss)
 
 
-def apply_theme(app: QApplication, theme: str = "dark") -> None:
+def apply_theme(app: QApplication, theme: str = "dark", font_size: int = 10) -> None:
     """Apply a theme to the application.
 
     Args:
         app: QApplication instance
         theme: Theme name ("dark" or "light")
+        font_size: Base font size in points (default: 10)
     """
     if theme == "light":
         pal_def = {
@@ -405,7 +406,7 @@ def apply_theme(app: QApplication, theme: str = "dark") -> None:
             "accent_text": FluentColors.DARK_ACCENT_TEXT,
         }
 
-    _apply_style(app, pal_def)
+    _apply_style(app, pal_def, font_size)
 
 
 # Legacy aliases if needed, though apply_theme handles both

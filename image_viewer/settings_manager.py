@@ -22,6 +22,7 @@ class SettingsManager:
         "thumbnail_size": 256,
         "thumbnail_hspacing": 10,
         "thumbnail_cache_name": "image_viewer_thumbs",
+        "font_size": 10,
     }
 
     def __init__(self, settings_path: str):
@@ -72,6 +73,10 @@ class SettingsManager:
     @property
     def fast_view_enabled(self) -> bool:
         return bool(self.get("fast_view_enabled", False))
+
+    @property
+    def font_size(self) -> int:
+        return int(self.get("font_size", 10))
 
     @property
     def last_parent_dir(self) -> str | None:

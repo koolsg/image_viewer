@@ -1009,11 +1009,12 @@ class ImageViewer(QMainWindow):
         """Open a specific folder directly (used in explorer mode)."""
         open_folder_at(self, folder_path)
 
-    def apply_theme(self, theme: str) -> None:
+    def apply_theme(self, theme: str, font_size: int = 10) -> None:
         """Apply a theme and save to settings.
 
         Args:
             theme: Theme name ("dark" or "light")
+            font_size: Base font size in points (default: 10)
         """
         try:
             from image_viewer.styles import apply_theme  # noqa: PLC0415
@@ -1025,9 +1026,10 @@ class ImageViewer(QMainWindow):
                 app = QApplication.instance()
 
             if app:
-                apply_theme(app, theme)
+                apply_theme(app, theme, font_size)
                 self._save_settings_key("theme", theme)
-                logger.debug("theme applied: %s", theme)
+                self._save_settings_key("font_size", int(font_size))
+                logger.debug("theme applied: %s, font_size=%d", theme, font_size)
         except Exception as e:
             logger.error("failed to apply theme: %s", e)
 
@@ -1063,10 +1065,11 @@ def run(argv: list[str] | None = None) -> int:  # noqa: PLR0915
 
     # Apply theme from settings (default: dark)
     theme = viewer._settings_manager.get("theme", "dark")
+    font_size = int(viewer._settings_manager.get("font_size", 10))
     from image_viewer.styles import apply_theme  # noqa: PLC0415
 
-    apply_theme(app, theme)
-    _logger.debug("Theme applied: %s", theme)
+    apply_theme(app, theme, font_size)
+    _logger.debug("Theme applied: %s, font_size=%d", theme, font_size)
     viewer._current_app = app  # Store app reference for theme switching
 
     # Case 1: started with an image file → open its folder and show that image in View mode, fullscreen.
