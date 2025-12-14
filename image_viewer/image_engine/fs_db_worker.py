@@ -9,9 +9,9 @@ from PySide6.QtCore import QObject, Signal
 
 from image_viewer.logger import get_logger
 
+from .db.thumbdb_core import ThumbDB, ThumbDBOperatorAdapter
 from .db_operator import DbOperator
 from .meta_utils import to_mtime_ms_from_stat as _to_mtime_ms_from_stat
-from .thumb_db import ThumbDB, ThumbDBOperatorAdapter
 
 _logger = get_logger("fs_db_worker")
 
