@@ -542,22 +542,34 @@ class ImageViewer(QMainWindow):
             super().keyPressEvent(event)
             return
 
-        if key == Qt.Key.Key_Right:
-            self.next_image()
-        elif key == Qt.Key.Key_Left:
-            self.prev_image()
-        elif key == Qt.Key.Key_A:
-            # Rotate 90 degrees to the left
-            with contextlib.suppress(Exception):
-                self.canvas.rotate_by(-90)
-        elif key == Qt.Key.Key_D:
-            # Rotate 90 degrees to the right
-            with contextlib.suppress(Exception):
-                self.canvas.rotate_by(90)
-        elif key == Qt.Key.Key_Delete:
-            self.delete_current_file()
-        else:
-            super().keyPressEvent(event)
+        # Keys that should only work in VIEW mode (single image view)
+        view_mode_only_keys = (Qt.Key.Key_Right, Qt.Key.Key_Left, Qt.Key.Key_A, Qt.Key.Key_D, Qt.Key.Key_Delete)
+
+        is_view_mode = getattr(self.explorer_state, "view_mode", True)
+        if key in view_mode_only_keys:
+            # If in Explorer Mode, let the active widget handle it (e.g., arrow navigation)
+            if not is_view_mode:
+                # Except Delete - we might want global delete, but explorer grid has its own handler
+                # Let's pass it through to the widget first.
+                super().keyPressEvent(event)
+                return
+
+            # In View Mode, handle navigation/rotation
+            if key == Qt.Key.Key_Right:
+                self.next_image()
+            elif key == Qt.Key.Key_Left:
+                self.prev_image()
+            elif key == Qt.Key.Key_A:
+                with contextlib.suppress(Exception):
+                    self.canvas.rotate_by(-90)
+            elif key == Qt.Key.Key_D:
+                with contextlib.suppress(Exception):
+                    self.canvas.rotate_by(90)
+            elif key == Qt.Key.Key_Delete:
+                self.delete_current_file()
+            return
+
+        super().keyPressEvent(event)
 
     def maintain_decode_window(self, back: int = 3, ahead: int = 5) -> None:
         """Prefetch images around the current index."""
