@@ -19,10 +19,11 @@ from PySide6.QtWidgets import QFileSystemModel
 
 from image_viewer.logger import get_logger
 
+from .db.thumbdb_bytes_adapter import ThumbDBBytesAdapter
 from .decoder import get_image_dimensions
 from .fs_db_worker import FSDBLoadWorker
+from .fs_model_disk import init_thumbnail_cache_for_path, load_thumbnail_from_cache, save_thumbnail_to_cache
 from .meta_utils import to_mtime_ms_from_stat as _to_mtime_ms_from_stat
-from .thumbnail_cache import ThumbnailCache
 
 _logger = get_logger("fs_model")
 
@@ -57,7 +58,7 @@ class ImageFileSystemModel(QFileSystemModel):
         self._thumb_size: tuple[int, int] = (256, 195)
         self._view_mode: str = "thumbnail"
         self._meta: dict[str, tuple[int | None, int | None, int | None, int | None]] = {}
-        self._db_cache: ThumbnailCache | None = None
+        self._db_cache: ThumbDBBytesAdapter | None = None
         self._batch_load_done: bool = False
         self._pending_removed_paths: list[str] = []
         self._thumb_db_thread: QThread | None = None
@@ -1000,10 +1001,14 @@ class ImageFileSystemModel(QFileSystemModel):
             _logger.debug("thumbnail_ready failed: %s", exc)
 
     def _ensure_db_cache(self, path: str) -> None:
-        """Ensure database cache is initialized for the given path's directory."""
+        """Ensure database cache is initialized for the given path's directory.
+
+        This delegates actual construction to `init_thumbnail_cache_for_path` to
+        keep creation logic isolated and testable.
+        """
         if self._db_cache is None:
             cache_dir = Path(path).parent
-            self._db_cache = ThumbnailCache(cache_dir, "SwiftView_thumbs.db")
+            self._db_cache = init_thumbnail_cache_for_path(cache_dir, "SwiftView_thumbs.db")
 
     def _load_disk_icon(self, path: str) -> QIcon | None:
         """Load thumbnail from SQLite cache."""
@@ -1012,31 +1017,10 @@ class ImageFileSystemModel(QFileSystemModel):
             if not self._db_cache:
                 return None
 
-            # Get file stats
-            file_path = Path(path)
-            if not file_path.exists():
-                return None
-            stat = file_path.stat()
-            mtime = _to_mtime_ms_from_stat(stat)
-            size = stat.st_size
-
-            # Try to load from cache
-            result = self._db_cache.get(path, mtime, size, self._thumb_size[0], self._thumb_size[1])
+            result = load_thumbnail_from_cache(self._db_cache, path, self._thumb_size)
             if result is None:
                 return None
-
             pixmap, orig_width, orig_height = result
-            if pixmap is None or pixmap.isNull():
-                _logger.debug("_load_disk_icon: cached pixmap is null for %s", path)
-                return None
-
-            # Scale cached thumbnail to current UI size (cache stores one thumbnail per file).
-            pixmap = pixmap.scaled(
-                self._thumb_size[0],
-                self._thumb_size[1],
-                Qt.KeepAspectRatio,
-                Qt.SmoothTransformation,
-            )
 
             # Update metadata
             prev = self._meta.get(path, (None, None, None, None))
@@ -1062,17 +1046,8 @@ class ImageFileSystemModel(QFileSystemModel):
             mtime = _to_mtime_ms_from_stat(stat)
             size = stat.st_size
 
-            # Save to cache
-            self._db_cache.set(
-                path,
-                mtime,
-                size,
-                orig_width,
-                orig_height,
-                self._thumb_size[0],
-                self._thumb_size[1],
-                pixmap,
-            )
+            # Save to cache via helper
+            save_thumbnail_to_cache(self._db_cache, path, self._thumb_size, pixmap, (orig_width, orig_height))
 
             # Keep in-memory meta consistent with what we just persisted.
             self._meta[path] = (orig_width, orig_height, int(size), int(mtime))
