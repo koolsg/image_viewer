@@ -489,23 +489,67 @@ class ThumbnailCache:
             _logger.error("failed to vacuum database: %s", exc)
 
     def _set_hidden_attribute(self) -> None:
-        """Set hidden attribute on Windows."""
+        """Set hidden attribute on Windows.
+
+        This is an instance method so it can access `self.db_path` and be
+        invoked during initialization. Keep failures silent but logged at
+        debug level so it's useful when debugging Windows-specific behavior.
+        """
         try:
+            _logger.debug(
+                "_set_hidden_attribute: entry: platform=%s ctypes=%s db_path=%s",
+                platform.system(),
+                bool(ctypes),
+                getattr(self, "db_path", None),
+            )
+
             if platform.system() != "Windows":
+                _logger.debug("_set_hidden_attribute: not on Windows, skipping")
                 return
 
-            if not self.db_path.exists():
+            db_path_obj = getattr(self, "db_path", None)
+            if not db_path_obj:
+                _logger.debug("_set_hidden_attribute: no db_path set, skipping")
+                return
+
+            # Wait briefly for DB file to appear (it may be created by operator writes)
+            db_path = Path(db_path_obj)
+            for _ in range(5):
+                if db_path.exists():
+                    break
+                time.sleep(0.1)
+
+            if not db_path.exists():
+                _logger.debug("_set_hidden_attribute: DB file does not exist yet: %s", db_path)
                 return
 
             if ctypes is None:
+                _logger.debug("_set_hidden_attribute: ctypes not available, skipping")
                 return
 
             # FILE_ATTRIBUTE_HIDDEN = 0x02
-            ctypes.windll.kernel32.SetFileAttributesW(str(self.db_path), 0x02)
-            _logger.debug("set hidden attribute on %s", self.db_path)
-        except Exception as exc:
-            _logger.debug("failed to set hidden attribute: %s", exc)
+            path_str = str(db_path)
+            _logger.debug("_set_hidden_attribute: calling SetFileAttributesW for %s", path_str)
+            result = ctypes.windll.kernel32.SetFileAttributesW(path_str, 0x02)
+            if result == 0:
+                # Try long-path prefix fallback for paths exceeding MAX_PATH or with special chars
+                try:
+                    prefixed = path_str
+                    if not path_str.startswith("\\\\?\\"):
+                        prefixed = "\\\\?\\" + path_str
+                    _logger.debug("_set_hidden_attribute: initial call failed, trying long-path prefix: %s", prefixed)
+                    result = ctypes.windll.kernel32.SetFileAttributesW(prefixed, 0x02)
+                except Exception:
+                    pass
 
-    # NOTE: `close()` and `__del__` are implemented above (earlier) and perform
-    # operator shutdown, connection closure, and adapter disposal. Duplicate
-    # functions were removed to avoid shadowing and redeclaration errors.
+            if result == 0:
+                _logger.debug("SetFileAttributesW failed for %s", db_path)
+            else:
+                _logger.debug("set hidden attribute on %s", db_path)
+        except Exception:
+            _logger.debug("failed to set hidden attribute", exc_info=True)
+
+
+# NOTE: `close()` and `__del__` are implemented above (earlier) and perform
+# operator shutdown, connection closure, and adapter disposal. Duplicate
+# functions were removed to avoid shadowing and redeclaration errors.

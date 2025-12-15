@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import contextlib
+import platform
 import time
 from collections.abc import Iterable
 from pathlib import Path
@@ -8,11 +9,100 @@ from pathlib import Path
 from image_viewer.logger import get_logger
 from image_viewer.path_utils import db_key
 
+try:
+    import ctypes
+except Exception:
+    ctypes = None
+
 from .db_operator import DbOperator
 from .migrations import apply_migrations
 from .thumbdb_core import ThumbDBOperatorAdapter
 
 _logger = get_logger("thumbnail_db")
+
+
+def _set_hidden_attribute_immediate(path: Path) -> None:
+    """Attempt to set hidden attribute on `path` immediately (no sleeps).
+
+    Intended to be called from within the DB operator task so it runs while
+    the DB connection and file are being created. Logs messages with
+    "(immediate)" for easier diagnostic filtering.
+    """
+    try:
+        if platform.system() != "Windows":
+            return
+        if ctypes is None:
+            return
+        path_str = str(Path(path))
+        try:
+            res = ctypes.windll.kernel32.SetFileAttributesW(path_str, 0x02)
+        except Exception:
+            res = 0
+        if res == 0:
+            # Try long-path prefix fallback
+            try:
+                prefixed = path_str
+                if not path_str.startswith("\\\\?\\"):
+                    prefixed = "\\\\?\\" + path_str
+                res = ctypes.windll.kernel32.SetFileAttributesW(prefixed, 0x02)
+            except Exception:
+                res = 0
+        if res == 0:
+            _logger.debug("SetFileAttributesW failed (immediate) for %s", path)
+        else:
+            _logger.debug("set hidden attribute (immediate) on %s", path)
+    except Exception:
+        _logger.debug("_set_hidden_attribute_immediate failed", exc_info=True)
+
+
+def _set_hidden_attribute_on_path(path: Path) -> None:
+    """Set hidden attribute on a path (Windows only).
+
+    Best-effort fallback that checks file existence once and tries the
+    attribute set without sleeping. Prefer `_set_hidden_attribute_immediate`
+    to be invoked from operator tasks when possible.
+    """
+    with contextlib.suppress(Exception):
+        plat = platform.system()
+        have_ctypes = bool(ctypes)
+        _logger.debug("_set_hidden_attribute_on_path: entry: platform=%s ctypes=%s path=%s", plat, have_ctypes, path)
+
+    try:
+        if platform.system() != "Windows":
+            _logger.debug("_set_hidden_attribute_on_path: not on Windows, skipping")
+            return
+
+        db_path = Path(path)
+        if not db_path.exists():
+            _logger.debug("_set_hidden_attribute_on_path: file does not exist: %s", db_path)
+            return
+
+        if ctypes is None:
+            _logger.debug("_set_hidden_attribute_on_path: ctypes missing, skipping")
+            return
+
+        path_str = str(db_path)
+        _logger.debug("_set_hidden_attribute_on_path: calling SetFileAttributesW for %s", path_str)
+        result = ctypes.windll.kernel32.SetFileAttributesW(path_str, 0x02)
+        if result == 0:
+            try:
+                prefixed = path_str
+                if not path_str.startswith("\\\\?\\"):
+                    prefixed = "\\\\?\\" + path_str
+                _logger.debug(
+                    "_set_hidden_attribute_on_path: initial call failed, trying long-path prefix: %s",
+                    prefixed,
+                )
+                result = ctypes.windll.kernel32.SetFileAttributesW(prefixed, 0x02)
+            except Exception:
+                pass
+
+        if result == 0:
+            _logger.debug("SetFileAttributesW failed for %s", db_path)
+        else:
+            _logger.debug("set hidden attribute on %s", db_path)
+    except Exception:
+        _logger.debug("_set_hidden_attribute_on_path failed", exc_info=True)
 
 
 class ThumbDBBytesAdapter:
@@ -59,10 +149,22 @@ class ThumbDBBytesAdapter:
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_mtime ON thumbnails(mtime)")
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_created_at ON thumbnails(created_at)")
                 conn.commit()
+                # Attempt to set the hidden attribute here synchronously while the
+                # operator task is executing and the file should exist.
+                try:
+                    _set_hidden_attribute_immediate(self._db_path)
+                except Exception:
+                    _logger.debug("_set_hidden_attribute_immediate failed", exc_info=True)
 
             self._operator.schedule_write(_schema_init).result()
             fut = self._operator.schedule_write(lambda conn: apply_migrations(conn))
             fut.result()
+            # Try to set hidden attribute on the DB file (Windows only). This
+            # helps keep the DB file out of Explorer listings for image folders.
+            try:
+                _set_hidden_attribute_on_path(self._db_path)
+            except Exception:
+                _logger.debug("_set_hidden_attribute_on_path failed", exc_info=True)
         except Exception:
             _logger.debug("thumbnail_db: apply_migrations failed during init", exc_info=True)
 
