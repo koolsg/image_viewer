@@ -8,6 +8,7 @@ from PySide6.QtGui import QPixmap
 
 from image_viewer.image_engine.db.thumbdb_bytes_adapter import ThumbDBBytesAdapter
 from image_viewer.logger import get_logger
+from image_viewer.path_utils import abs_dir
 
 _logger = get_logger("fs_model_disk")
 
@@ -19,11 +20,7 @@ def init_thumbnail_cache_for_path(cache_dir: Path, db_name: str = "SwiftView_thu
     ThumbnailCache will raise. This helper returns the instance or None on error.
     """
     try:
-        # Use absolute resolved path for cache directory to avoid surprises
-        try:
-            cache_dir = cache_dir.resolve()
-        except Exception:
-            cache_dir = cache_dir.absolute()
+        cache_dir = abs_dir(cache_dir)
         cache_dir.mkdir(parents=True, exist_ok=True)
         db_path = cache_dir / db_name
         _logger.debug(

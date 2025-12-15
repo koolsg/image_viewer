@@ -14,6 +14,7 @@ from .file_operations import (
     send_to_recycle_bin,
     show_delete_confirmation,
 )
+from .path_utils import abs_dir, abs_dir_str, abs_path, abs_path_str
 
 # Re-export for backward compatibility (used by ui_explorer_grid)
 __all__ = [
@@ -239,7 +240,7 @@ def _setup_explorer_mode(viewer) -> None:  # noqa: PLR0912, PLR0915
             # Fallback: use first image's parent folder
             first_file = engine.get_file_at_index(0)
             if first_file:
-                current_dir = str(Path(first_file).parent)
+                current_dir = abs_dir_str(first_file)
                 tree.set_root_path(current_dir)
                 grid.load_folder(current_dir)
                 with contextlib.suppress(Exception):
@@ -292,21 +293,21 @@ def _on_explorer_image_selected(viewer, image_path: str) -> None:  # noqa: PLR09
 
         # Set current_index BEFORE switching to View Mode
         # Display image by image_path (normalize paths for comparison)
-        normalized_path = str(Path(image_path).resolve())
+        normalized_path = abs_path_str(image_path)
         image_files = engine.get_image_files()
-        normalized_files = [str(Path(f).resolve()) for f in image_files]
+        normalized_files = [abs_path_str(f) for f in image_files]
 
         if normalized_path in normalized_files:
             viewer.current_index = normalized_files.index(normalized_path)
         else:
             # If it's a new folder, open it first
-            new_folder = str(Path(image_path).parent)
+            new_folder = abs_dir_str(image_path)
             _logger.debug("explorer select: open_folder_at %s", new_folder)
             open_folder_at(viewer, new_folder)
             # Re-normalize after opening folder
-            normalized_path = str(Path(image_path).resolve())
+            normalized_path = abs_path_str(image_path)
             image_files = engine.get_image_files()
-            normalized_files = [str(Path(f).resolve()) for f in image_files]
+            normalized_files = [abs_path_str(f) for f in image_files]
             if normalized_path in normalized_files:
                 viewer.current_index = normalized_files.index(normalized_path)
 
@@ -414,7 +415,7 @@ def _set_files_to_clipboard(paths: list[str], operation: str) -> None:
     """
     try:
         mime = QMimeData()
-        urls = [Path(p).as_uri() for p in paths]
+        urls = [abs_path(p).as_uri() for p in paths]
         mime.setUrls([QUrl(u) for u in urls])
         QGuiApplication.clipboard().setMimeData(mime)
         _logger.debug("%s %d files to clipboard", operation, len(paths))
@@ -451,7 +452,7 @@ def paste_files(dest_folder: str, clipboard_paths: list[str], mode: str) -> tupl
     Returns:
         Tuple of (success_count, failed_paths)
     """
-    dest_dir = Path(dest_folder)
+    dest_dir = abs_dir(dest_folder)
     if not dest_dir.is_dir():
         _logger.warning("destination is not a directory: %s", dest_folder)
         return 0, clipboard_paths
@@ -461,7 +462,7 @@ def paste_files(dest_folder: str, clipboard_paths: list[str], mode: str) -> tupl
 
     for src in clipboard_paths:
         try:
-            src_path = Path(src)
+            src_path = abs_path(src)
             if not src_path.exists():
                 failed_paths.append(src)
                 continue

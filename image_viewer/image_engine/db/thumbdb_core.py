@@ -7,6 +7,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from image_viewer.logger import get_logger
+from image_viewer.path_utils import db_key
 
 from .db_operator import DbOperator
 from .migrations import apply_migrations
@@ -360,12 +361,5 @@ def cast_row(row: Sequence[object] | tuple | None) -> RowType:
     )
 
 
-DRIVE_PREFIX_LEN = 2
-
-
 def _norm_path(path: str) -> str:
-    p = path.replace("\\", "/")
-    # Normalize drive letter casing on Windows
-    if len(p) >= DRIVE_PREFIX_LEN and p[1] == ":":
-        p = p[0].upper() + p[1:]
-    return p
+    return db_key(path)

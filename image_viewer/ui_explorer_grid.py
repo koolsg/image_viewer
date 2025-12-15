@@ -40,6 +40,7 @@ from . import explorer_mode_operations
 from .busy_cursor import busy_cursor
 from .image_engine.fs_model import ImageFileSystemModel
 from .logger import get_logger
+from .path_utils import abs_dir_str
 
 _logger = get_logger("ui_explorer_grid")
 
@@ -248,13 +249,7 @@ class ThumbnailGridWidget(QWidget):
         try:
             _logger.debug("load_folder called: %s", folder_path)
             # Normalize the folder path to an absolute directory before using it.
-            with contextlib.suppress(Exception):
-                fp = Path(folder_path)
-                try:
-                    fp = fp.resolve()
-                except Exception:
-                    fp = fp.absolute()
-                folder_path = str(fp)
+            folder_path = abs_dir_str(folder_path)
             # Check through model, not direct file access
             folder_index = self._model.index(folder_path)
             if not folder_index.isValid() or not self._model.isDir(folder_index):

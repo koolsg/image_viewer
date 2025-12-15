@@ -5,6 +5,11 @@
 **What:** Rebind thumbnail DB per opened folder by resetting/closing the existing DB adapter when the model root changes; set engine root earlier to avoid racey initialization; cleaned up path normalization and logging and fixed Ruff violations introduced during debugging.
 **Checks:** Ruff: pass; Pyright: pass; Tests: not run (per user request)
 
+### Refactor: centralize absolute/normalized paths
+**Files:** image_viewer/path_utils.py, image_viewer/image_engine/engine.py, image_viewer/image_engine/fs_model.py, image_viewer/image_engine/fs_model_disk.py, image_viewer/image_engine/directory_worker.py, image_viewer/image_engine/db/thumbdb_core.py, image_viewer/image_engine/db/thumbdb_bytes_adapter.py, image_viewer/image_engine/thumbnail_cache.py, image_viewer/ui_explorer_grid.py, image_viewer/explorer_mode_operations.py
+**What:** Introduced shared path normalization helpers (absolute filesystem paths and stable DB keys) and replaced ad-hoc `resolve()/absolute()/replace('\\\\','/')` logic across the codebase.
+**Checks:** Ruff: pass; Pyright: pass; Tests: not run (per user request)
+
 ## 2025-12-14
 
 ### DB 파일 명칭 정리 및 구조 개선

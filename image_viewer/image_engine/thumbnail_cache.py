@@ -20,6 +20,7 @@ from image_viewer.image_engine.db.db_operator import DbOperator
 from image_viewer.image_engine.db.migrations import apply_migrations
 from image_viewer.image_engine.db.thumbdb_bytes_adapter import ThumbDBBytesAdapter
 from image_viewer.logger import get_logger
+from image_viewer.path_utils import db_key
 
 try:
     import ctypes
@@ -28,7 +29,6 @@ except Exception:
 
 _logger = get_logger("thumbnail_cache")
 
-_DRIVE_PREFIX_LEN = 2
 _EPOCH_MS_THRESHOLD = 10**11
 
 
@@ -47,21 +47,7 @@ class ThumbnailCache:
 
     @staticmethod
     def _norm_path(path: str) -> str:
-        try:
-            pth = Path(path)
-            try:
-                pth = pth.resolve()
-            except Exception:
-                pth = pth.absolute()
-            p = str(pth).replace("\\", "/")
-            if len(p) >= _DRIVE_PREFIX_LEN and p[1] == ":":
-                p = p[0].upper() + p[1:]
-            return p
-        except Exception:
-            p = path.replace("\\", "/")
-            if len(p) >= _DRIVE_PREFIX_LEN and p[1] == ":":
-                p = p[0].upper() + p[1:]
-            return p
+        return db_key(path)
 
     @staticmethod
     def _mtime_matches(db_mtime: float | None, current_mtime: float | int) -> bool:

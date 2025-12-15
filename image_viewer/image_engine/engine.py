@@ -6,13 +6,13 @@ data and processing operations in the image viewer application.
 
 import contextlib
 from collections import OrderedDict
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QObject, QThread, Signal
 from PySide6.QtGui import QIcon, QImage, QPixmap
 
 from image_viewer.logger import get_logger
+from image_viewer.path_utils import abs_path, abs_path_str
 
 from .convert_worker import ConvertWorker
 from .decoder import decode_image
@@ -112,19 +112,11 @@ class ImageEngine(QObject):
         Returns:
             True if folder was opened successfully
         """
-        try:
-            p = Path(path)
-            try:
-                p = p.resolve()
-            except Exception:
-                p = p.absolute()
-            if not p.is_dir():
-                _logger.warning("open_folder: not a directory: %s", path)
-                return False
-            path = str(p)
-        except Exception:
-            _logger.warning("open_folder: invalid path: %s", path)
+        p = abs_path(path)
+        if not p.is_dir():
+            _logger.warning("open_folder: not a directory: %s", path)
             return False
+        path = abs_path_str(p)
 
         # Clear caches
         self.clear_cache()
@@ -535,15 +527,7 @@ class ImageEngine(QObject):
         try:
             # Normalize the incoming path to an absolute representation and
             # ignore stale notifications for non-current roots.
-            try:
-                pth = Path(path)
-                try:
-                    pth = pth.resolve()
-                except Exception:
-                    pth = pth.absolute()
-                path_abs = str(pth)
-            except Exception:
-                path_abs = path
+            path_abs = abs_path_str(path)
             current_root = self._fs_model.rootPath()
             if path_abs != current_root:
                 return

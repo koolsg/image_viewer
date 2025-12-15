@@ -18,6 +18,7 @@ from PySide6.QtGui import QIcon, QImage, QPixmap
 from PySide6.QtWidgets import QFileSystemModel
 
 from image_viewer.logger import get_logger
+from image_viewer.path_utils import abs_dir, abs_dir_str
 
 from .db.thumbdb_bytes_adapter import ThumbDBBytesAdapter
 from .decoder import get_image_dimensions
@@ -299,23 +300,10 @@ class ImageFileSystemModel(QFileSystemModel):
 
     def setRootPath(self, path: str) -> QModelIndex:  # type: ignore[override]
         """Override to reset batch load flag when folder changes."""
-        original_path = path
         p: Path | None = None
-        # Normalize the incoming path to an absolute directory path. If a file
-        # path is provided, use its parent directory.
-        try:
-            p = Path(path)
-            try:
-                p = p.resolve()
-            except Exception:
-                p = p.absolute()
-            if not p.is_dir():
-                p = p.parent
-            path = str(p)
-        except Exception:
-            # If normalization fails, fall back to the original string
-            p = None
-            path = original_path
+        with contextlib.suppress(Exception):
+            p = abs_dir(path)
+            path = abs_dir_str(p)
 
         # If a DB cache is already initialized (possibly for a different
         # folder), rebind it to the new root folder so we don't keep using a
@@ -1051,11 +1039,7 @@ class ImageFileSystemModel(QFileSystemModel):
                 engine_root = getattr(parent, "_current_root", None)
                 if engine_root:
                     try:
-                        cache_dir = Path(engine_root)
-                        try:
-                            cache_dir = cache_dir.resolve()
-                        except Exception:
-                            cache_dir = cache_dir.absolute()
+                        cache_dir = abs_dir(engine_root)
                         _logger.debug("_ensure_db_cache: using engine._current_root=%s", cache_dir)
                         self._db_cache = init_thumbnail_cache_for_path(cache_dir, "SwiftView_thumbs.db")
                         return
@@ -1066,21 +1050,14 @@ class ImageFileSystemModel(QFileSystemModel):
                 pass
             # If an explicit cache directory was set via `setRootPath`, prefer it.
             if getattr(self, "_explicit_cache_dir", None) is not None:
-                cache_dir = self._explicit_cache_dir
-                try:
-                    cache_dir = cache_dir.resolve()
-                except Exception:
-                    cache_dir = cache_dir.absolute()
+                cache_dir = abs_dir(self._explicit_cache_dir)
                 _logger.debug("_ensure_db_cache: using explicit cache_dir=%s", cache_dir)
             else:
                 p = Path(path)
                 # If a directory path was provided, use it directly; otherwise use parent dir
                 cache_dir = p if p.is_dir() else p.parent
                 # Prefer absolute resolved path for cache location
-                try:
-                    cache_dir = cache_dir.resolve()
-                except Exception:
-                    cache_dir = cache_dir.absolute()
+                cache_dir = abs_dir(cache_dir)
                 _logger.debug("_ensure_db_cache: derived cache_dir=%s from path=%s", cache_dir, path)
 
             self._db_cache = init_thumbnail_cache_for_path(cache_dir, "SwiftView_thumbs.db")

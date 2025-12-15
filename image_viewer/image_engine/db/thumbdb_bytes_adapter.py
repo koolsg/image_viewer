@@ -6,14 +6,13 @@ from collections.abc import Iterable
 from pathlib import Path
 
 from image_viewer.logger import get_logger
+from image_viewer.path_utils import db_key
 
 from .db_operator import DbOperator
 from .migrations import apply_migrations
 from .thumbdb_core import ThumbDBOperatorAdapter
 
 _logger = get_logger("thumbnail_db")
-
-_MIN_WIN_DRIVE_PREFIX_LEN = 2
 
 
 class ThumbDBBytesAdapter:
@@ -72,53 +71,19 @@ class ThumbDBBytesAdapter:
         return self._db_path
 
     def probe(self, path: str):
-        # Normalize to absolute path with consistent separators and drive case
-        try:
-            p = Path(path)
-            try:
-                p = p.resolve()
-            except Exception:
-                p = p.absolute()
-            s = str(p).replace("\\", "/")
-            if len(s) >= _MIN_WIN_DRIVE_PREFIX_LEN and s[1] == ":":
-                s = s[0].upper() + s[1:]
-        except Exception:
-            s = path
-        return self._adapter.probe(s)
+        return self._adapter.probe(db_key(path))
 
     def get_rows_for_paths(self, paths: Iterable[str]):
         return self._adapter.get_rows_for_paths(list(paths))
 
     def upsert_meta(self, path: str, mtime: int, size: int, meta: dict | None = None) -> None:
-        try:
-            p = Path(path)
-            try:
-                p = p.resolve()
-            except Exception:
-                p = p.absolute()
-            s = str(p).replace("\\", "/")
-            if len(s) >= _MIN_WIN_DRIVE_PREFIX_LEN and s[1] == ":":
-                s = s[0].upper() + s[1:]
-        except Exception:
-            s = path
-        return self._adapter.upsert_meta(s, mtime, size, meta)
+        return self._adapter.upsert_meta(db_key(path), mtime, size, meta)
 
     def upsert_meta_many(self, rows: list[tuple[str, int, int, dict | None]]) -> None:
         return self._adapter.upsert_meta_many(rows)
 
     def delete(self, path: str) -> None:
-        try:
-            p = Path(path)
-            try:
-                p = p.resolve()
-            except Exception:
-                p = p.absolute()
-            s = str(p).replace("\\", "/")
-            if len(s) >= _MIN_WIN_DRIVE_PREFIX_LEN and s[1] == ":":
-                s = s[0].upper() + s[1:]
-        except Exception:
-            s = path
-        return self._adapter.delete(s)
+        return self._adapter.delete(db_key(path))
 
     def close(self) -> None:
         if getattr(self, "_operator", None) is not None and self._operator_owned:

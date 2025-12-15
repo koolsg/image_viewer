@@ -4,9 +4,9 @@ This avoids iterating the `QFileSystemModel` on the GUI thread which can block
 when opening large folders.
 """
 
-from pathlib import Path
-
 from PySide6.QtCore import QObject, Signal, Slot
+
+from image_viewer.path_utils import abs_dir, abs_path_str
 
 
 class DirectoryWorker(QObject):
@@ -16,11 +16,7 @@ class DirectoryWorker(QObject):
     @Slot(str)
     def run(self, folder_path: str) -> None:
         try:
-            p = Path(folder_path)
-            try:
-                p = p.resolve()
-            except Exception:
-                p = p.absolute()
+            p = abs_dir(folder_path)
             if not p.is_dir():
                 self.files_ready.emit(str(p), [])
                 return
@@ -33,14 +29,11 @@ class DirectoryWorker(QObject):
                     if not child.is_file():
                         continue
                     if child.suffix.lower() in exts:
-                        try:
-                            files.append(str(child.resolve()))
-                        except Exception:
-                            files.append(str(child.absolute()))
+                        files.append(abs_path_str(child))
                 except Exception:
                     continue
 
             files.sort()
-            self.files_ready.emit(folder_path, files)
+            self.files_ready.emit(str(p), files)
         except Exception:
             self.files_ready.emit(folder_path, [])
