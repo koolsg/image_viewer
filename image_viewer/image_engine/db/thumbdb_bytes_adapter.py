@@ -7,7 +7,7 @@ from collections.abc import Iterable
 from pathlib import Path
 
 from image_viewer.logger import get_logger
-from image_viewer.path_utils import db_key
+from image_viewer.path_utils import abs_path_str, db_key
 
 try:
     import ctypes
@@ -33,7 +33,7 @@ def _set_hidden_attribute_immediate(path: Path) -> None:
             return
         if ctypes is None:
             return
-        path_str = str(Path(path))
+        path_str = abs_path_str(path)
         try:
             res = ctypes.windll.kernel32.SetFileAttributesW(path_str, 0x02)
         except Exception:
