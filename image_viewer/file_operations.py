@@ -7,6 +7,7 @@ This module provides low-level file operation utilities used by:
 
 import shutil
 from pathlib import Path
+from .path_utils import abs_path_str
 
 from PySide6.QtCore import QSize, Qt
 from PySide6.QtGui import QKeySequence, QPalette
@@ -191,10 +192,11 @@ def send_to_recycle_bin(path: str) -> None:
     """
     _logger.debug("sending to recycle bin: %s", path)
     try:
-        send2trash(path)
-        _logger.debug("recycle bin success: %s", path)
+        abs_p = abs_path_str(path)
+        send2trash(abs_p)
+        _logger.debug("recycle bin success: %s", abs_p)
     except Exception as e:
-        _logger.error("recycle bin failed: %s -> %s", path, e)
+        _logger.error("recycle bin failed: %s -> %s", abs_p if "abs_p" in locals() else path, e)
         raise
 
 
