@@ -285,22 +285,6 @@ class ThumbnailGridWidget(QWidget):
                     self._tree.setColumnWidth(col, width + margin)
             # Batch load thumbnails from cache
             self._model.batch_load_thumbnails(idx)
-
-            # Force request thumbnails for the first N files to ensure the loader
-            # starts decoding even if the view doesn't immediately request them.
-            try:
-                files = self._model.get_image_files()
-                max_prefetch = min(96, len(files))
-                _logger.debug("load_folder: prefetching %d thumbnails", max_prefetch)
-                for path in files[:max_prefetch]:
-                    with contextlib.suppress(Exception):
-                        # Use internal request to avoid relying on DecorationRole
-                        self._model._request_thumbnail(path)
-                # Force a repaint to ensure the view picks up DecorationRole updates
-                with contextlib.suppress(Exception):
-                    self._list.viewport().update()
-            except Exception:
-                pass
         except Exception as exc:
             _logger.error("failed to load_folder %s: %s", folder_path, exc)
 

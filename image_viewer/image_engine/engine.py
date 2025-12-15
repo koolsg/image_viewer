@@ -68,6 +68,9 @@ class ImageEngine(QObject):
         # Cache last folder and file list to avoid noisy duplicate signals
         self._last_folder_loaded: str | None = None
         self._last_file_list: list[str] | None = None
+        # Cached file list for callers that need a quick answer without
+        # iterating the QFileSystemModel on the GUI thread.
+        self._file_list_cache: list[str] = []
         # Track the currently opened root folder (absolute path)
         self._current_root: str | None = None
 
@@ -121,6 +124,10 @@ class ImageEngine(QObject):
         # Clear caches
         self.clear_cache()
         self._loader.clear_pending()
+        # Clear file list cache immediately; the directory worker will repopulate.
+        self._file_list_cache = []
+        self._last_folder_loaded = None
+        self._last_file_list = None
 
         # Record current root early so any cache initialization triggered during
         # model root updates prefers the opened folder.
@@ -168,7 +175,10 @@ class ImageEngine(QObject):
         Returns:
             List of absolute file paths
         """
-        return self._fs_model.get_image_files()
+        # IMPORTANT: Do not iterate QFileSystemModel here; that can block the
+        # GUI thread for large folders. The directory worker populates the
+        # canonical list asynchronously.
+        return list(self._file_list_cache)
 
     def get_file_at_index(self, idx: int) -> str | None:
         """Get file path at given index.
@@ -179,7 +189,10 @@ class ImageEngine(QObject):
         Returns:
             File path or None if out of range
         """
-        return self._fs_model.get_file_at_index(idx)
+        files = self._file_list_cache
+        if 0 <= idx < len(files):
+            return files[idx]
+        return None
 
     def get_file_index(self, path: str) -> int:
         """Get index of file path.
@@ -190,7 +203,10 @@ class ImageEngine(QObject):
         Returns:
             Index in sorted list, or -1 if not found
         """
-        return self._fs_model.get_file_index(path)
+        try:
+            return self._file_list_cache.index(path)
+        except ValueError:
+            return -1
 
     def get_file_count(self) -> int:
         """Get count of image files.
@@ -198,7 +214,7 @@ class ImageEngine(QObject):
         Returns:
             Number of image files
         """
-        return self._fs_model.get_file_count()
+        return len(self._file_list_cache)
 
     @property
     def fs_model(self) -> ImageFileSystemModel:
@@ -538,6 +554,7 @@ class ImageEngine(QObject):
 
             self._last_folder_loaded = path_abs
             self._last_file_list = list(files)
+            self._file_list_cache = list(files)
             _logger.debug("directory loaded: %s (%d files)", path_abs, len(files))
 
             # Emit folder/file list updates (UI callers will react accordingly)

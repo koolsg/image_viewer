@@ -13,6 +13,7 @@ from image_viewer.explorer_mode_operations import open_folder_at, toggle_view_mo
 from image_viewer.image_engine import ImageEngine
 from image_viewer.image_engine.strategy import DecodingStrategy, FastViewStrategy
 from image_viewer.logger import get_logger
+from image_viewer.path_utils import abs_dir_str
 from image_viewer.settings_manager import SettingsManager
 from image_viewer.status_overlay import StatusOverlayBuilder
 from image_viewer.trim_operations import start_trim_workflow
@@ -185,6 +186,11 @@ class ImageViewer(QMainWindow):
         self._overlay_info = "Ready"
         self._convert_dialog: WebPConvertDialog | None = None
 
+        # Folder listing is produced asynchronously by the engine.
+        # Track pending folder opens so we can auto-display once files arrive.
+        self._pending_open_folder: str | None = None
+        self._pending_open_saw_empty: bool = False
+
     def _get_file_dimensions(self, file_path: str) -> tuple[int | None, int | None]:
         """Get the original dimensions of a file via engine (no direct file access)."""
         try:
@@ -312,27 +318,15 @@ class ImageViewer(QMainWindow):
             self._update_status("Failed to open folder.")
             return
 
-        # Get file list from engine
-        files = self.engine.get_image_files()
-        self.image_files = files
-
-        if not files:
-            self.setWindowTitle("Image Viewer")
-            self._update_status("No images found.")
-            return
-
-        self.current_index = 0
-        self._save_last_parent_dir(dir_path)
-        self.setWindowTitle(f"Image Viewer - {os.path.basename(files[self.current_index])}")
-        self.display_image()
-        self.maintain_decode_window(back=0, ahead=5)
-
-        # Enter fullscreen in View mode
+        # Folder listing is async; wait for engine.folder_changed.
         with contextlib.suppress(Exception):
-            if getattr(self.explorer_state, "view_mode", True):
-                self.enter_fullscreen()
+            dir_path = abs_dir_str(dir_path)
+        self._pending_open_folder = dir_path
+        self._pending_open_saw_empty = False
+        self._save_last_parent_dir(dir_path)
+        self._update_status("Scanning...")
 
-        logger.debug("folder opened: %s, images=%d", dir_path, len(files))
+        logger.debug("folder open started (async): %s", dir_path)
 
     def open_folder(self) -> None:
         """Open folder dialog and load images."""
@@ -475,10 +469,6 @@ class ImageViewer(QMainWindow):
             files: List of image file paths
         """
         try:
-            # Only handle in View mode (Explorer mode auto-updates via model-view)
-            if not self.explorer_state.view_mode:
-                return
-
             # Get current file before update
             current_file = None
             if self.current_index >= 0 and self.current_index < len(self.image_files):
@@ -498,6 +488,35 @@ class ImageViewer(QMainWindow):
                 self._update_status()
 
             logger.debug("folder changed in view mode: %d files, current_index=%d", len(files), self.current_index)
+
+            # If we initiated a folder open in View mode, auto-display once the
+            # async file list arrives. Note: the engine emits an immediate empty
+            # list first; ignore that until we get real files.
+            if self._pending_open_folder and path == self._pending_open_folder:
+                if files and self.current_index == -1:
+                    self.current_index = 0
+                    with contextlib.suppress(Exception):
+                        self.setWindowTitle(f"Image Viewer - {os.path.basename(files[self.current_index])}")
+                    self.display_image()
+                    self.maintain_decode_window(back=0, ahead=5)
+
+                    with contextlib.suppress(Exception):
+                        if getattr(self.explorer_state, "view_mode", True):
+                            self.enter_fullscreen()
+
+                    self._pending_open_folder = None
+                    self._pending_open_saw_empty = False
+                elif not files:
+                    # The engine emits an immediate empty list first. Treat the
+                    # second empty (after the directory worker completes) as
+                    # "no images" and clear the pending state.
+                    if not self._pending_open_saw_empty:
+                        self._pending_open_saw_empty = True
+                    else:
+                        self.setWindowTitle("Image Viewer")
+                        self._update_status("No images found.")
+                        self._pending_open_folder = None
+                        self._pending_open_saw_empty = False
         except Exception as e:
             logger.debug("_on_engine_folder_changed failed: %s", e)
 

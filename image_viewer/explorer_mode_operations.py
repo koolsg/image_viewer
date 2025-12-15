@@ -269,7 +269,7 @@ def _on_explorer_folder_selected(viewer, folder_path: str, grid) -> None:
         _logger.error("failed to load folder in explorer: %s, error=%s", folder_path, e)
 
 
-def _on_explorer_image_selected(viewer, image_path: str) -> None:  # noqa: PLR0915
+def _on_explorer_image_selected(viewer, image_path: str) -> None:
     """Handle image selection in explorer.
 
     Args:
@@ -278,44 +278,20 @@ def _on_explorer_image_selected(viewer, image_path: str) -> None:  # noqa: PLR09
     """
     engine = viewer.engine
     try:
-        # Calculate jump distance (for debugging)
-        try:
-            cur_idx = viewer.current_index
-            tgt_idx = engine.get_file_index(image_path)
-            _logger.debug(
-                "explorer select: cur=%s tgt=%s path=%s",
-                cur_idx,
-                tgt_idx,
-                image_path,
-            )
-        except Exception:
-            pass
-
-        # Set current_index BEFORE switching to View Mode
-        # Display image by image_path (normalize paths for comparison)
         normalized_path = abs_path_str(image_path)
-        image_files = engine.get_image_files()
-        normalized_files = [abs_path_str(f) for f in image_files]
+        target_folder = abs_dir_str(image_path)
+        with contextlib.suppress(Exception):
+            cur_folder = engine.get_current_folder()
+            if cur_folder and abs_dir_str(cur_folder) != target_folder:
+                _logger.debug("explorer select: switching folder via open_folder_at: %s", target_folder)
+                open_folder_at(viewer, target_folder)
+            elif not cur_folder:
+                open_folder_at(viewer, target_folder)
 
-        if normalized_path in normalized_files:
-            viewer.current_index = normalized_files.index(normalized_path)
-        else:
-            # If it's a new folder, open it first
-            new_folder = abs_dir_str(image_path)
-            _logger.debug("explorer select: open_folder_at %s", new_folder)
-            open_folder_at(viewer, new_folder)
-            # Re-normalize after opening folder
-            normalized_path = abs_path_str(image_path)
-            image_files = engine.get_image_files()
-            normalized_files = [abs_path_str(f) for f in image_files]
-            if normalized_path in normalized_files:
-                viewer.current_index = normalized_files.index(normalized_path)
-
-        _logger.debug(
-            "explorer select display: idx=%s path=%s",
-            viewer.current_index,
-            image_path,
-        )
+        # Display immediately using a minimal list; the async folder listing will
+        # later replace viewer.image_files and restore navigation.
+        viewer.image_files = [normalized_path]
+        viewer.current_index = 0
 
         # Switch to View Mode and display the image
         if not viewer.explorer_state.view_mode:
@@ -326,9 +302,6 @@ def _on_explorer_image_selected(viewer, image_path: str) -> None:  # noqa: PLR09
             else:
                 # Fallback to the old function if method doesn't exist
                 _update_ui_for_mode(viewer)
-
-        # Sync image_files from engine after mode switch
-        viewer.image_files = engine.get_image_files()
 
         # Clear canvas and show loading state before displaying the selected image
         if hasattr(viewer, "canvas") and viewer.canvas is not None:
@@ -370,6 +343,7 @@ def open_folder_at(viewer, folder_path: str) -> None:
     """
     engine = viewer.engine
     try:
+        folder_path = abs_dir_str(folder_path)
         if not os.path.isdir(folder_path):
             _logger.warning("not a directory: %s", folder_path)
             return
@@ -382,23 +356,15 @@ def open_folder_at(viewer, folder_path: str) -> None:
             viewer._update_status("Failed to open folder.")
             return
 
-        # Get file list from engine
-        files = engine.get_image_files()
-        viewer.image_files = files
-
-        if not files:
-            viewer.setWindowTitle("Image Viewer")
-            viewer._update_status("No images found.")
-            return
-
-        viewer.current_index = 0
+        # Folder listing is async; rely on engine.folder_changed to populate
+        # viewer.image_files. Track this open so View mode can auto-display.
+        with contextlib.suppress(Exception):
+            viewer._pending_open_folder = folder_path
+            viewer._pending_open_saw_empty = False
         viewer._save_last_parent_dir(folder_path)
-        first_file = engine.get_file_at_index(0)
-        viewer.setWindowTitle(f"Image Viewer - {os.path.basename(first_file) if first_file else ''}")
-        # Lightweight initial prefetch
-        viewer.maintain_decode_window(back=0, ahead=3)
+        viewer._update_status("Scanning...")
 
-        _logger.debug("folder opened: %s, images=%d", folder_path, len(files))
+        _logger.debug("folder open started (async): %s", folder_path)
     except Exception as e:
         _logger.error("failed to open_folder_at: %s, error=%s", folder_path, e)
 
