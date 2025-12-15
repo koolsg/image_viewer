@@ -247,6 +247,14 @@ class ThumbnailGridWidget(QWidget):
         """
         try:
             _logger.debug("load_folder called: %s", folder_path)
+            # Normalize the folder path to an absolute directory before using it.
+            with contextlib.suppress(Exception):
+                fp = Path(folder_path)
+                try:
+                    fp = fp.resolve()
+                except Exception:
+                    fp = fp.absolute()
+                folder_path = str(fp)
             # Check through model, not direct file access
             folder_index = self._model.index(folder_path)
             if not folder_index.isValid() or not self._model.isDir(folder_index):

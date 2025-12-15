@@ -1,3 +1,10 @@
+## 2025-12-16
+
+### Fix: folder-open should not reuse workspace thumbnail DB
+**Files:** image_viewer/image_engine/fs_model.py, image_viewer/image_engine/engine.py, image_viewer/image_engine/fs_model_disk.py, image_viewer/image_engine/db/thumbdb_bytes_adapter.py, image_viewer/image_engine/convert_worker.py, image_viewer/ui_explorer_grid.py
+**What:** Rebind thumbnail DB per opened folder by resetting/closing the existing DB adapter when the model root changes; set engine root earlier to avoid racey initialization; cleaned up path normalization and logging and fixed Ruff violations introduced during debugging.
+**Checks:** Ruff: pass; Pyright: pass; Tests: not run (per user request)
+
 ## 2025-12-14
 
 ### DB 파일 명칭 정리 및 구조 개선

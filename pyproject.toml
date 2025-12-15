@@ -27,7 +27,6 @@ docstring-code-format = true
 dev = [
     "pyright>=1.1.407",
     "pyside6-stubs>=6.7.3.0",
-    "pytest>=9.0.1",
     "ruff>=0.14.4",
 ]
 

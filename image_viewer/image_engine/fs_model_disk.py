@@ -19,8 +19,17 @@ def init_thumbnail_cache_for_path(cache_dir: Path, db_name: str = "SwiftView_thu
     ThumbnailCache will raise. This helper returns the instance or None on error.
     """
     try:
+        # Use absolute resolved path for cache directory to avoid surprises
+        try:
+            cache_dir = cache_dir.resolve()
+        except Exception:
+            cache_dir = cache_dir.absolute()
         cache_dir.mkdir(parents=True, exist_ok=True)
-        tc = ThumbDBBytesAdapter(cache_dir / db_name)
+        db_path = cache_dir / db_name
+        _logger.debug(
+            "init_thumbnail_cache_for_path: cache_dir=%s db_path=%s exists=%s", cache_dir, db_path, db_path.exists()
+        )
+        tc = ThumbDBBytesAdapter(db_path)
         return tc
     except Exception as exc:
         _logger.debug("init_thumbnail_cache_for_path failed: %s", exc)

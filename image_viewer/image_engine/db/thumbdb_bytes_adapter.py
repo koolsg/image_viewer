@@ -13,6 +13,8 @@ from .thumbdb_core import ThumbDBOperatorAdapter
 
 _logger = get_logger("thumbnail_db")
 
+_MIN_WIN_DRIVE_PREFIX_LEN = 2
+
 
 class ThumbDBBytesAdapter:
     """A thin bytes/meta adapter around `ThumbDBOperatorAdapter`.
@@ -22,6 +24,9 @@ class ThumbDBBytesAdapter:
 
     def __init__(self, db_path: Path | str, operator: DbOperator | None = None):
         self._db_path = Path(db_path)
+        # Log intent: where we will initialize/create the DB
+        with contextlib.suppress(Exception):
+            _logger.debug("ThumbDBBytesAdapter init: db_path=%s exists=%s", self._db_path, self._db_path.exists())
         self._operator_owned = False
         # Ensure parent directory exists so SQLite can create the DB file
         with contextlib.suppress(Exception):
@@ -67,19 +72,53 @@ class ThumbDBBytesAdapter:
         return self._db_path
 
     def probe(self, path: str):
-        return self._adapter.probe(path)
+        # Normalize to absolute path with consistent separators and drive case
+        try:
+            p = Path(path)
+            try:
+                p = p.resolve()
+            except Exception:
+                p = p.absolute()
+            s = str(p).replace("\\", "/")
+            if len(s) >= _MIN_WIN_DRIVE_PREFIX_LEN and s[1] == ":":
+                s = s[0].upper() + s[1:]
+        except Exception:
+            s = path
+        return self._adapter.probe(s)
 
     def get_rows_for_paths(self, paths: Iterable[str]):
         return self._adapter.get_rows_for_paths(list(paths))
 
     def upsert_meta(self, path: str, mtime: int, size: int, meta: dict | None = None) -> None:
-        return self._adapter.upsert_meta(path, mtime, size, meta)
+        try:
+            p = Path(path)
+            try:
+                p = p.resolve()
+            except Exception:
+                p = p.absolute()
+            s = str(p).replace("\\", "/")
+            if len(s) >= _MIN_WIN_DRIVE_PREFIX_LEN and s[1] == ":":
+                s = s[0].upper() + s[1:]
+        except Exception:
+            s = path
+        return self._adapter.upsert_meta(s, mtime, size, meta)
 
     def upsert_meta_many(self, rows: list[tuple[str, int, int, dict | None]]) -> None:
         return self._adapter.upsert_meta_many(rows)
 
     def delete(self, path: str) -> None:
-        return self._adapter.delete(path)
+        try:
+            p = Path(path)
+            try:
+                p = p.resolve()
+            except Exception:
+                p = p.absolute()
+            s = str(p).replace("\\", "/")
+            if len(s) >= _MIN_WIN_DRIVE_PREFIX_LEN and s[1] == ":":
+                s = s[0].upper() + s[1:]
+        except Exception:
+            s = path
+        return self._adapter.delete(s)
 
     def close(self) -> None:
         if getattr(self, "_operator", None) is not None and self._operator_owned:

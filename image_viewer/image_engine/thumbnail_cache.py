@@ -47,10 +47,21 @@ class ThumbnailCache:
 
     @staticmethod
     def _norm_path(path: str) -> str:
-        p = path.replace("\\", "/")
-        if len(p) >= _DRIVE_PREFIX_LEN and p[1] == ":":
-            p = p[0].upper() + p[1:]
-        return p
+        try:
+            pth = Path(path)
+            try:
+                pth = pth.resolve()
+            except Exception:
+                pth = pth.absolute()
+            p = str(pth).replace("\\", "/")
+            if len(p) >= _DRIVE_PREFIX_LEN and p[1] == ":":
+                p = p[0].upper() + p[1:]
+            return p
+        except Exception:
+            p = path.replace("\\", "/")
+            if len(p) >= _DRIVE_PREFIX_LEN and p[1] == ":":
+                p = p[0].upper() + p[1:]
+            return p
 
     @staticmethod
     def _mtime_matches(db_mtime: float | None, current_mtime: float | int) -> bool:

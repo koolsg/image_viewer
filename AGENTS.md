@@ -4,14 +4,14 @@
 
 Desktop image viewer built with PySide6, using multi-process image decoding via pyvips and NumPy. The viewer supports two decoding modes (fast thumbnail vs full-resolution), a status overlay instead of a status bar, an explorer mode (folder tree + thumbnail grid), batch trimming, and WebP batch conversion. Backend logic and decoders live under the `image_viewer/image_engine/` package.
 
-Code is organized into the `image_viewer/` package for application logic and UI, and `tests/` for unit/integration tests.
+Code is organized into the `image_viewer/` package for application logic and UI
 
 ## Development environment & dependencies
 
 - Python: 3.11+
 - Package/dependency management: `uv` with `pyproject.toml` and `uv.lock`.
 - Core runtime deps (from `pyproject.toml`): `pyside6`, `pyvips[binary]`, `numpy`, `send2trash`.
-- Dev tools: `pytest`, `ruff`, `pyright`, `pyside6-stubs`.
+- Dev tools: `ruff`, `pyright`, `pyside6-stubs`.
 - Windows-specific note: if pyvips DLLs are not discoverable on `PATH`, follow the README guidance (e.g. install `pyvips[binary]` or configure `LIBVIPS_BIN` via a `.env` file next to the app).
 
 ## Common commands
@@ -40,20 +40,13 @@ You can also provide an optional positional `start_path` to `image_viewer.main.r
 
 > Packaging/installation as a console script is not wired in `pyproject.toml`; current flow is to run the module directly as above.
 
-### Tests
 
-- Run the full test suite (pytest over `tests/`):
-  - `uv run pytest`
-- Example: run a single test module:
-  - `uv run pytest tests/test_trim.py`
-
-Some tests require optional imaging libraries (`numpy`, `pyvips`) and will be skipped if those are unavailable.
 
 ### Linting, formatting, and type checking
 
 Configured in `pyproject.toml`:
 
-- Ruff lint (E/F/I/UP/B/SIM/PL/RUF; `tests` are excluded by config):
+- Ruff lint (E/F/I/UP/B/SIM/PL/RUF;
   - `uv run ruff check image_viewer`
 - Ruff format (code formatting):
   - `uv run ruff format image_viewer`
@@ -248,12 +241,7 @@ Configured in `pyproject.toml`:
 - `image_viewer/busy_cursor.py`
   - `busy_cursor()` is a small context manager that switches the global cursor to `WaitCursor` during long operations and restores it afterwards; used around decode, delete, and other potentially slow actions.
 
-## Tests overview
 
-- Tests live under `tests/` and primarily exercise non-UI logic:
-  - `tests/test_trim.py` covers `detect_trim_box_stats` and related trim behavior with synthetic images.
-  - Other scripts in `tests/` (e.g. geometry/fullscreen experiments) are more exploratory or integration-style.
-- Use `pytest` as the primary test runner (see commands above); some tests use `unittest` but are still discoverable by pytest.
 
 # AGENTS — Operations SOP (Automation & Resume Rules)
 
@@ -294,7 +282,7 @@ Short, focused guidance so an agent can start a session and know how to plan, im
 
 ## Reporting & Completion
 
-1. Run checks: `uv run ruff check . --fix`, `uv run pyright`, and tests if applicable (`uv run pytest`).
+1. Run checks: `uv run ruff check . --fix`, `uv run pyright`
 2. Update `TASKS.md` status to `completed` (if used).
 3. Add a `SESSIONS.md` entry with files changed, short description, and checks:
 
@@ -304,7 +292,7 @@ Short, focused guidance so an agent can start a session and know how to plan, im
 ### Short title
 **Files:** path/to/file.py
 **What:** One-line description
-**Checks:** Ruff: pass; Pyright: pass; Tests: pass
+**Checks:** Ruff: pass; Pyright: pass;
 ```
 
 4. Report to the user with a short summary and next steps.
@@ -327,7 +315,7 @@ Short, focused guidance so an agent can start a session and know how to plan, im
 ## When to ask the user
 
 - If scope, acceptance criteria, or design decisions are unclear.
-- If linters or tests show errors you cannot resolve locally.
+
 
 ## Final Note
 
