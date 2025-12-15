@@ -170,6 +170,8 @@ class ThumbnailCache:
             self._db_operator.schedule_write(_apply_migrations).result()
 
             # operator-backed migrations applied above; no direct connection migration required
+            # Ensure the DB file itself is hidden on Windows now that it may have been created
+            self._set_hidden_attribute()
             _logger.debug("thumbnail cache initialized: %s", self.db_path)
         except Exception as exc:
             _logger.error("failed to initialize thumbnail cache: %s", exc)
