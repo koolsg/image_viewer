@@ -1,5 +1,10 @@
 ## 2025-12-16
 
+### Fix: avoid permanent UI lock on large folder open
+**Files:** image_viewer/image_engine/engine.py, image_viewer/main.py, image_viewer/ui_explorer_grid.py, image_viewer/explorer_mode_operations.py
+**What:** Stopped GUI-thread enumeration of `QFileSystemModel` during folder open by using the directory-worker-produced file list cache; made View-mode folder open fully async; removed forced thumbnail prefetch that triggered heavy synchronous work; updated explorer image selection to display immediately while the full file list arrives asynchronously.
+**Checks:** Ruff: pass; Pyright: pass; Tests: not run (per user request)
+
 ### Fix: folder-open should not reuse workspace thumbnail DB
 **Files:** image_viewer/image_engine/fs_model.py, image_viewer/image_engine/engine.py, image_viewer/image_engine/fs_model_disk.py, image_viewer/image_engine/db/thumbdb_bytes_adapter.py, image_viewer/image_engine/convert_worker.py, image_viewer/ui_explorer_grid.py
 **What:** Rebind thumbnail DB per opened folder by resetting/closing the existing DB adapter when the model root changes; set engine root earlier to avoid racey initialization; cleaned up path normalization and logging and fixed Ruff violations introduced during debugging.
