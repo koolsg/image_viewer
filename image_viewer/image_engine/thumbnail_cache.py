@@ -27,6 +27,8 @@ try:
 except Exception:
     ctypes = None
 
+from image_viewer.path_utils import abs_path_str
+
 _logger = get_logger("thumbnail_cache")
 
 _EPOCH_MS_THRESHOLD = 10**11
@@ -528,7 +530,7 @@ class ThumbnailCache:
                 return
 
             # FILE_ATTRIBUTE_HIDDEN = 0x02
-            path_str = str(db_path)
+            path_str = abs_path_str(db_path)
             _logger.debug("_set_hidden_attribute: calling SetFileAttributesW for %s", path_str)
             result = ctypes.windll.kernel32.SetFileAttributesW(path_str, 0x02)
             if result == 0:
