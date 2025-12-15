@@ -7,7 +7,6 @@ This module provides low-level file operation utilities used by:
 
 import shutil
 from pathlib import Path
-from .path_utils import abs_path_str
 
 from PySide6.QtCore import QSize, Qt
 from PySide6.QtGui import QKeySequence, QPalette
@@ -24,6 +23,7 @@ from PySide6.QtWidgets import (
 from send2trash import send2trash
 
 from .logger import get_logger
+from .path_utils import abs_path_str
 
 _logger = get_logger("file_operations")
 
