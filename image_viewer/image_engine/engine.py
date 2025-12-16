@@ -12,7 +12,7 @@ from PySide6.QtCore import QObject, QThread, Signal
 from PySide6.QtGui import QIcon, QImage, QPixmap
 
 from image_viewer.logger import get_logger
-from image_viewer.path_utils import abs_path, abs_path_str
+from image_viewer.path_utils import abs_path, abs_path_str, db_key
 
 from .convert_worker import ConvertWorker
 from .decoder import decode_image
@@ -374,7 +374,7 @@ class ImageEngine(QObject):
         info = {}
         try:
             # Use cached metadata (already preloaded)
-            w, h, size_bytes, mtime = self._fs_model._meta.get(path, (None, None, None, None))
+            w, h, size_bytes, mtime = self._fs_model._meta.get(db_key(path), (None, None, None, None))
             if w and h:
                 info["resolution"] = (w, h)
             if size_bytes is not None:
@@ -531,12 +531,14 @@ class ImageEngine(QObject):
         """Handle directory loaded signal from fs_model."""
         # Only process if this is the current root path
         current_root = self._fs_model.rootPath()
-        if path != current_root:
+        current_root_abs = abs_path_str(current_root) if current_root else ""
+        path_abs = abs_path_str(path)
+        if path_abs != current_root_abs:
             return
         # Legacy handler: prefer the background directory worker which will
         # emit `files_ready` -> `_on_directory_files_ready`. Keep this method
         # minimal to avoid accidental heavy work on the GUI thread.
-        _logger.debug("directoryLoaded received for %s (deferred to worker)", path)
+        _logger.debug("directoryLoaded received for %s (deferred to worker)", path_abs)
 
     def _on_directory_files_ready(self, path: str, files: list[str]) -> None:
         """Handle file list produced by `DirectoryWorker` (runs on main thread)."""
@@ -545,11 +547,30 @@ class ImageEngine(QObject):
             # ignore stale notifications for non-current roots.
             path_abs = abs_path_str(path)
             current_root = self._fs_model.rootPath()
-            if path_abs != current_root:
+            current_root_abs = abs_path_str(current_root) if current_root else ""
+
+            if path_abs != current_root_abs:
+                _logger.debug(
+                    "dir_files_ready drop: worker_path=%s norm=%s current_root=%s norm_root=%s files=%d",
+                    path,
+                    path_abs,
+                    current_root,
+                    current_root_abs,
+                    len(files),
+                )
                 return
+
+            _logger.debug(
+                "dir_files_ready accept: root=%s files=%d first=%s last=%s",
+                path_abs,
+                len(files),
+                (files[0] if files else None),
+                (files[-1] if files else None),
+            )
 
             # Avoid duplicate emissions when the folder/file list hasn't changed
             if path == self._last_folder_loaded and files == self._last_file_list:
+                _logger.debug("dir_files_ready dedupe: root=%s files=%d", path_abs, len(files))
                 return
 
             self._last_folder_loaded = path_abs
