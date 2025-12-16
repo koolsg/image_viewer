@@ -183,26 +183,34 @@ class ThumbDBOperatorAdapter:
         if not paths:
             return []
 
-        def _do(conn, paths):
-            placeholders = ",".join(["?" for _ in paths])
+        # Normalize to stable DB keys (Qt may use forward slashes; Windows drive
+        # letters may vary in casing). Query both normalized and raw paths to
+        # remain compatible with legacy DB rows.
+        norm_paths: list[str] = [_norm_path(p) for p in paths]
+        all_paths: list[str] = list(dict.fromkeys([*norm_paths, *list(paths)]))
+
+        def _do(conn, query_paths):
+            placeholders = ",".join(["?" for _ in query_paths])
             query = (
                 f"SELECT path, thumbnail, width, height, mtime, size, thumb_width, "
                 f"thumb_height, created_at FROM thumbnails WHERE path IN ({placeholders})"
             )
             try:
-                rows = conn.execute(query, list(paths)).fetchall()
+                rows = conn.execute(query, list(query_paths)).fetchall()
                 return [cast_row(r) for r in rows]
             except sqlite3.OperationalError:
                 query2 = (
                     f"SELECT path, thumbnail, width, height, mtime, size FROM thumbnails WHERE path IN ({placeholders})"
                 )
-                rows2 = conn.execute(query2, list(paths)).fetchall()
+                rows2 = conn.execute(query2, list(query_paths)).fetchall()
                 return [cast_row(tuple([*list(r), None, None, None])) for r in rows2]
 
-        fut = self._operator.schedule_read(_do, paths)
+        fut = self._operator.schedule_read(_do, all_paths)
         return fut.result()
 
     def upsert_meta(self, path: str, mtime: int, size: int, meta: dict | None = None) -> None:
+        path_norm = _norm_path(path)
+
         def _do(conn, path, mtime, size, meta):
             try:
                 conn.execute(
@@ -256,7 +264,7 @@ class ThumbDBOperatorAdapter:
                     ),
                 )
 
-        fut = self._operator.schedule_write(_do, path, mtime, size, meta)
+        fut = self._operator.schedule_write(_do, path_norm, mtime, size, meta)
         return fut.result()
 
     def upsert_meta_many(self, rows: list[tuple[str, int, int, dict | None]]) -> None:
@@ -326,11 +334,15 @@ class ThumbDBOperatorAdapter:
         return fut.result()
 
     def delete(self, path: str) -> None:
-        def _do(conn, path):
-            conn.execute("DELETE FROM thumbnails WHERE path = ?", (path,))
+        path_norm = _norm_path(path)
+
+        def _do(conn, path_norm, path_raw):
+            conn.execute("DELETE FROM thumbnails WHERE path = ?", (path_norm,))
+            if path_raw != path_norm:
+                conn.execute("DELETE FROM thumbnails WHERE path = ?", (path_raw,))
             conn.commit()
 
-        fut = self._operator.schedule_write(_do, path)
+        fut = self._operator.schedule_write(_do, path_norm, path)
         return fut.result()
 
 
