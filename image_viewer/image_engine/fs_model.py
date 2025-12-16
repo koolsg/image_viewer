@@ -18,7 +18,7 @@ from PySide6.QtGui import QIcon, QImage, QPixmap
 from PySide6.QtWidgets import QFileSystemModel
 
 from image_viewer.logger import get_logger
-from image_viewer.path_utils import abs_dir, abs_dir_str
+from image_viewer.path_utils import abs_dir, abs_dir_str, db_key
 
 from .db.thumbdb_bytes_adapter import ThumbDBBytesAdapter
 from .decoder import get_image_dimensions
@@ -242,8 +242,11 @@ class ImageFileSystemModel(QFileSystemModel):
                 else:
                     path, thumbnail_data, orig_width, orig_height, mtime, size = row
 
-                # Update metadata first
-                self._meta[str(path)] = (
+                path_fs = str(Path(str(path)))
+                key = db_key(path_fs)
+
+                # Update metadata first (cache key convention)
+                self._meta[key] = (
                     orig_width,
                     orig_height,
                     int(size) if size is not None else None,
@@ -254,9 +257,9 @@ class ImageFileSystemModel(QFileSystemModel):
                 if thumbnail_data is not None:
                     pixmap = QPixmap()
                     if pixmap.loadFromData(thumbnail_data):
-                        self._thumb_cache[str(path)] = QIcon(pixmap)
+                        self._thumb_cache[key] = QIcon(pixmap)
 
-                idx = self.index(str(path))
+                idx = self.index(path_fs)
                 if idx.isValid():
                     self._internal_data_changed = True
                     try:
@@ -274,7 +277,7 @@ class ImageFileSystemModel(QFileSystemModel):
         # Trigger background thumbnail generation (decode happens off the UI thread).
         for path in paths:
             with contextlib.suppress(Exception):
-                self._request_thumbnail(path)
+                self._request_thumbnail(str(Path(path)))
 
     def _on_thumb_db_finished(self, generation: int) -> None:
         # Ignore stale worker completion.
@@ -443,6 +446,8 @@ class ImageFileSystemModel(QFileSystemModel):
                 if not self._is_image_file(path):
                     continue
 
+                key = db_key(path)
+
                 file_path = Path(path)
                 if not file_path.exists():
                     continue
@@ -452,8 +457,8 @@ class ImageFileSystemModel(QFileSystemModel):
                 with contextlib.suppress(Exception):
                     w, h = get_image_dimensions(path)
 
-                self._meta[path] = (w, h, int(stat.st_size), float(stat.st_mtime))
-                self._thumb_cache.pop(path, None)
+                self._meta[key] = (w, h, int(stat.st_size), float(stat.st_mtime))
+                self._thumb_cache.pop(key, None)
 
                 try:
                     self._ensure_db_cache(path)
@@ -471,7 +476,7 @@ class ImageFileSystemModel(QFileSystemModel):
                     pass
 
                 # Proactively generate thumbnail for new image.
-                if path not in self._thumb_pending:
+                if key not in self._thumb_pending:
                     self._request_thumbnail(path)
             except Exception:
                 continue
@@ -500,9 +505,11 @@ class ImageFileSystemModel(QFileSystemModel):
         # Delete DB rows and in-memory caches for removed files.
         for path in self._pending_removed_paths:
             try:
-                self._thumb_cache.pop(path, None)
+                key = db_key(path)
+                self._thumb_cache.pop(key, None)
+                self._thumb_pending.discard(key)
                 self._thumb_pending.discard(path)
-                self._meta.pop(path, None)
+                self._meta.pop(key, None)
 
                 # Delete from cache DB (safe even if already missing)
                 self._ensure_db_cache(path)
@@ -531,12 +538,14 @@ class ImageFileSystemModel(QFileSystemModel):
                 if not self._is_image_file(path):
                     continue
 
+                key = db_key(path)
+
                 file_path = Path(path)
                 if not file_path.exists():
                     continue
                 stat = file_path.stat()
 
-                _prev_w, _prev_h, prev_size, prev_mtime = self._meta.get(path, (None, None, None, None))
+                _prev_w, _prev_h, prev_size, prev_mtime = self._meta.get(key, (None, None, None, None))
                 if (
                     prev_size == int(stat.st_size)
                     and prev_mtime is not None
@@ -549,8 +558,9 @@ class ImageFileSystemModel(QFileSystemModel):
                 with contextlib.suppress(Exception):
                     w, h = get_image_dimensions(path)
 
-                self._meta[path] = (w, h, int(stat.st_size), _to_mtime_ms_from_stat(stat))
-                self._thumb_cache.pop(path, None)
+                self._meta[key] = (w, h, int(stat.st_size), _to_mtime_ms_from_stat(stat))
+                self._thumb_cache.pop(key, None)
+                self._thumb_pending.discard(key)
                 self._thumb_pending.discard(path)
 
                 try:
@@ -580,11 +590,14 @@ class ImageFileSystemModel(QFileSystemModel):
         try:
             old_path = str(Path(directory) / old_name)
             new_path = str(Path(directory) / new_name)
+            old_key = db_key(old_path)
+            new_key = db_key(new_path)
 
             # Drop old entry and treat new one as inserted.
-            self._thumb_cache.pop(old_path, None)
+            self._thumb_cache.pop(old_key, None)
+            self._thumb_pending.discard(old_key)
             self._thumb_pending.discard(old_path)
-            self._meta.pop(old_path, None)
+            self._meta.pop(old_key, None)
             self._ensure_db_cache(old_path)
             if self._db_cache:
                 self._db_cache.delete(old_path)
@@ -596,7 +609,7 @@ class ImageFileSystemModel(QFileSystemModel):
             w, h = (None, None)
             with contextlib.suppress(Exception):
                 w, h = get_image_dimensions(new_path)
-            self._meta[new_path] = (w, h, int(stat.st_size), float(stat.st_mtime))
+            self._meta[new_key] = (w, h, int(stat.st_size), float(stat.st_mtime))
             self._ensure_db_cache(new_path)
             if self._db_cache:
                 self._db_cache.set_meta(
@@ -737,6 +750,7 @@ class ImageFileSystemModel(QFileSystemModel):
                 return super().data(index, role)
 
             path = self.filePath(index)
+            key = db_key(path)
 
             # Resolution column
             if col == base_cols:
@@ -773,13 +787,13 @@ class ImageFileSystemModel(QFileSystemModel):
 
             # Decoration for thumbnails
             if role == Qt.DecorationRole and self._view_mode == "thumbnail" and col == self.COL_NAME:
-                if icon := self._thumb_cache.get(path):
+                if icon := self._thumb_cache.get(key):
                     # Avoid serving stale thumbnails if the file changed.
                     try:
                         file_path = Path(path)
                         if file_path.exists():
                             stat = file_path.stat()
-                            _w, _h, cached_size, cached_mtime = self._meta.get(path, (None, None, None, None))
+                            _w, _h, cached_size, cached_mtime = self._meta.get(key, (None, None, None, None))
                             if (
                                 cached_size is not None
                                 and cached_mtime is not None
@@ -788,9 +802,10 @@ class ImageFileSystemModel(QFileSystemModel):
                                     or int(cached_mtime) != _to_mtime_ms_from_stat(stat)
                                 )
                             ):
-                                self._thumb_cache.pop(path, None)
+                                self._thumb_cache.pop(key, None)
+                                self._thumb_pending.discard(key)
                                 self._thumb_pending.discard(path)
-                                self._meta[path] = (None, None, int(stat.st_size), _to_mtime_ms_from_stat(stat))
+                                self._meta[key] = (None, None, int(stat.st_size), _to_mtime_ms_from_stat(stat))
                                 try:
                                     self._ensure_db_cache(path)
                                     if self._db_cache:
@@ -809,7 +824,7 @@ class ImageFileSystemModel(QFileSystemModel):
                         pass
 
                     # Cached icon still valid; return it (no per-file debug to avoid noise)
-                    if path in self._thumb_cache:
+                    if key in self._thumb_cache:
                         return icon
                 # Cache miss; request thumbnail (no per-file debug to reduce verbosity)
                 self._request_thumbnail(path)
@@ -859,7 +874,7 @@ class ImageFileSystemModel(QFileSystemModel):
         path = self.filePath(index)
         try:
             # Use only cached metadata (should be preloaded by batch_load_thumbnails)
-            w, h, _size_bytes, _mtime = self._meta.get(path, (None, None, None, None))
+            w, h, _size_bytes, _mtime = self._meta.get(db_key(path), (None, None, None, None))
 
             if w and h:
                 return f"{w}x{h}"
@@ -873,10 +888,12 @@ class ImageFileSystemModel(QFileSystemModel):
             info = self.fileInfo(self.index(path))
             size_bytes = info.size()
             mtime = info.lastModified().toMSecsSinceEpoch()
-            prev = self._meta.get(path, (None, None, None, None))
-            self._meta[path] = (prev[0], prev[1], size_bytes, float(mtime))
+            key = db_key(path)
+            prev = self._meta.get(key, (None, None, None, None))
+            self._meta[key] = (prev[0], prev[1], size_bytes, float(mtime))
         except Exception:
-            self._meta[path] = self._meta.get(path, (None, None, None, None))
+            key = db_key(path)
+            self._meta[key] = self._meta.get(key, (None, None, None, None))
 
     def meta_string(self, index: QModelIndex) -> str:
         path = self.filePath(index)
@@ -885,7 +902,7 @@ class ImageFileSystemModel(QFileSystemModel):
         res_str = ""
         try:
             # Use cached metadata (already preloaded)
-            w, h, size_bytes, mtime = self._meta.get(path, (None, None, None, None))
+            w, h, size_bytes, mtime = self._meta.get(db_key(path), (None, None, None, None))
             if size_bytes is not None:
                 size_str = self._fmt_size(int(size_bytes))
             if mtime is not None:
@@ -903,7 +920,7 @@ class ImageFileSystemModel(QFileSystemModel):
         try:
             filename = Path(path).name
             # Use only cached metadata (should be preloaded by batch loading)
-            w, h, size_bytes, mtime = self._meta.get(path, (None, None, None, None))
+            w, h, size_bytes, mtime = self._meta.get(db_key(path), (None, None, None, None))
 
             parts = [f"File: {filename}"]
             if w and h:
@@ -938,21 +955,22 @@ class ImageFileSystemModel(QFileSystemModel):
         # Skip if not an image (don't attempt to decode non-image files)
         if not self._is_image_file(path):
             return
-        if path in self._thumb_cache:
+        key = db_key(path)
+        if key in self._thumb_cache:
             return
         icon = self._load_disk_icon(path)
         if icon is not None and not icon.isNull():
-            self._thumb_cache[path] = icon
+            self._thumb_cache[key] = icon
             idx = self.index(path)
             if idx.isValid():
                 self.dataChanged.emit(idx, idx, [Qt.DecorationRole])
             return
-        if not self._loader or path in self._thumb_pending:
+        if not self._loader or key in self._thumb_pending:
             return
 
         # Don't start busy cursor here - it's managed by batch_load_thumbnails
         # Individual thumbnail requests happen during scrolling, not initial load
-        self._thumb_pending.add(path)
+        self._thumb_pending.add(key)
         # This is the point where we decided we cannot use cache and must decode.
         self._log_decode_reason(path)
         try:
@@ -967,6 +985,9 @@ class ImageFileSystemModel(QFileSystemModel):
 
     def _on_thumbnail_ready(self, path: str, image_data, error) -> None:
         try:
+            path_fs = str(Path(path))
+            key = db_key(path_fs)
+            self._thumb_pending.discard(key)
             self._thumb_pending.discard(path)
             # If this is not an image file, ignore background decode results silently
             if not self._is_image_file(path):
@@ -986,24 +1007,24 @@ class ImageFileSystemModel(QFileSystemModel):
                 Qt.KeepAspectRatio,
                 Qt.SmoothTransformation,
             )
-            self._thumb_cache[path] = QIcon(scaled)
+            self._thumb_cache[key] = QIcon(scaled)
 
             # Read original image resolution (not thumbnail size)
-            prev = self._meta.get(path, (None, None, None, None))
+            prev = self._meta.get(key, (None, None, None, None))
             orig_width = prev[0]
             orig_height = prev[1]
 
             # Only read header if resolution not already cached
             if orig_width is None or orig_height is None:
                 with contextlib.suppress(Exception):
-                    w, h = get_image_dimensions(path)
+                    w, h = get_image_dimensions(path_fs)
                     if w is not None and h is not None:
                         orig_width = w
                         orig_height = h
 
-            self._meta[path] = (orig_width, orig_height, prev[2], prev[3])
-            self._save_disk_icon(path, scaled, orig_width, orig_height)
-            idx = self.index(path)
+            self._meta[key] = (orig_width, orig_height, prev[2], prev[3])
+            self._save_disk_icon(path_fs, scaled, orig_width, orig_height)
+            idx = self.index(path_fs)
             if idx.isValid():
                 self._internal_data_changed = True
                 try:
@@ -1075,8 +1096,9 @@ class ImageFileSystemModel(QFileSystemModel):
             pixmap, orig_width, orig_height = result
 
             # Update metadata
-            prev = self._meta.get(path, (None, None, None, None))
-            self._meta[path] = (orig_width, orig_height, prev[2], prev[3])
+            key = db_key(path)
+            prev = self._meta.get(key, (None, None, None, None))
+            self._meta[key] = (orig_width, orig_height, prev[2], prev[3])
 
             return QIcon(pixmap)
         except Exception as exc:
@@ -1102,6 +1124,6 @@ class ImageFileSystemModel(QFileSystemModel):
             save_thumbnail_to_cache(self._db_cache, path, self._thumb_size, pixmap, (orig_width, orig_height))
 
             # Keep in-memory meta consistent with what we just persisted.
-            self._meta[path] = (orig_width, orig_height, int(size), int(mtime))
+            self._meta[db_key(path)] = (orig_width, orig_height, int(size), int(mtime))
         except Exception as exc:
             _logger.debug("failed to save thumbnail to cache: %s", exc)
