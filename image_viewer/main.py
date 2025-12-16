@@ -13,7 +13,7 @@ from image_viewer.explorer_mode_operations import open_folder_at, toggle_view_mo
 from image_viewer.image_engine import ImageEngine
 from image_viewer.image_engine.strategy import DecodingStrategy, FastViewStrategy
 from image_viewer.logger import get_logger
-from image_viewer.path_utils import abs_dir_str
+from image_viewer.path_utils import abs_dir_str, abs_path_str
 from image_viewer.settings_manager import SettingsManager
 from image_viewer.status_overlay import StatusOverlayBuilder
 from image_viewer.trim_operations import start_trim_workflow
@@ -147,11 +147,12 @@ class ImageViewer(QMainWindow):
             if app_config:
                 cfg_dir = Path(app_config) / "image_viewer"
                 os.makedirs(cfg_dir, exist_ok=True)
-                self._settings_path = str((cfg_dir / "settings.json").as_posix())
+                # Use project path normalization (OS-native absolute path)
+                self._settings_path = abs_path_str(cfg_dir / "settings.json")
             else:
-                self._settings_path = (_BASE_DIR / "settings.json").as_posix()
+                self._settings_path = abs_path_str(_BASE_DIR / "settings.json")
         except Exception:
-            self._settings_path = (_BASE_DIR / "settings.json").as_posix()
+            self._settings_path = abs_path_str(_BASE_DIR / "settings.json")
         self._settings_manager = SettingsManager(self._settings_path)
         self._settings: dict[str, Any] = self._settings_manager.data
         self._bg_color = self._settings_manager.determine_startup_background()
@@ -190,15 +191,18 @@ class ImageViewer(QMainWindow):
         # Track pending folder opens so we can auto-display once files arrive.
         self._pending_open_folder: str | None = None
         self._pending_open_saw_empty: bool = False
+        # When switching from Explorer -> View, keep the selected file so we can
+        # restore a correct index once the async file list arrives.
+        self._pending_select_path: str | None = None
 
     def _get_file_dimensions(self, file_path: str) -> tuple[int | None, int | None]:
         """Get the original dimensions of a file via engine (no direct file access)."""
         try:
             # Get dimensions only through engine - UI should never access files directly
             if hasattr(self, "engine") and self.engine:
-                w, h, _, _ = self.engine._meta.get(file_path, (None, None, None, None))
-                if w is not None and h is not None:
-                    return w, h
+                res = self.engine.get_resolution(file_path)
+                if res is not None:
+                    return res
             # If not in cache, return None - engine should have preloaded all metadata
         except Exception:
             pass
@@ -273,6 +277,7 @@ class ImageViewer(QMainWindow):
 
     def _save_last_parent_dir(self, parent_dir: str):
         try:
+            parent_dir = abs_dir_str(parent_dir)
             self._save_settings_key("last_parent_dir", parent_dir)
             logger.debug("last_parent_dir saved: %s", parent_dir)
         except Exception as e:
@@ -461,7 +466,7 @@ class ImageViewer(QMainWindow):
             if path == self.image_files[self.current_index]:
                 self.update_pixmap(pixmap)
 
-    def _on_engine_folder_changed(self, path: str, files: list[str]) -> None:
+    def _on_engine_folder_changed(self, path: str, files: list[str]) -> None:  # noqa: PLR0912
         """Handle folder changed signal from ImageEngine.
 
         Args:
@@ -469,10 +474,24 @@ class ImageViewer(QMainWindow):
             files: List of image file paths
         """
         try:
+            prev_len = len(self.image_files) if getattr(self, "image_files", None) is not None else -1
+            prev_idx = getattr(self, "current_index", None)
+            pending_sel = getattr(self, "_pending_select_path", None)
+
             # Get current file before update
             current_file = None
             if self.current_index >= 0 and self.current_index < len(self.image_files):
                 current_file = self.image_files[self.current_index]
+
+            logger.debug(
+                "folder_changed: path=%s files=%d (prev_len=%s prev_idx=%s current_file=%s pending_select=%s)",
+                path,
+                len(files),
+                prev_len,
+                prev_idx,
+                current_file,
+                pending_sel,
+            )
 
             # Update file list
             self.image_files = files
@@ -488,6 +507,26 @@ class ImageViewer(QMainWindow):
                 self._update_status()
 
             logger.debug("folder changed in view mode: %d files, current_index=%d", len(files), self.current_index)
+
+            # If a selection was made from Explorer while the engine list was
+            # still loading, resolve it now so navigation/prefetch works.
+            try:
+                pending = getattr(self, "_pending_select_path", None)
+                if pending and files and pending in files:
+                    if self.current_index != files.index(pending):
+                        logger.debug(
+                            "folder_changed: resolve pending_select -> idx %d/%d: %s",
+                            files.index(pending),
+                            len(files),
+                            pending,
+                        )
+                        self.current_index = files.index(pending)
+                        self.display_image()
+                    # Warm neighboring decodes once we have the full list.
+                    self.maintain_decode_window(back=0, ahead=5)
+                    self._pending_select_path = None
+            except Exception:
+                pass
 
             # If we initiated a folder open in View mode, auto-display once the
             # async file list arrives. Note: the engine emits an immediate empty
@@ -578,6 +617,27 @@ class ImageViewer(QMainWindow):
             return
         n = len(self.image_files)
         i = self.current_index
+
+        # Compare list/index state with engine cache to pinpoint divergence.
+        try:
+            current_path = self.image_files[i] if 0 <= i < n else (self.image_files[0] if self.image_files else None)
+            eng_files = self.engine.get_image_files() if hasattr(self, "engine") and self.engine else []
+            eng_n = len(eng_files)
+            eng_i = self.engine.get_file_index(current_path) if current_path else -1
+        except Exception:
+            current_path = self.image_files[0] if self.image_files else None
+            eng_n = -1
+            eng_i = -1
+
+        if n == 1 or (eng_n >= 0 and eng_n != n) or (current_path and eng_i not in (-1, i)):
+            logger.debug(
+                "prefetch state: viewer(n=%d idx=%s) engine(n=%s idx=%s) path=%s",
+                n,
+                i,
+                eng_n,
+                eng_i,
+                current_path,
+            )
         start = max(0, i - back)
         end = min(n - 1, i + ahead)
         logger.debug("prefetch window: idx=%s range=[%s..%s]", i, start, end)
@@ -693,8 +753,15 @@ class ImageViewer(QMainWindow):
             except Exception:
                 vw = event.size().width()
                 vh = event.size().height()
+            try:
+                prev = getattr(self, "_hover_menu_parent_size", None)
+                if prev == (vw, vh):
+                    return
+                self._hover_menu_parent_size = (vw, vh)
+            except Exception:
+                pass
             self._hover_menu.set_parent_size(vw, vh)
-            _logger.debug("hover menu position updated: %dx%d", event.size().width(), event.size().height())
+            _logger.debug("hover menu position updated: %dx%d", vw, vh)
 
     def mouseMoveEvent(self, event):
         """Handle mouse move to show/hide hover menu in View mode."""
@@ -732,7 +799,6 @@ class ImageViewer(QMainWindow):
                 if pos is not None:
                     # If hover menu is parented to the viewport, use viewport rect
                     parent_rect = obj.rect() if hasattr(obj, "rect") else self.rect()
-                    _logger.debug("viewport mouse move: %d,%d (parent rect: %s)", pos.x(), pos.y(), parent_rect)
                     self._hover_menu.check_hover_zone(pos.x(), pos.y(), parent_rect)
         except Exception:
             pass
