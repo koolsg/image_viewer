@@ -1,6 +1,7 @@
-
+# Python
 /.venv
-/.serena
+*.egg-info/
+__pycache__
 
 # IDE
 .vscode/*
@@ -9,19 +10,15 @@
 !.vscode/tasks.json
 !.vscode/launch.json
 
-
-
-
-
-__pycache__
-# Python package metadata
-*.egg-info/
-
-/tools
-/.githooks
 /.cache
 
+/.serena
+# project settings
 image_viewer\settings.json
 /image_viewer/settings.json
 /image_viewer/libvips/
 swiftview*.db
+/tools
+/.githooks
+sessions.md
+debug.log
