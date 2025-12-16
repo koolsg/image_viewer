@@ -31,6 +31,10 @@ class HoverDrawerMenu(QWidget):
         # Hide delay in milliseconds when mouse leaves hover zone
         self._hide_delay = 120
 
+        # Debug logging: avoid spamming per-mouse-move logs.
+        self._last_in_hover_zone: bool | None = None
+        self._last_over_menu: bool | None = None
+
         self._setup_ui()
         self._setup_animations()
         self._setup_timers()
@@ -128,14 +132,17 @@ class HoverDrawerMenu(QWidget):
         menu_rect = self.geometry()
         over_menu = menu_rect.contains(mouse_x, mouse_y)
 
-        _logger.debug(
-            "check_hover_zone: mouse %d,%d in_hover_zone=%s over_menu=%s parent_rect=%s",
-            mouse_x,
-            mouse_y,
-            in_hover_zone,
-            over_menu,
-            parent_rect,
-        )
+        # Log only on state change to keep debug output readable.
+        if in_hover_zone != self._last_in_hover_zone or over_menu != self._last_over_menu:
+            self._last_in_hover_zone = in_hover_zone
+            self._last_over_menu = over_menu
+            _logger.debug(
+                "check_hover_zone: mouse %d,%d in_hover_zone=%s over_menu=%s",
+                mouse_x,
+                mouse_y,
+                in_hover_zone,
+                over_menu,
+            )
 
         if in_hover_zone or over_menu:
             self._show_menu()
