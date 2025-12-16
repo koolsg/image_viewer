@@ -7,6 +7,7 @@ from typing import Any, ClassVar
 from PySide6.QtGui import QColor
 
 from .logger import get_logger
+from .path_utils import abs_dir_str, abs_path_str
 
 _logger = get_logger("settings")
 
@@ -26,7 +27,8 @@ class SettingsManager:
     }
 
     def __init__(self, settings_path: str):
-        self.settings_path = settings_path
+        # Ensure the settings path is normalized (OS-native absolute path)
+        self.settings_path = abs_path_str(settings_path)
         self._settings: dict[str, Any] = {}
         self.load()
 
@@ -37,7 +39,7 @@ class SettingsManager:
                     data = json.load(f)
                     if isinstance(data, dict):
                         self._settings = data
-                        _logger.debug("settings loaded: %s", self.settings_path)
+                        _logger.debug("settings loaded: %s", abs_path_str(self.settings_path))
                         return
         except Exception as e:
             _logger.warning("settings load failed: %s", e)
@@ -48,7 +50,7 @@ class SettingsManager:
             os.makedirs(os.path.dirname(self.settings_path), exist_ok=True)
             with open(self.settings_path, "w", encoding="utf-8") as f:
                 json.dump(self._settings, f, ensure_ascii=False, indent=2)
-            _logger.debug("settings saved: %s", self.settings_path)
+            _logger.debug("settings saved: %s", abs_path_str(self.settings_path))
         except Exception as e:
             _logger.error("settings save failed: %s", e)
 
@@ -63,6 +65,8 @@ class SettingsManager:
         return key in self._settings
 
     def set(self, key: str, value: Any) -> None:
+        if key == "last_parent_dir" and isinstance(value, str):
+            value = abs_dir_str(value)
         self._settings[key] = value
         self.save()
 
