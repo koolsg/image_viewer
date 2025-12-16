@@ -269,7 +269,7 @@ def _on_explorer_folder_selected(viewer, folder_path: str, grid) -> None:
         _logger.error("failed to load folder in explorer: %s, error=%s", folder_path, e)
 
 
-def _on_explorer_image_selected(viewer, image_path: str) -> None:
+def _on_explorer_image_selected(viewer, image_path: str) -> None:  # noqa: PLR0912, PLR0915
     """Handle image selection in explorer.
 
     Args:
@@ -278,20 +278,92 @@ def _on_explorer_image_selected(viewer, image_path: str) -> None:
     """
     engine = viewer.engine
     try:
+        # Correlate logs for a single Explorer activation -> View display cycle.
+        try:
+            trace_id = int(getattr(viewer, "_trace_select_id", 0)) + 1
+        except Exception:
+            trace_id = 1
+        with contextlib.suppress(Exception):
+            viewer._trace_select_id = trace_id
+
         normalized_path = abs_path_str(image_path)
-        target_folder = abs_dir_str(image_path)
+
+        # `QAbstractItemView.activated` and selection change can both fire for a
+        # single user action. If we're already in View mode and this selection
+        # matches the currently displayed file, ignore the duplicate.
+        try:
+            if viewer.explorer_state.view_mode:
+                current_path = None
+                if (
+                    isinstance(getattr(viewer, "image_files", None), list)
+                    and isinstance(getattr(viewer, "current_index", None), int)
+                    and 0 <= viewer.current_index < len(viewer.image_files)
+                ):
+                    current_path = viewer.image_files[viewer.current_index]
+                if current_path == normalized_path:
+                    _logger.debug(
+                        "explorer select[%s]: ignored duplicate selection for current image",
+                        trace_id,
+                    )
+                    return
+        except Exception:
+            pass
+        target_folder = abs_dir_str(normalized_path)
+        _logger.debug(
+            "explorer select[%s]: raw=%s norm=%s target_folder=%s",
+            trace_id,
+            image_path,
+            normalized_path,
+            target_folder,
+        )
         with contextlib.suppress(Exception):
             cur_folder = engine.get_current_folder()
+            _logger.debug("explorer select[%s]: engine.cur_folder=%s", trace_id, cur_folder)
             if cur_folder and abs_dir_str(cur_folder) != target_folder:
                 _logger.debug("explorer select: switching folder via open_folder_at: %s", target_folder)
                 open_folder_at(viewer, target_folder)
             elif not cur_folder:
                 open_folder_at(viewer, target_folder)
 
-        # Display immediately using a minimal list; the async folder listing will
-        # later replace viewer.image_files and restore navigation.
-        viewer.image_files = [normalized_path]
-        viewer.current_index = 0
+        # Record the user's selection so View mode can restore correct index
+        # once the async folder listing arrives.
+        with contextlib.suppress(Exception):
+            viewer._pending_select_path = normalized_path
+            _logger.debug("explorer select[%s]: set pending_select=%s", trace_id, normalized_path)
+
+        # If the engine already has the full file list for this folder, use it
+        # immediately so navigation/prefetch works right away.
+        files = []
+        with contextlib.suppress(Exception):
+            files = engine.get_image_files() or []
+
+        _logger.debug(
+            "explorer select[%s]: engine.get_image_files len=%d contains_selected=%s",
+            trace_id,
+            len(files),
+            bool(files and normalized_path in files),
+        )
+
+        if files and normalized_path in files:
+            viewer.image_files = list(files)
+            viewer.current_index = files.index(normalized_path)
+            _logger.debug(
+                "explorer select[%s]: using engine list; current_index=%d/%d",
+                trace_id,
+                viewer.current_index,
+                len(viewer.image_files),
+            )
+        else:
+            # Fallback: display immediately using a minimal list. If the model
+            # root path already points at this folder, the directory worker will
+            # publish the full list soon and `_on_engine_folder_changed` will
+            # resolve `viewer._pending_select_path`.
+            viewer.image_files = [normalized_path]
+            viewer.current_index = 0
+            _logger.debug(
+                "explorer select[%s]: fallback single-item list; will rely on folder_changed to restore index",
+                trace_id,
+            )
 
         # Switch to View Mode and display the image
         if not viewer.explorer_state.view_mode:
@@ -327,9 +399,8 @@ def _on_explorer_image_selected(viewer, image_path: str) -> None:
 
         with contextlib.suppress(Exception):
             viewer.enter_fullscreen()
-        # Prevent excessive prefetching right after switching
-        viewer.maintain_decode_window(back=0, ahead=1)
-        _logger.debug("explorer image selected done: %s", image_path)
+        viewer.maintain_decode_window(back=3, ahead=5)
+        _logger.debug("explorer image selected done[%s]: %s", trace_id, normalized_path)
     except Exception as e:
         _logger.error("failed to select image in explorer: %s, error=%s", image_path, e)
 
