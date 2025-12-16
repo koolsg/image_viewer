@@ -8,6 +8,7 @@ from pathlib import Path
 from PySide6.QtCore import QObject, Signal
 
 from image_viewer.logger import get_logger
+from image_viewer.path_utils import abs_dir, db_key
 
 from .db.thumbdb_core import ThumbDB, ThumbDBOperatorAdapter
 from .db_operator import DbOperator
@@ -67,10 +68,14 @@ class FSDBLoadWorker(QObject):
         예외는 `error` 시그널로 보고되어야 하며, 항상 `finished`를 emit 해야 합니다.
         """
         try:
-            folder = Path(self._folder_path)
+            # Use a stable, single convention for emitted/query paths.
+            # We treat `db_key()` as the canonical storage/key format
+            # (absolute + drive normalized + forward slashes), which also
+            # matches Qt's common '/'-style paths on Windows.
+            folder = abs_dir(self._folder_path)
             if not folder.is_dir() or not Path(self._db_path).exists():
                 # fallback: emit missing for current dir
-                paths: list[str] = [p.as_posix() for p in folder.iterdir() if p.is_file()][: self._prefetch_limit]
+                paths: list[str] = [db_key(p) for p in folder.iterdir() if p.is_file()][: self._prefetch_limit]
                 if paths:
                     self.missing_paths.emit(paths)
                 self.finished.emit(self._generation)
@@ -93,7 +98,7 @@ class FSDBLoadWorker(QObject):
                     continue
                 try:
                     stat = p.stat()
-                    paths_with_stats.append((p.as_posix(), _to_mtime_ms_from_stat(stat), int(stat.st_size)))
+                    paths_with_stats.append((db_key(p), _to_mtime_ms_from_stat(stat), int(stat.st_size)))
                 except Exception:
                     continue
 
