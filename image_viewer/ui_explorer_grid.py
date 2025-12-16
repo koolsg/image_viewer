@@ -40,7 +40,7 @@ from . import explorer_mode_operations
 from .busy_cursor import busy_cursor
 from .image_engine.fs_model import ImageFileSystemModel
 from .logger import get_logger
-from .path_utils import abs_dir_str
+from .path_utils import abs_dir_str, db_key
 
 _logger = get_logger("ui_explorer_grid")
 
@@ -458,7 +458,7 @@ class ThumbnailGridWidget(QWidget):
 
         explorer_mode_operations.delete_files_to_recycle_bin(paths, self)
 
-    def rename_first_selected(self) -> None:  # noqa: PLR0911
+    def rename_first_selected(self) -> None:  # noqa: PLR0911, PLR0915
         """Rename the first selected file using a dialog with dynamic width."""
         if self._view_mode == "thumbnail":
             indexes = self._list.selectedIndexes()
@@ -540,13 +540,15 @@ class ThumbnailGridWidget(QWidget):
             _logger.debug("renamed: %s -> %s", old_path, new_path)
 
             # Update cache if needed
-            if old_path in self._model._thumb_cache:
-                icon = self._model._thumb_cache.pop(old_path)
-                self._model._thumb_cache[str(new_path)] = icon
+            old_key = db_key(old_path)
+            new_key = db_key(str(new_path))
+            if old_key in self._model._thumb_cache:
+                icon = self._model._thumb_cache.pop(old_key)
+                self._model._thumb_cache[new_key] = icon
 
-            if old_path in self._model._meta:
-                meta = self._model._meta.pop(old_path)
-                self._model._meta[str(new_path)] = meta
+            if old_key in self._model._meta:
+                meta = self._model._meta.pop(old_key)
+                self._model._meta[new_key] = meta
 
         except Exception as exc:
             _logger.error("rename failed: %s", exc)
