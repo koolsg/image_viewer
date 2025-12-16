@@ -4,15 +4,8 @@
 		{
 			"type": "shell",
 			"label": "Run Image Viewer with Debug Logging",
-			"command": "uv",
-			"args": [
-				"run",
-				"python",
-				"-m",
-				"image_viewer",
-				"--log-level",
-				"debug"
-			],
+			"command": "Remove-Item debug.log -ErrorAction SilentlyContinue; & { uv run python -m image_viewer --log-level debug 2>&1 } | ForEach-Object { Write-Host $_; Add-Content -Path debug.log -Value $_ }",
+			"detail": "PowerShell task — prints normal-colour console output using Write-Host and appends to debug.log; not portable to Bash/CMD (use '2>&1 | tee debug.log' there).",
 			"group": {
 				"kind": "test",
 				"isDefault": false
