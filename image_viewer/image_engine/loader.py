@@ -37,6 +37,7 @@ class Loader(QObject):
         self._ignored: set[str] = set()
         self._next_id = 1
         self._latest_id: dict[str, int] = {}
+        self._latest_params: dict[str, tuple[int | None, int | None, str]] = {}
         self._lock = threading.Lock()
         _logger.debug("Loader init: process_pool=on, io_workers=%s", max_io)
 
@@ -90,6 +91,9 @@ class Loader(QObject):
             req_id = None
         with self._lock:
             self._pending.discard(path)
+            # Avoid unbounded growth; params are only used for pending dedupe.
+            with contextlib.suppress(Exception):
+                self._latest_params.pop(path, None)
             if path in self._ignored:
                 _logger.debug("decode_finished ignored: path=%s id=%s (in ignored)", path, req_id)
                 return
@@ -107,16 +111,31 @@ class Loader(QObject):
     def request_load(
         self, path: str, target_width: int | None = None, target_height: int | None = None, size: str = "both"
     ) -> None:
+        params = (target_width, target_height, size)
         with self._lock:
             if path in self._ignored:
                 _logger.debug("request_load skip(ignored): path=%s", path)
                 return
-            # Allow re-request with a new req_id even if pending (previous result will be dropped as stale)
+
+            # If an identical request is already pending, do not queue another.
+            if path in self._pending and self._latest_params.get(path) == params:
+                _logger.debug(
+                    "request_load dedupe(pending): path=%s size=%s target=(%s,%s)",
+                    path,
+                    size,
+                    target_width,
+                    target_height,
+                )
+                return
+
+            # Allow re-request with a new req_id even if pending. If params differ,
+            # the previous result will be dropped as stale.
             if path not in self._pending:
                 self._pending.add(path)
             req_id = self._next_id
             self._next_id += 1
             self._latest_id[path] = req_id
+            self._latest_params[path] = params
             pending_count = len(self._pending)
         _logger.debug(
             "request_load queued: path=%s id=%s size=%s target=(%s,%s) pending=%s",
@@ -135,6 +154,8 @@ class Loader(QObject):
             self._pending.discard(path)
             with contextlib.suppress(Exception):
                 self._latest_id.pop(path, None)
+            with contextlib.suppress(Exception):
+                self._latest_params.pop(path, None)
 
     def unignore_path(self, path: str):
         with self._lock:
@@ -146,6 +167,7 @@ class Loader(QObject):
             self._pending.clear()
             self._ignored.clear()
             self._latest_id.clear()
+            self._latest_params.clear()
 
     def shutdown(self):
         self.executor.shutdown(wait=False, cancel_futures=True)
