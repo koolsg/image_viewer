@@ -6,10 +6,10 @@ Purpose
 
 Basic Usage (Windows PowerShell)
 - All debug logs
-  - `uv run .\image_viewer\main.py --log-level debug`
+  - `uv run python -m image_viewer --log-level debug`
 
 - Specific categories only (comma-separated)
-  - `uv run .\image_viewer\main.py --log-level debug --log-cats main,loader`
+  - `uv run python -m image_viewer --log-level debug --log-cats main,loader`
 
 Options
 - `--log-level <level>`
@@ -27,13 +27,26 @@ Options
 
 Example Scenarios
 - Focus only on loader queue/decoding flow
-  - `uv run .\image_viewer\main.py --log-level debug --log-cats loader`
+  - `uv run python -m image_viewer --log-level debug --log-cats loader`
 
 - View along with UI events and view updates
-  - `uv run .\image_viewer\main.py --log-level debug --log-cats main,ui_canvas`
+  - `uv run python -m image_viewer --log-level debug --log-cats main,ui_canvas`
 
 Output Redirection (Optional)
-- Save to file: `uv run .\image_viewer\main.py --log-level debug 2> debug.log`
+- Logs are always written to both stderr (console) and `image-view_session.log`.
+  - The log file content matches the console output (same format and category filtering).
+  - Existing `image-view_session.log` is overwritten on each app start.
+
+- You can still redirect stderr if you want an additional capture:
+  - Save to file: `uv run python -m image_viewer --log-level debug 2> debug.log`
+
+- PowerShell: show logs in normal console color and save to `debug.log` (recommended on Windows if you want non-red console output):
+  - Overwrite (truncate) file and show normal-colored console output:
+    - `Remove-Item debug.log -ErrorAction SilentlyContinue; & { uv run python -m image_viewer --log-level debug 2>&1 } | ForEach-Object { Write-Host $_; Add-Content -Path debug.log -Value $_ }`
+  - Append to existing file and show normal-colored console output:
+    - `& { uv run python -m image_viewer --log-level debug 2>&1 } | ForEach-Object { Write-Host $_; Add-Content -Path debug.log -Value $_ }`
+  - Explanation: `2>&1` merges stderr into stdout; `ForEach-Object { Write-Host $_; Add-Content ... }` prints each line to the console using normal colours and writes it to `debug.log`. Using `Remove-Item` is optional — `Out-File -Force` or `Clear-Content` can be used to truncate without deleting.
+  - Note: These commands are PowerShell-specific. On Bash/CMD use `2>&1 | tee debug.log` (or `&> debug.log` on Bash) instead.
 
 Also configurable via environment variables
 - PowerShell
