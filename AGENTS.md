@@ -321,3 +321,10 @@ Short, focused guidance so an agent can start a session and know how to plan, im
 
 Keep entries concise and actionable so another agent can resume work from `TASKS.md` and `SESSIONS.md` alone.
 
+## Recent Activity (2025-12-16)
+
+- **Thumbnail DB hidden-attribute fix:** Moved hidden-attribute logic into the DB init path (operator task) and added an immediate, non-polling setter with a long-path fallback. Files changed: `image_viewer/image_engine/db/thumbdb_bytes_adapter.py`, `image_viewer/image_engine/thumbnail_cache.py`.
+- **Tests added:** `tests/test_thumbdb_hidden_attribute.py`, `tests/test_init_thumbdb_sets_hidden.py` to verify behavior across Windows/non-Windows and initialization paths. New tests pass locally (unit/integration slices); full test run had unrelated tool tests skip/fail due to missing PySide6 in the test environment.
+- **Git housekeeping:** Saved in-progress work to `wip/save-detached-882fff0`, backed up and then reset `main` to that stable point, pushed `main` (force), and removed the unneeded `main-backup` branch.
+- **Checks:** `ruff` and `pyright` pass; relevant tests for the fix pass locally.
+

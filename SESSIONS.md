@@ -1,5 +1,60 @@
 ## 2025-12-16
 
+### Hover menu: dedupe position-updated logs
+**Files:** image_viewer/main.py
+**What:** Coalesced hover-menu parent-size updates on resize and logged only when the viewport size actually changes (prevents the common double log per resize/layout). Log now reflects the viewport size used.
+**Checks:** Ruff: pass; Pyright: pass; Tests: not run
+
+### Tests: add Loader dedupe regression
+**Files:** tests/test_loader_dedupe.py
+**What:** Added a small regression test to ensure identical pending decode requests are deduped (prevents double-submit when `activated` fires twice). Test auto-skips if PySide6 is unavailable.
+**Checks:** Ruff: pass; Pyright: pass; Tests: skipped (PySide6 missing in this environment)
+
+### Prefetch: Explorer->View uses back=3 ahead=5
+**Files:** image_viewer/explorer_mode_operations.py
+**What:** Changed the immediate post-switch prefetch window from `back=0/ahead=1` to `back=3/ahead=5` so selecting an image in Explorer warms the normal neighbor window right away.
+**Checks:** Ruff: pass; Pyright: pass; Tests: not run
+
+### Loader: dedupe identical pending decode requests
+**Files:** image_viewer/image_engine/loader.py
+**What:** Avoided scheduling duplicate decodes for the same path+target while a request is already pending (common when Qt emits both selection+activated or prefetch is triggered twice), reducing wasted work and stale-drop noise.
+**Checks:** Ruff: pass; Pyright: pass; Tests: not run
+
+### Settings: normalize saved/printed paths
+**Files:** image_viewer/settings_manager.py, image_viewer/main.py
+**What:** Normalized `settings.json` log output to OS-native absolute paths and ensured `last_parent_dir` is saved as `abs_dir_str()` to avoid mixed `D:/...` vs `D:\...` values.
+**Checks:** Ruff: pass; Pyright: pass; Tests: not run
+
+### Logging: mirror console to image-view_session.log
+**Files:** image_viewer/logger.py, dev-docs/logging_manual.md
+**What:** Added a session FileHandler that writes the same formatted/category-filtered logs as the console to `image-view_session.log`, overwriting the file on each app start.
+**Checks:** Ruff: pass; Pyright: pass; Tests: not run
+
+### Fix: ignore duplicate Explorer image activation
+**Files:** image_viewer/explorer_mode_operations.py
+**What:** Ignored duplicate Explorer selection events (selection change + activation) when they refer to the already-displayed image in View mode, avoiding redundant decode/prefetch and stale-load churn.
+**Checks:** Ruff: pass; Pyright: pass; Tests: not run
+
+### Debug: reduce hover-menu mouse-move log spam
+**Files:** image_viewer/ui_hover_menu.py, image_viewer/main.py
+**What:** Kept hover menu behavior unchanged but stopped per-mouse-move debug spam by logging hover state only when it changes; removed redundant viewport mouse-move debug line.
+**Checks:** Ruff: pass; Pyright: pass; Tests: not run (per user request)
+
+### Debug: add correlated trace logs for list/index handoff
+**Files:** image_viewer/explorer_mode_operations.py, image_viewer/image_engine/engine.py, image_viewer/main.py
+**What:** Added correlation-id based debug logs around Explorer selection, directory-worker file list acceptance/drop, folder_changed index restoration, and a clear hint when prefetch collapses to `n=1` to pinpoint where list/index propagation breaks.
+**Checks:** Ruff: pass; Pyright: pass; Tests: not run (per user request)
+
+### Fix: Explorer->View should not collapse file list
+**Files:** image_viewer/explorer_mode_operations.py, image_viewer/main.py
+**What:** When activating an image from Explorer, use the engine's current file list (if available) instead of forcing `viewer.image_files` to a single item; added a pending selected-path hook so the correct index is restored once the async directory listing arrives, re-enabling prefetch/navigation.
+**Checks:** Ruff: pass; Pyright: pass; Tests: not run (per user request)
+
+### Fix: unify in-memory cache path keys (db_key)
+**Files:** image_viewer/image_engine/fs_model.py, image_viewer/image_engine/engine.py, image_viewer/main.py, image_viewer/ui_explorer_grid.py
+**What:** Switched FS model in-memory caches (`_thumb_cache`, `_meta`, `_thumb_pending`) to be keyed by `db_key()` to eliminate Qt `/` vs Windows `\\` mismatches; updated UI rename cache touch-up and metadata lookups to match.
+**Checks:** Ruff: pass; Pyright: pass; Tests: not run (per user request)
+
 ### Fix: avoid permanent UI lock on large folder open
 **Files:** image_viewer/image_engine/engine.py, image_viewer/main.py, image_viewer/ui_explorer_grid.py, image_viewer/explorer_mode_operations.py
 **What:** Stopped GUI-thread enumeration of `QFileSystemModel` during folder open by using the directory-worker-produced file list cache; made View-mode folder open fully async; removed forced thumbnail prefetch that triggered heavy synchronous work; updated explorer image selection to display immediately while the full file list arrives asynchronously.
