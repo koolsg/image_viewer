@@ -169,21 +169,18 @@ Configured in `pyproject.toml`:
 
 - `image_viewer/ui_explorer_grid.py`
   - Contains the explorer model and views for thumbnail and detail display.
-  - `ImageFileSystemModel(QFileSystemModel)`:
-    - Extends the standard FS model with:
-      - A "Resolution" column derived from `QImageReader` and cached file metadata.
-      - Thumbnail icons cached in memory (`_thumb_cache`) and optionally persisted via `ThumbnailCache`.
-      - Custom formatting for size and type columns, and metadata-rich tooltips.
-    - Integrates with `Loader` via `set_loader`, listening to `image_decoded` to populate thumbnails.
-  - The associated thumbnail grid widget (see remaining parts of `ui_explorer_grid.py`) manages view mode (thumbnail vs detail), context menus, keyboard shortcuts, and uses `ThumbnailCache` for on-disk caching.
+  - `ImageFileSystemModel` (lightweight `QAbstractTableModel`):
+    - The model no longer directly wraps `QFileSystemModel` or perform inline SQLite scans.
+    - Folder scanning and DB reads are performed by the engine-core thread (`EngineCore`) using `FSDBLoadWorker`, which queries the thumbnail DB via `ThumbDB` or `ThumbDBOperatorAdapter` and emits `chunk_loaded` payloads that populate the model.
+    - The model exposes columns such as `Resolution` and other cached file metadata and keeps an in-memory thumbnail cache (`_thumb_cache`) for fast display. It requests thumbnails from the engine loader when missing, and otherwise reads bytes via `ThumbDBBytesAdapter` when available.
+    - Design goal: keep UI fast and thread-safe by avoiding direct DB connections and heavy IO on the GUI thread.
+  - The associated thumbnail grid widget (see remaining parts of `ui_explorer_grid.py`) manages view mode (thumbnail vs detail), context menus, keyboard shortcuts, and uses `ThumbnailCache`/`ThumbDBBytesAdapter` for on-disk caching when appropriate.
 
-  - `image_viewer/image_engine/thumbnail_cache.py`
-  - `ThumbnailCache` stores thumbnails in a SQLite DB under a dedicated cache directory:
-    - Schema tracks path, mtime, file size, original dimensions, thumbnail size, and PNG-encoded thumbnail bytes. The on-disk DB by default is named `SwiftView_thumbs.db` inside the target folder.
-    - `get(...)` validates mtime/size and requested thumbnail dimensions before returning a `QPixmap` and optional original size.
-    - `set(...)` encodes a `QPixmap` to PNG and upserts into the DB.
-    - `cleanup_old(days)` and `vacuum()` support periodic maintenance.
-    - On Windows, marks the DB file as hidden via Win32 APIs.
+  - `image_viewer/image_engine/thumbnail_cache.py` / `image_viewer/image_engine/db/thumbdb_bytes_adapter.py`
+  - Thumbnails and metadata are stored in a SQLite DB (`SwiftView_thumbs.db`) and are accessible via the `ThumbDB`/`ThumbDBOperatorAdapter` and `ThumbDBBytesAdapter` compatibility helpers.
+    - `ThumbnailCache` provides a UI-friendly wrapper for `QPixmap` → PNG bytes conversions and prefers operator-backed adapters when available.
+    - The DB schema tracks path, mtime, size, original and thumbnail dimensions, and PNG-encoded bytes; `get`/`set`/`upsert_meta` helpers provide safe read/write semantics.
+    - On Windows, the DB file is marked hidden where possible (operator-backed initialization ensures cross-process safety).
 
 ### Settings, themes, and user preferences
 
