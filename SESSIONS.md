@@ -5,6 +5,11 @@
 **What:** Removed unused interface file `fs_db_iface.py` (IDBLoader) from the codebase; codebase uses concrete `FSDBLoadWorker` and engine integration instead.
 **Checks:** Ruff: pass; Pyright: pass; Tests: partial (collection errors due to missing PySide6 in this environment)
 
+### Cleanup: remove compatibility shim `image_viewer.image_viewer` (package re-export)
+**Files:** image_viewer/image_viewer.py
+**What:** Removed the compatibility shim module `image_viewer.image_viewer` (it only re-exported `explorer_mode_operations` and was not used internally).
+**Checks:** Ruff: pass; Pyright: pass; Tests: partial (collection errors due to missing PySide6 in this environment)
+
 ### Refactor: engine-thread Explorer model (drop QFileSystemModel)
 **Files:** image_viewer/image_engine/engine.py, image_viewer/image_engine/engine_core.py, image_viewer/image_engine/explorer_model.py, image_viewer/ui_explorer_grid.py, image_viewer/explorer_mode_operations.py
 **What:** Replaced Explorer Mode’s `QFileSystemModel.setRootPath()` scanning path with an engine-core thread that scans folders + preloads thumbnail DB rows (bytes/meta) and lazily generates missing thumbnails; UI now uses a lightweight `QAbstractTableModel` that converts bytes→QIcon on the UI thread.
