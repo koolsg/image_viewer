@@ -4,13 +4,6 @@
 
 ## 🔥 High Priority (다음에 할 것)
 
-### View Mode 개선 - Hover 서랍 메뉴
-- [x] 화면 좌측 hover 서랍 메뉴 구현
-  - 목표: 마우스가 좌측 가장자리에 가면 메뉴가 서랍처럼 슬라이드 인
-  - 메뉴 항목: Crop (일단 하나만)
-  - 파일: ui_canvas.py 또는 새 파일 ui_hover_menu.py
-  - 애니메이션: QPropertyAnimation으로 부드러운 슬라이드
-
 ### Explorer Mode Phase 3 - Performance
 - [x] Engine-thread Explorer model (drop QFileSystemModel)
   - 목표: Explorer Mode에서 `QFileSystemModel.setRootPath()` 기반 스캔 제거 (UI freeze 원인)
@@ -156,7 +149,9 @@
   - Updated `scripts/migrate_thumb_db.py` to import directly from `image_viewer.image_engine.db.migrations`
   - Updated `image_viewer/image_engine/fs_db_worker.py` imports to use `image_viewer.image_engine.db.db_operator`
   - Updated `AGENTS.md` to reflect FSModel refactor and added Development policies
-
+- [x] View Mode 개선 - Hover 서랍 메뉴 implemented
+  - Implemented left-edge hover drawer with Crop menu and smooth animation (QPropertyAnimation)
+  - Files: `ui_hover_menu.py` / `ui_canvas.py` (canvas integration)
 
 ### 2025-12-07
 - [x] 코드 리뷰 및 린트 수정

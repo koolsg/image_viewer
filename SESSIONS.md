@@ -1,5 +1,7 @@
 ## 2025-12-17
 
+- View Mode hover drawer implemented: left-edge hover drawer with Crop menu and smooth QPropertyAnimation; files: `ui_hover_menu.py` / `ui_canvas.py`
+
 ### Cleanup: remove unused `fs_db_iface.py` (IDBLoader)
 **Files:** image_viewer/image_engine/fs_db_iface.py
 **What:** Removed unused interface file `fs_db_iface.py` (IDBLoader) from the codebase; codebase uses concrete `FSDBLoadWorker` and engine integration instead.
