@@ -1,3 +1,30 @@
+## 2025-12-17
+
+### Cleanup: remove unused `fs_db_iface.py` (IDBLoader)
+**Files:** image_viewer/image_engine/fs_db_iface.py
+**What:** Removed unused interface file `fs_db_iface.py` (IDBLoader) from the codebase; codebase uses concrete `FSDBLoadWorker` and engine integration instead.
+**Checks:** Ruff: pass; Pyright: pass; Tests: partial (collection errors due to missing PySide6 in this environment)
+
+### Refactor: engine-thread Explorer model (drop QFileSystemModel)
+**Files:** image_viewer/image_engine/engine.py, image_viewer/image_engine/engine_core.py, image_viewer/image_engine/explorer_model.py, image_viewer/ui_explorer_grid.py, image_viewer/explorer_mode_operations.py
+**What:** Replaced Explorer Mode’s `QFileSystemModel.setRootPath()` scanning path with an engine-core thread that scans folders + preloads thumbnail DB rows (bytes/meta) and lazily generates missing thumbnails; UI now uses a lightweight `QAbstractTableModel` that converts bytes→QIcon on the UI thread.
+**Checks:** Ruff: pass; Pyright: pass; Tests: fail during collection (PySide6 import errors in this Python 3.13 environment)
+
+### EngineCore: Qt-only watcher + remove legacy FS model
+**Files:** image_viewer/image_engine/engine_core.py, image_viewer/image_engine/engine.py, image_viewer/ui_explorer_grid.py, image_viewer/explorer_mode_operations.py, image_viewer/image_engine/__init__.py, tests/test_init_thumbdb_sets_hidden.py
+**What:** Implemented current-folder-only `QFileSystemWatcher` inside EngineCore (debounced rescan + DB preload restart). Deleted legacy `QFileSystemModel` pipeline modules (`fs_model.py`, `fs_model_disk.py`, `directory_worker.py`) and updated tests/imports.
+**Checks:** Ruff: pass; Pyright: pass; Tests: pass (thumbdb slice)
+
+### Fix: suppress redundant thumbnail re-decodes
+**Files:** image_viewer/image_engine/engine_core.py, image_viewer/image_engine/engine.py
+**What:** Prevented repeated thumbnail decodes caused by rapid duplicate UI requests during the post-decode finalize window by (1) keeping the “pending” gate until the thumbnail is fully stored/emitted, (2) caching completed thumbnails by `(mtime,size,thumb_w,thumb_h)`, and (3) making `ImageEngine.open_folder()` idempotent for same-folder calls to avoid clearing caches/emitting empty snapshots.
+**Checks:** Ruff: pass; Pyright: pass; Tests: fail during collection (PySide6 import errors in this Python 3.13 environment)
+
+### Perf: cold-start thumbnail generation
+**Files:** image_viewer/image_engine/engine_core.py
+**What:** When the thumbnail DB doesn’t exist yet, skip the DB preload worker pass (which would only discover everything is missing) and immediately queue thumbnail generation for all images.
+**Checks:** Ruff: pass; Pyright: pass
+
 ## 2025-12-16
 
 ### Hover menu: dedupe position-updated logs
@@ -281,6 +308,7 @@
 **구현:**
 - `image_viewer/image_engine/fs_db_worker.py` 구현: `FSDBLoadWorker`가 `ThumbDB`를 사용하도록 구현하여 `fs_model`의 inline sqlite 접근을 대체
 - `image_viewer/image_engine/fs_model.py` 업데이트: 기본 DB 로더를 `FSDBLoadWorker`로 사용하고, 레거시 `_ThumbDbLoadWorker` shim을 제거
+- `image_viewer/image_engine/fs_db_iface.py` 제거: `IDBLoader` 인터페이스는 더 이상 사용되지 않아 정리됨 (후방 호환성 없음 — 변경 사항은 코드베이스에 영향을 주지 않음)
 **이유:**
 - FSModel에서 직접 관리하던 SQLite 쿼리 및 연결을 중앙화된 `ThumbDB`로 위임하여 중복/복잡도 제거
 **테스트:**
