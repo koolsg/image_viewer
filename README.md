@@ -223,14 +223,8 @@ Location: `image_viewer/settings.json`
 - Use SQLite thumbnail cache for persistent performance
 - Check Explorer Mode performance settings
 
-### Migration tools
-If you have older thumbnail DB files and the viewer complains about missing schema columns, there's a migration helper under `scripts/migrate_thumb_db.py` that applies schema upgrades.
-
-```
-python scripts/migrate_thumb_db.py /path/to/SwiftView_thumbs.db
-```
-This prints the current `user_version` and migrates the DB to the latest schema supported by the application.
-
+### Schema migrations
+This project is pre-release and does not perform automatic schema migrations. The thumbnail DB schema is managed by the application; if you encounter schema issues, please raise an issue so we can address it directly.
 **Memory usage with large images**
 - Use Thumbnail mode for browsing
 - Clear cache if needed (restart application)

@@ -15,7 +15,6 @@ except Exception:
     ctypes = None
 
 from .db_operator import DbOperator
-from .migrations import apply_migrations
 from .thumbdb_core import ThumbDBOperatorAdapter
 
 _logger = get_logger("thumbnail_db")
@@ -157,8 +156,6 @@ class ThumbDBBytesAdapter:
                     _logger.debug("_set_hidden_attribute_immediate failed", exc_info=True)
 
             self._operator.schedule_write(_schema_init).result()
-            fut = self._operator.schedule_write(lambda conn: apply_migrations(conn))
-            fut.result()
             # Try to set hidden attribute on the DB file (Windows only). This
             # helps keep the DB file out of Explorer listings for image folders.
             try:
@@ -166,7 +163,7 @@ class ThumbDBBytesAdapter:
             except Exception:
                 _logger.debug("_set_hidden_attribute_on_path failed", exc_info=True)
         except Exception:
-            _logger.debug("thumbnail_db: apply_migrations failed during init", exc_info=True)
+            _logger.debug("thumbnail_db: init failed during operator tasks", exc_info=True)
 
     @property
     def db_path(self) -> Path:

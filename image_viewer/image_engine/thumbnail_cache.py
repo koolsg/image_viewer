@@ -17,7 +17,8 @@ from PySide6.QtCore import QBuffer, QIODevice
 from PySide6.QtGui import QPixmap
 
 from image_viewer.image_engine.db.db_operator import DbOperator
-from image_viewer.image_engine.db.migrations import apply_migrations
+
+# Migrations removed: schema is managed by the database adapter/operator in this pre-release project
 from image_viewer.image_engine.db.thumbdb_bytes_adapter import ThumbDBBytesAdapter
 from image_viewer.logger import get_logger
 from image_viewer.path_utils import db_key
@@ -163,15 +164,7 @@ class ThumbnailCache:
             self._db_operator.schedule_write(_schema_init).result()
 
             # ensure any registered migrations are applied through the operator
-            def _apply_migrations(conn):
-                try:
-                    apply_migrations(conn)
-                except Exception:
-                    _logger.debug("apply_migrations via operator failed", exc_info=True)
-
-            self._db_operator.schedule_write(_apply_migrations).result()
-
-            # operator-backed migrations applied above; no direct connection migration required
+            # migrations removed — pre-release project does not perform DB migrations.
             # Ensure the DB file itself is hidden on Windows now that it may have been created
             self._set_hidden_attribute()
             _logger.debug("thumbnail cache initialized: %s", self.db_path)

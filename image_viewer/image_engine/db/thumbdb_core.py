@@ -10,7 +10,6 @@ from image_viewer.logger import get_logger
 from image_viewer.path_utils import db_key
 
 from .db_operator import DbOperator
-from .migrations import apply_migrations
 
 _logger = get_logger("thumb_db")
 
@@ -48,12 +47,9 @@ class ThumbDB:
             self._operator = operator
         # use the operator adapter as the implementation
         self._adapter = ThumbDBOperatorAdapter(self._operator, self._path)
-        # Ensure schema/migrations are applied via the operator on init
-        try:
-            fut = self._operator.schedule_write(lambda conn: apply_migrations(conn))
-            fut.result()
-        except Exception:
-            _logger.debug("thumb_db: apply_migrations failed during init", exc_info=True)
+        # Schema initialization is handled by the scheduled schema init
+        # in adapters/operators; no migrations are applied in pre-release.
+        # (migrations removed — pre-release project assumes latest schema.)
 
     def connect(self) -> None:
         # Operator-based adapter doesn't expose a live connection; return None for compatibility

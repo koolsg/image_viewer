@@ -6,7 +6,6 @@ helpers used by the engine. Modules are re-exported from top-level
 """
 
 from .db_operator import DbOperator
-from .migrations import apply_migrations, get_latest_version
 from .thumbdb_bytes_adapter import ThumbDBBytesAdapter
 from .thumbdb_core import ThumbDB, ThumbDBOperatorAdapter
 
@@ -15,7 +14,4 @@ __all__ = [
     "ThumbDB",
     "ThumbDBBytesAdapter",
     "ThumbDBOperatorAdapter",
-    # UI-level ThumbnailCache lives under image_viewer.image_engine.thumbnail_cache
-    "apply_migrations",
-    "get_latest_version",
 ]

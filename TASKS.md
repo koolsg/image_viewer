@@ -1,32 +1,28 @@
-# Image Viewer - Implementation Tasks
+# Image Viewer - What to do
 
 > 구현할 기능과 개선 사항을 우선순위별로 관리
 
 ## 🔥 High Priority (다음에 할 것)
 
-### Explorer Mode Phase 3 - Performance
-- [x] Engine-thread Explorer model (drop QFileSystemModel)
-  - 목표: Explorer Mode에서 `QFileSystemModel.setRootPath()` 기반 스캔 제거 (UI freeze 원인)
-  - 구현: EngineCore(QThread)에서 폴더 스캔 + Thumb DB 프리로드 + missing 썸네일 생성(바이트)
-  - UI: QAbstractTableModel 기반 ExplorerTableModel로 bytes→QIcon 변환 (UI thread만)
-  - 파일: image_viewer/image_engine/engine_core.py, image_viewer/image_engine/explorer_model.py,
-          image_viewer/image_engine/engine.py, image_viewer/ui_explorer_grid.py, image_viewer/explorer_mode_operations.py
+### 이미지 편집 기능
+- [ ] Crop/Save 구현
+  - 목표: 크롭 영역 선택 후 저장 기능
+  - UI: 마우스 드래그로 영역 선택
+  - 저장: 원본 유지 또는 덮어쓰기 옵션
+  - 파일: ui_canvas.py, file_operations.py
 
-- [ ] LRU 캐시 메모리 제한 (현재 무제한)
-  - 목표: 최대 500MB로 제한
-  - 방법: OrderedDict + 메모리 추적
-  - 파일: ui_explorer_grid.py
+### 이미지 배치 처리
+- [ ] 이미지 Merge/Split 기능
+  - Merge: 여러 이미지를 하나로 합치기 (세로/가로)
+  - Split: 큰 이미지를 여러 조각으로 나누기
+  - UI: 다이얼로그로 옵션 설정
+  - 파일: 새 모듈 image_batch.py
 
-- [ ] 대용량 폴더 lazy loading
-  - 문제: 1000+ 이미지 폴더에서 썸네일 요청 폭주
-  - 해결: 스크롤 시 visible items만 로드
-  - 파일: ui_explorer_grid.py
+- [ ] 간단한 회전/반전 저장
+  - 현재: 뷰어에서만 회전, 저장 안 됨
+  - 목표: "Save Rotated" 버튼 추가
+  - 파일: file_operations.py
 
-### Trim UI 개선
-- [ ] 크롭 프리셋 추가 (16:9, 4:3, 1:1)
-  - 이유: 매번 수동 조정이 번거로움
-  - UI: 드롭다운 메뉴
-  - 파일: ui_trim.py
 
 ## 📋 Medium Priority (곧 할 것)
 
@@ -69,37 +65,33 @@
   - 추가: README.md에 단축키 표 추가
   - 파일: shortcuts_context.md, README.md
 
-### 이미지 편집 기능
-- [ ] Crop/Save 구현
-  - 목표: 크롭 영역 선택 후 저장 기능
-  - UI: 마우스 드래그로 영역 선택
-  - 저장: 원본 유지 또는 덮어쓰기 옵션
-  - 파일: ui_canvas.py, file_operations.py
-
-- [ ] 간단한 회전/반전 저장
-  - 현재: 뷰어에서만 회전, 저장 안 됨
-  - 목표: "Save Rotated" 버튼 추가
-  - 파일: file_operations.py
-
-- [ ] 밝기/대비 조정
-  - UI: 슬라이더 다이얼로그
-  - 적용: pyvips로 실시간 프리뷰
-
-### 이미지 배치 처리
-- [ ] 이미지 Merge/Split 기능
-  - Merge: 여러 이미지를 하나로 합치기 (세로/가로)
-  - Split: 큰 이미지를 여러 조각으로 나누기
-  - UI: 다이얼로그로 옵션 설정
-  - 파일: 새 모듈 image_batch.py
-
-### 키보드 단축키 개선/정리
 - [ ] 숫자 키로 줌 레벨 설정 (1=100%, 2=200%)
   - 이유: 빠른 확대/축소
   - 파일: main.py keyPressEvent
 
 
+
+- [ ] 밝기/대비 조정
+  - UI: 슬라이더 다이얼로그
+  - 적용: pyvips로 실시간 프리뷰
+
+
+
+
+
+
+
 ## 🔮 Low Priority (나중에)
 
+### [ ] LRU 캐시 메모리 제한 (현재 무제한)
+  - 목표: 최대 500MB로 제한
+  - 방법: OrderedDict + 메모리 추적
+  - 파일: ui_explorer_grid.py
+
+- [ ] 대용량 폴더 lazy loading
+  - 문제: 1000+ 이미지 폴더에서 썸네일 요청 폭주
+  - 해결: 스크롤 시 visible items만 로드
+  - 파일: ui_explorer_grid.py
 ### 코드 리팩토링 - ui_explorer_grid.py
 **현재 상태 (2025-12-05):**
 - 파일 크기: 806줄 (Phase 2 완료 후)
@@ -110,11 +102,6 @@
   - `_ThumbnailListView`: ~63줄 (커스텀 툴팁)
   - `_ImageOnlyIconProvider`: ~10줄
 
-**추가 리팩토링 검토:**
-- [ ] Phase 1: 썸네일 관리 분리 (우선순위: Low)
-  - 현재 ImageFileSystemModel에 잘 통합되어 있음
-  - 분리 시 Signal/Slot 연결 복잡도 증가
-  - 성능 문제 발생 시 재검토
 
 - [ ] Phase 3: 메타데이터 관리 분리 (우선순위: Low)
   - 로직이 단순하여 분리 효과 미미
@@ -139,7 +126,7 @@
 
 ---
 
-## ✅ Recently Completed (최근 1주일)
+# ✅What have done = Recently Completed (최근 1주일)
 
 ### 2025-12-17
 - [x] Cleanup: remove unused compatibility shims and re-exports
@@ -152,6 +139,13 @@
 - [x] View Mode 개선 - Hover 서랍 메뉴 implemented
   - Implemented left-edge hover drawer with Crop menu and smooth animation (QPropertyAnimation)
   - Files: `ui_hover_menu.py` / `ui_canvas.py` (canvas integration)
+
+- [x] Engine-thread Explorer model (drop QFileSystemModel)
+  - 목표: Explorer Mode에서 `QFileSystemModel.setRootPath()` 기반 스캔 제거 (UI freeze 원인)
+  - 구현: EngineCore(QThread)에서 폴더 스캔 + Thumb DB 프리로드 + missing 썸네일 생성(바이트)
+  - UI: QAbstractTableModel 기반 ExplorerTableModel로 bytes→QIcon 변환 (UI thread만)
+  - 파일: image_viewer/image_engine/engine_core.py, image_viewer/image_engine/explorer_model.py,
+          image_viewer/image_engine/engine.py, image_viewer/ui_explorer_grid.py, image_viewer/explorer_mode_operations.py
 
 ### 2025-12-07
 - [x] 코드 리뷰 및 린트 수정

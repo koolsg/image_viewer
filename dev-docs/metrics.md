@@ -13,7 +13,6 @@ Available keys (examples):
 - `db_operator.task_duration` - durations for DB tasks (list)
 - `thumb_db.connects` - number of times `ThumbDB.connect()` was called
 - `thumb_db.ensure_schema_duration` - time spent ensuring schema
-- `migrations.applied_v1` - number of applied migrations for version 1
 
 How to access metrics in a running process
 -----------------------------------------
