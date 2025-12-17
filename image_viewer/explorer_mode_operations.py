@@ -163,8 +163,6 @@ def _setup_explorer_mode(viewer) -> None:  # noqa: PLR0912, PLR0915
                 grid = getattr(viewer.explorer_state, "_explorer_grid", None)
                 if grid is not None:
                     with contextlib.suppress(Exception):
-                        grid.set_loader(viewer.engine.thumb_loader)
-                        _logger.debug("reused grid: re-attached thumb_loader=%s", viewer.engine.thumb_loader)
                         grid.resume_pending_thumbnails()
             except Exception:
                 pass
@@ -181,15 +179,8 @@ def _setup_explorer_mode(viewer) -> None:  # noqa: PLR0912, PLR0915
         splitter.setHandleWidth(1)
         tree = FolderTreeWidget()
 
-        # Use shared model from engine
-        grid = ThumbnailGridWidget(model=viewer.engine.fs_model)
-
-        try:
-            grid.set_loader(viewer.engine.thumb_loader)
-        except Exception as ex:
-            _logger.debug("failed to attach thumb_loader: %s", ex)
-        else:
-            _logger.debug("attached thumb_loader to grid: %s", viewer.engine.thumb_loader)
+        # Engine-backed explorer model (no QFileSystemModel)
+        grid = ThumbnailGridWidget(engine=viewer.engine)
 
         # Apply settings
         try:

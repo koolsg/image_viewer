@@ -1,7 +1,7 @@
 """Image Engine - Backend/Server layer for image processing.
 
 This package provides the core data and processing functionality:
-- File system management (fs_model)
+- File system management (engine-thread folder scanning + Qt watcher)
 - Image decoding (decoder, loader)
 - Caching (cache, thumbnail_cache)
 - Decoding strategies (strategy)

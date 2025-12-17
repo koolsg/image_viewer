@@ -6,18 +6,18 @@ data and processing operations in the image viewer application.
 
 import contextlib
 from collections import OrderedDict
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QObject, QThread, Signal
-from PySide6.QtGui import QIcon, QImage, QPixmap
+from PySide6.QtGui import QImage, QPixmap
 
 from image_viewer.logger import get_logger
 from image_viewer.path_utils import abs_path, abs_path_str, db_key
 
 from .convert_worker import ConvertWorker
 from .decoder import decode_image
-from .directory_worker import DirectoryWorker
-from .fs_model import ImageFileSystemModel
+from .engine_core import EngineCore
 from .loader import Loader
 from .strategy import DecodingStrategy, FastViewStrategy, FullStrategy
 
@@ -46,16 +46,39 @@ class ImageEngine(QObject):
     # Signals for UI notification
     image_ready = Signal(str, QPixmap, object)  # path, pixmap, error
     folder_changed = Signal(str, list)  # folder_path, file_list
-    thumbnail_ready = Signal(str, QIcon)  # path, icon
     file_list_updated = Signal(list)  # new file list
+
+    # Explorer-mode snapshots (UI-thread model consumes these)
+    explorer_entries_changed = Signal(str, list)  # folder_path, entries(list[dict])
+    explorer_thumb_rows = Signal(list)  # list[dict]
+    explorer_thumb_generated = Signal(dict)  # dict payload
+
+    # Internal cross-thread bridges to EngineCore
+    _core_open_folder = Signal(str)
+    _core_request_thumbnail = Signal(str)
+    _core_set_thumb_size = Signal(int, int)
+    _core_shutdown = Signal()
 
     def __init__(self, parent: QObject | None = None):
         super().__init__(parent)
 
-        # Core components
-        self._fs_model = ImageFileSystemModel(self)
+        # UI-thread decode pipeline for full-resolution images (creates QPixmap on UI thread)
         self._loader = Loader(decode_image)
-        self._thumb_loader = Loader(decode_image)
+
+        # Core engine thread (folder scan + DB + thumbnail bytes)
+        self._core_thread = QThread(self)
+        self._core = EngineCore()
+        self._core.moveToThread(self._core_thread)
+        self._core_thread.started.connect(self._core.initialize)
+        self._core_open_folder.connect(self._core.open_folder)
+        self._core_request_thumbnail.connect(self._core.request_thumbnail)
+        self._core_set_thumb_size.connect(self._core.set_thumb_size)
+        self._core_shutdown.connect(self._core.shutdown)
+        self._core.folder_scanned.connect(self._on_core_folder_scanned)
+        self._core.thumb_db_chunk.connect(self._on_core_thumb_db_chunk)
+        self._core.thumb_generated.connect(self._on_core_thumb_generated)
+        self._core.error.connect(self._on_core_error)
+        self._core_thread.start()
 
         # Pixmap cache (LRU)
         self._pixmap_cache: OrderedDict[str, QPixmap] = OrderedDict()
@@ -73,6 +96,9 @@ class ImageEngine(QObject):
         self._file_list_cache: list[str] = []
         # Track the currently opened root folder (absolute path)
         self._current_root: str | None = None
+        # Metadata cache populated by EngineCore DB preload.
+        # key -> (width, height, size_bytes, mtime_ms)
+        self._meta_cache: dict[str, tuple[int | None, int | None, int | None, int | None]] = {}
 
         # Internal signal connections
         # Offload numpy->QImage conversion to a background worker thread
@@ -85,20 +111,7 @@ class ImageEngine(QObject):
         # Receive converted QImage back on the main thread for finalization
         self._convert_worker.image_converted.connect(self._on_image_converted)
 
-        # Directory worker: run folder file-listing off the GUI thread to avoid
-        # iterating QFileSystemModel rows on the main thread which can block
-        # for large directories.
-        self._dir_thread = QThread(self)
-        self._dir_worker = DirectoryWorker()
-        self._dir_worker.moveToThread(self._dir_thread)
-        self._dir_worker.files_ready.connect(self._on_directory_files_ready)
-        self._dir_thread.start()
-        # Connect fs_model directoryLoaded to starting the background scan
-        # Connect directly to the worker slot so the slot executes in the
-        # worker's thread (queued connection) instead of running on the GUI
-        # thread, which would defeat the purpose.
-        self._fs_model.directoryLoaded.connect(self._dir_worker.run)
-        _logger.debug("ImageEngine: loader=%s thumb_loader=%s", self._loader, self._thumb_loader)
+        _logger.debug("ImageEngine: loader=%s", self._loader)
 
         _logger.debug("ImageEngine initialized")
 
@@ -121,43 +134,30 @@ class ImageEngine(QObject):
             return False
         path = abs_path_str(p)
 
+        # If UI triggers duplicate open_folder calls for the same folder (e.g.
+        # tree selection + grid load), avoid clearing caches / emitting empty
+        # snapshots. Let the core thread decide whether a refresh is needed.
+        if self._current_root == path:
+            self._core_open_folder.emit(path)
+            _logger.debug("open_folder (same folder): %s", path)
+            return True
+
         # Clear caches
         self.clear_cache()
         self._loader.clear_pending()
+        self._meta_cache.clear()
         # Clear file list cache immediately; the directory worker will repopulate.
         self._file_list_cache = []
         self._last_folder_loaded = None
         self._last_file_list = None
 
-        # Record current root early so any cache initialization triggered during
-        # model root updates prefers the opened folder.
+        # Record current root and kick the core thread. Emit immediate empty
+        # lists so UI can update while the core scans.
         self._current_root = path
-
-        # Set root path (triggers directoryLoaded signal). The model will
-        # normalize to an absolute directory; ensure we pass an absolute path.
-        self._fs_model.setRootPath(path)
-
-        # Proactively initialize the cache inside this folder so the DB is
-        # created at the expected location.
-        with contextlib.suppress(Exception):
-            self._fs_model._ensure_db_cache(path)
-            # Log where the DB adapter ended up (if available)
-            try:
-                db_cache = self._fs_model._db_cache
-                if db_cache is not None:
-                    try:
-                        _logger.debug("thumbnail DB initialized at: %s", db_cache.db_path)
-                    except Exception:
-                        _logger.debug("thumbnail DB initialized (path unknown)")
-            except Exception:
-                pass
-        # Emit an immediate (empty) file list so UI can update quickly while
-        # the directory worker gathers the actual list in background.
-        try:
-            self.folder_changed.emit(path, [])
-            self.file_list_updated.emit([])
-        except Exception:
-            pass
+        self.folder_changed.emit(path, [])
+        self.file_list_updated.emit([])
+        self.explorer_entries_changed.emit(path, [])
+        self._core_open_folder.emit(path)
         _logger.debug("open_folder: %s", path)
         return True
 
@@ -167,7 +167,7 @@ class ImageEngine(QObject):
         Returns:
             Absolute folder path or empty string
         """
-        return self._fs_model.get_current_folder()
+        return self._current_root or ""
 
     def get_image_files(self) -> list[str]:
         """Get all image files in current folder (sorted).
@@ -216,23 +216,13 @@ class ImageEngine(QObject):
         """
         return len(self._file_list_cache)
 
-    @property
-    def fs_model(self) -> ImageFileSystemModel:
-        """Get the underlying file system model.
-
-        This is provided for UI components that need direct model access
-        (e.g., QListView for Explorer mode).
-        """
-        return self._fs_model
-
-    @property
-    def thumb_loader(self) -> Loader:
-        """Get the thumbnail loader.
-
-        This is provided for UI components that need direct loader access
-        (e.g., ThumbnailGridWidget).
-        """
-        return self._thumb_loader
+    def request_thumbnail(self, path: str) -> None:
+        """Request thumbnail generation for a specific file (engine core thread)."""
+        try:
+            if path:
+                self._core_request_thumbnail.emit(str(Path(path)))
+        except Exception:
+            return
 
     # ═══════════════════════════════════════════════════════════════════════
     # Image Decoding API
@@ -355,8 +345,7 @@ class ImageEngine(QObject):
     # ═══════════════════════════════════════════════════════════════════════
     # Thumbnail API
     # ═══════════════════════════════════════════════════════════════════════
-    # Note: Thumbnail management is handled by ImageFileSystemModel.
-    # Use fs_model.set_loader() and thumb_loader property for thumbnail operations.
+    # Note: Thumbnail generation/DB is managed by EngineCore.
 
     # ═══════════════════════════════════════════════════════════════════════
     # Metadata API
@@ -373,8 +362,8 @@ class ImageEngine(QObject):
         """
         info = {}
         try:
-            # Use cached metadata (already preloaded)
-            w, h, size_bytes, mtime = self._fs_model._meta.get(db_key(path), (None, None, None, None))
+            # Use cached metadata (populated by engine core DB preload)
+            w, h, size_bytes, mtime = self._meta_cache.get(db_key(path), (None, None, None, None))
             if w and h:
                 info["resolution"] = (w, h)
             if size_bytes is not None:
@@ -445,7 +434,7 @@ class ImageEngine(QObject):
             width: Thumbnail width
             height: Thumbnail height
         """
-        self._fs_model.set_thumb_size(width, height)
+        self._core_set_thumb_size.emit(int(width), int(height))
 
     # ═══════════════════════════════════════════════════════════════════════
     # Lifecycle
@@ -455,7 +444,6 @@ class ImageEngine(QObject):
         """Shutdown the engine and release resources."""
         _logger.debug("ImageEngine shutting down")
         self._loader.shutdown()
-        self._thumb_loader.shutdown()
         self._pixmap_cache.clear()
         # Stop convert worker thread
         try:
@@ -464,13 +452,16 @@ class ImageEngine(QObject):
                 self._convert_thread.wait()
         except Exception:  # pragma: no cover - defensive cleanup
             _logger.debug("exception while shutting down convert thread")
-        # Stop directory worker thread
+        # Stop core engine thread
         try:
-            if hasattr(self, "_dir_thread") and self._dir_thread.isRunning():
-                self._dir_thread.quit()
-                self._dir_thread.wait()
+            if hasattr(self, "_core"):
+                with contextlib.suppress(Exception):
+                    self._core_shutdown.emit()
+            if hasattr(self, "_core_thread") and self._core_thread.isRunning():
+                self._core_thread.quit()
+                self._core_thread.wait()
         except Exception:  # pragma: no cover - defensive cleanup
-            _logger.debug("exception while shutting down dir thread")
+            _logger.debug("exception while shutting down core thread")
 
     # ═══════════════════════════════════════════════════════════════════════
     # Internal Handlers
@@ -527,71 +518,80 @@ class ImageEngine(QObject):
             _logger.exception("failed to finalize image: %s", path)
             self.image_ready.emit(path, QPixmap(), str(e))
 
-    def _on_directory_loaded(self, path: str) -> None:
-        """Handle directory loaded signal from fs_model."""
-        # Only process if this is the current root path
-        current_root = self._fs_model.rootPath()
-        current_root_abs = abs_path_str(current_root) if current_root else ""
-        path_abs = abs_path_str(path)
-        if path_abs != current_root_abs:
-            return
-        # Legacy handler: prefer the background directory worker which will
-        # emit `files_ready` -> `_on_directory_files_ready`. Keep this method
-        # minimal to avoid accidental heavy work on the GUI thread.
-        _logger.debug("directoryLoaded received for %s (deferred to worker)", path_abs)
-
-    def _on_directory_files_ready(self, path: str, files: list[str]) -> None:
-        """Handle file list produced by `DirectoryWorker` (runs on main thread)."""
+    def _on_core_folder_scanned(self, folder_path: str, entries: list[dict], image_paths: list[str]) -> None:
+        """Receive core scan snapshot on UI thread."""
         try:
-            # Normalize the incoming path to an absolute representation and
-            # ignore stale notifications for non-current roots.
-            path_abs = abs_path_str(path)
-            current_root = self._fs_model.rootPath()
-            current_root_abs = abs_path_str(current_root) if current_root else ""
+            folder_abs = abs_path_str(folder_path)
+        except Exception:
+            folder_abs = folder_path
 
-            if path_abs != current_root_abs:
-                _logger.debug(
-                    "dir_files_ready drop: worker_path=%s norm=%s current_root=%s norm_root=%s files=%d",
-                    path,
-                    path_abs,
-                    current_root,
-                    current_root_abs,
-                    len(files),
+        if self._current_root and folder_abs != self._current_root:
+            return
+
+        # Explorer snapshot
+        self.explorer_entries_changed.emit(folder_abs, entries)
+
+        # View-mode file list (images only)
+        files = list(image_paths)
+
+        if folder_abs == self._last_folder_loaded and files == self._last_file_list:
+            return
+        self._last_folder_loaded = folder_abs
+        self._last_file_list = list(files)
+        self._file_list_cache = list(files)
+
+        self.folder_changed.emit(folder_abs, files)
+        self.file_list_updated.emit(files)
+
+        # Warm cache by prefetching a small set
+        with contextlib.suppress(Exception):
+            prefetch_list = files[:6]
+            if prefetch_list:
+                self.prefetch(prefetch_list)
+
+    def _on_core_thumb_db_chunk(self, rows: list) -> None:
+        """Receive DB preload rows on UI thread."""
+        # Update metadata cache for get_file_info and emit to explorer model.
+        try:
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                path = row.get("path")
+                if not path:
+                    continue
+                key = db_key(str(path))
+                w = row.get("width")
+                h = row.get("height")
+                size = row.get("size")
+                mtime = row.get("mtime")
+                self._meta_cache[key] = (
+                    int(w) if w is not None else None,
+                    int(h) if h is not None else None,
+                    int(size) if size is not None else None,
+                    int(mtime) if mtime is not None else None,
                 )
-                return
+        except Exception:
+            pass
+        self.explorer_thumb_rows.emit(rows)
 
-            _logger.debug(
-                "dir_files_ready accept: root=%s files=%d first=%s last=%s",
-                path_abs,
-                len(files),
-                (files[0] if files else None),
-                (files[-1] if files else None),
-            )
+    def _on_core_thumb_generated(self, payload: dict) -> None:
+        try:
+            path = payload.get("path")
+            if path:
+                key = db_key(str(path))
+                w = payload.get("width")
+                h = payload.get("height")
+                size = payload.get("size")
+                mtime = payload.get("mtime")
+                self._meta_cache[key] = (
+                    int(w) if w is not None else None,
+                    int(h) if h is not None else None,
+                    int(size) if size is not None else None,
+                    int(mtime) if mtime is not None else None,
+                )
+        except Exception:
+            pass
+        self.explorer_thumb_generated.emit(payload)
 
-            # Avoid duplicate emissions when the folder/file list hasn't changed
-            if path == self._last_folder_loaded and files == self._last_file_list:
-                _logger.debug("dir_files_ready dedupe: root=%s files=%d", path_abs, len(files))
-                return
-
-            self._last_folder_loaded = path_abs
-            self._last_file_list = list(files)
-            self._file_list_cache = list(files)
-            _logger.debug("directory loaded: %s (%d files)", path_abs, len(files))
-
-            # Emit folder/file list updates (UI callers will react accordingly)
-            self.folder_changed.emit(path_abs, files)
-            self.file_list_updated.emit(files)
-
-            # Start thumbnail DB batch load (runs background threads internally)
-            with contextlib.suppress(Exception):
-                self._fs_model.batch_load_thumbnails()
-
-            # Optionally prefetch a small set of nearby images to warm caches
-            try:
-                prefetch_list = files[:6]
-                if prefetch_list:
-                    self.prefetch(prefetch_list)
-            except Exception:
-                pass
-        except Exception as e:
-            _logger.debug("_on_directory_files_ready failed: %s", e)
+    def _on_core_error(self, where: str, message: str) -> None:
+        _logger.debug("EngineCore error (%s): %s", where, message)

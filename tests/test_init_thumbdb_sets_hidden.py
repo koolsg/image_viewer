@@ -12,7 +12,6 @@ sys.modules.setdefault("PySide6", types.ModuleType("PySide6"))
 sys.modules.setdefault("PySide6.QtCore", types.SimpleNamespace(QBuffer=object, QIODevice=object, Qt=object))
 sys.modules.setdefault("PySide6.QtGui", types.SimpleNamespace(QPixmap=object))
 
-from image_viewer.image_engine import fs_model_disk
 from image_viewer.image_engine.db import thumbdb_bytes_adapter as tba
 
 
@@ -27,8 +26,9 @@ def test_init_thumbnail_cache_calls_hidden(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(tba, "_set_hidden_attribute_immediate", _fake_set_hidden)
 
     cache_dir = tmp_path / "cache"
-    adapter = fs_model_disk.init_thumbnail_cache_for_path(cache_dir, db_name="SwiftView_thumbs.db")
+    db_path = cache_dir / "SwiftView_thumbs.db"
+    adapter = tba.ThumbDBBytesAdapter(db_path)
 
     assert adapter is not None
     assert called["ok"] is True
-    assert called["path"] == cache_dir / "SwiftView_thumbs.db"
+    assert called["path"] == db_path

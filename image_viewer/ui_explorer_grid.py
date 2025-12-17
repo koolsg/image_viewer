@@ -6,7 +6,6 @@ import contextlib
 from pathlib import Path
 
 from PySide6.QtCore import (
-    QDir,
     QModelIndex,
     QPoint,
     QSize,
@@ -38,9 +37,9 @@ from PySide6.QtWidgets import (
 
 from . import explorer_mode_operations
 from .busy_cursor import busy_cursor
-from .image_engine.fs_model import ImageFileSystemModel
+from .image_engine.explorer_model import ExplorerTableModel
 from .logger import get_logger
-from .path_utils import abs_dir_str, db_key
+from .path_utils import abs_dir_str
 
 _logger = get_logger("ui_explorer_grid")
 
@@ -136,16 +135,19 @@ class ThumbnailGridWidget(QWidget):
 
     image_selected = Signal(str)
 
-    def __init__(self, parent=None, model: ImageFileSystemModel | None = None) -> None:  # noqa: PLR0915
+    def __init__(self, parent=None, engine=None, model=None) -> None:  # noqa: PLR0915
         super().__init__(parent)
+        self._engine = engine
         self._current_folder: str | None = None
         self._clipboard_paths: list[str] = []
         self._clipboard_mode: str | None = None  # "copy" | "cut"
         self._context_menu: QMenu | None = None  # Pre-created context menu
 
-        # Use provided model or create new one (for backward compatibility)
+        # Use provided model or create engine-backed model.
         if model is not None:
             self._model = model
+            if self._engine is None:
+                self._engine = getattr(model, "_engine", None)
             # Ensure explorer grid shows all files (including non-images) and uses OS icons
             try:
                 self._model.setNameFilters([])
@@ -155,7 +157,9 @@ class ThumbnailGridWidget(QWidget):
             except Exception:
                 pass
         else:
-            self._model = ImageFileSystemModel(self)
+            if engine is None:
+                raise ValueError("ThumbnailGridWidget requires either model or engine")
+            self._model = ExplorerTableModel(engine, parent=self)
         _logger.debug(
             "ThumbnailGridWidget: nameFilters=%s nameFilterDisables=%s",
             self._model.nameFilters(),
@@ -163,22 +167,8 @@ class ThumbnailGridWidget(QWidget):
         )
         _logger.debug("ThumbnailGridWidget: model provided=%s filter=%s", model is not None, self._model.filter())
 
-        # Configure model if not already configured
-        if self._model.filter() == QDir.Filter.NoFilter:
-            self._model.setFilter(QDir.Filter.Files | QDir.Filter.NoDotAndDotDot)
-            self._model.setNameFilters(
-                [
-                    "*.jpg",
-                    "*.jpeg",
-                    "*.png",
-                    "*.bmp",
-                    "*.gif",
-                    "*.webp",
-                    "*.tif",
-                    "*.tiff",
-                ]
-            )
-            self._model.setNameFilterDisables(False)
+        # Configure icon provider for non-image files
+        with contextlib.suppress(Exception):
             self._model.setIconProvider(_ImageOnlyIconProvider())
 
         # Thumbnail view (icon grid)
@@ -250,11 +240,6 @@ class ThumbnailGridWidget(QWidget):
             _logger.debug("load_folder called: %s", folder_path)
             # Normalize the folder path to an absolute directory before using it.
             folder_path = abs_dir_str(folder_path)
-            # Check through model, not direct file access
-            folder_index = self._model.index(folder_path)
-            if not folder_index.isValid() or not self._model.isDir(folder_index):
-                _logger.warning("not a directory: %s", folder_path)
-                return
             idx = self._model.setRootPath(folder_path)
             self._list.setRootIndex(idx)
             self._tree.setRootIndex(idx)
@@ -458,7 +443,7 @@ class ThumbnailGridWidget(QWidget):
 
         explorer_mode_operations.delete_files_to_recycle_bin(paths, self)
 
-    def rename_first_selected(self) -> None:  # noqa: PLR0911, PLR0915
+    def rename_first_selected(self) -> None:  # noqa: PLR0911
         """Rename the first selected file using a dialog with dynamic width."""
         if self._view_mode == "thumbnail":
             indexes = self._list.selectedIndexes()
@@ -539,16 +524,10 @@ class ThumbnailGridWidget(QWidget):
             Path(old_path).rename(new_path)
             _logger.debug("renamed: %s -> %s", old_path, new_path)
 
-            # Update cache if needed
-            old_key = db_key(old_path)
-            new_key = db_key(str(new_path))
-            if old_key in self._model._thumb_cache:
-                icon = self._model._thumb_cache.pop(old_key)
-                self._model._thumb_cache[new_key] = icon
-
-            if old_key in self._model._meta:
-                meta = self._model._meta.pop(old_key)
-                self._model._meta[new_key] = meta
+            # Refresh folder snapshot via engine (keeps model/thread boundaries intact)
+            if self._engine is not None and self._current_folder:
+                with contextlib.suppress(Exception):
+                    self._engine.open_folder(self._current_folder)
 
         except Exception as exc:
             _logger.error("rename failed: %s", exc)
@@ -572,7 +551,8 @@ class ThumbnailGridWidget(QWidget):
                 self._stack.setCurrentIndex(1)
             # ensure columns visible
             with contextlib.suppress(Exception):
-                self._tree.setColumnHidden(ImageFileSystemModel.COL_RES, False)
+                res_col = getattr(self._model, "COL_RES", 4)
+                self._tree.setColumnHidden(int(res_col), False)
         self.update()
 
     # QWidget overrides ---------------------------------------------------------
