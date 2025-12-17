@@ -148,6 +148,16 @@
 
 ## ✅ Recently Completed (최근 1주일)
 
+### 2025-12-17
+- [x] Cleanup: remove unused compatibility shims and re-exports
+  - Removed `image_viewer/image_viewer.py` compatibility shim
+  - Removed `image_viewer/image_engine/migrations.py` and `image_viewer/image_engine/db_operator.py` re-export shims
+  - Deleted unused `image_viewer/image_engine/fs_db_iface.py` (IDBLoader)
+  - Updated `scripts/migrate_thumb_db.py` to import directly from `image_viewer.image_engine.db.migrations`
+  - Updated `image_viewer/image_engine/fs_db_worker.py` imports to use `image_viewer.image_engine.db.db_operator`
+  - Updated `AGENTS.md` to reflect FSModel refactor and added Development policies
+
+
 ### 2025-12-07
 - [x] 코드 리뷰 및 린트 수정
   - mousePressEvent, delete_current_file, start_trim_workflow 함수 분리
