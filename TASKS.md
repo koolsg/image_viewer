@@ -12,6 +12,13 @@
   - 애니메이션: QPropertyAnimation으로 부드러운 슬라이드
 
 ### Explorer Mode Phase 3 - Performance
+- [x] Engine-thread Explorer model (drop QFileSystemModel)
+  - 목표: Explorer Mode에서 `QFileSystemModel.setRootPath()` 기반 스캔 제거 (UI freeze 원인)
+  - 구현: EngineCore(QThread)에서 폴더 스캔 + Thumb DB 프리로드 + missing 썸네일 생성(바이트)
+  - UI: QAbstractTableModel 기반 ExplorerTableModel로 bytes→QIcon 변환 (UI thread만)
+  - 파일: image_viewer/image_engine/engine_core.py, image_viewer/image_engine/explorer_model.py,
+          image_viewer/image_engine/engine.py, image_viewer/ui_explorer_grid.py, image_viewer/explorer_mode_operations.py
+
 - [ ] LRU 캐시 메모리 제한 (현재 무제한)
   - 목표: 최대 500MB로 제한
   - 방법: OrderedDict + 메모리 추적
