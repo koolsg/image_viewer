@@ -10,6 +10,11 @@
 **What:** Removed the compatibility shim module `image_viewer.image_viewer` (it only re-exported `explorer_mode_operations` and was not used internally).
 **Checks:** Ruff: pass; Pyright: pass; Tests: partial (collection errors due to missing PySide6 in this environment)
 
+### Cleanup: remove additional compatibility shims
+**Files:** image_viewer/image_engine/migrations.py, image_viewer/image_engine/db_operator.py
+**What:** Removed small re-export shim modules in favor of importing implementations from `image_viewer.image_engine.db` directly (updated `scripts/migrate_thumb_db.py` to use `image_viewer.image_engine.db.migrations`).
+**Checks:** Ruff: pass; Pyright: pass; Tests: partial (collection errors due to missing PySide6 in this environment)
+
 ### Refactor: engine-thread Explorer model (drop QFileSystemModel)
 **Files:** image_viewer/image_engine/engine.py, image_viewer/image_engine/engine_core.py, image_viewer/image_engine/explorer_model.py, image_viewer/ui_explorer_grid.py, image_viewer/explorer_mode_operations.py
 **What:** Replaced Explorer Mode’s `QFileSystemModel.setRootPath()` scanning path with an engine-core thread that scans folders + preloads thumbnail DB rows (bytes/meta) and lazily generates missing thumbnails; UI now uses a lightweight `QAbstractTableModel` that converts bytes→QIcon on the UI thread.

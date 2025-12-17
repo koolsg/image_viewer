@@ -8,7 +8,7 @@ import sqlite3
 import sys
 from pathlib import Path
 
-from image_viewer.image_engine.migrations import apply_migrations, get_latest_version
+from image_viewer.image_engine.db.migrations import apply_migrations, get_latest_version
 
 EXIT_USAGE = 2
 MIN_ARGS = 2
