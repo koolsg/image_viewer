@@ -14,16 +14,8 @@ from .file_operations import (
     send_to_recycle_bin,
     show_delete_confirmation,
 )
-from .path_utils import abs_dir, abs_dir_str, abs_path, abs_path_str
-
-# Re-export for backward compatibility (used by ui_explorer_grid)
-__all__ = [
-    "copy_files_to_clipboard",
-    "cut_files_to_clipboard",
-    "delete_files_to_recycle_bin",
-    "paste_files",
-]
 from .logger import get_logger
+from .path_utils import abs_dir, abs_dir_str, abs_path, abs_path_str
 from .ui_canvas import ImageCanvas
 
 _logger = get_logger("explorer_mode")
