@@ -239,6 +239,10 @@ Configured in `pyproject.toml`:
   - `busy_cursor()` is a small context manager that switches the global cursor to `WaitCursor` during long operations and restores it afterwards; used around decode, delete, and other potentially slow actions.
 
 
+## Development policies
+- **Pre-release project:** This project is in a pre-release state and prior to first public distribution; we do **not** maintain backward compatibility guarantees. Refactors that improve code quality and reduce maintenance burden may remove compatibility shims when appropriate.
+- **Fail fast, avoid excessive try/except:** Do not blanket code with broad `try/except` blocks. Prefer targeted exception handling and allow errors to surface so they can be immediately noticed and debugged; catch only expected exceptions and provide informative logs.
+- **Normalize paths using `path_utils.py`:** When working with filesystem paths, always use the utilities in `image_viewer.path_utils` (e.g., `abs_path`, `abs_dir`, `db_key`, `abs_path_str`) to normalize and canonicalize paths across the codebase.
 
 # AGENTS — Operations SOP (Automation & Resume Rules)
 
