@@ -16,11 +16,12 @@ class DummyViewer(QWidget):
         self._status = s
 
 
-def test_canvas_open_crop_dialog_no_image(qtbot):
+def test_canvas_no_image_operations(qtbot):
     viewer = DummyViewer()
     qtbot.addWidget(viewer)
     canvas = ImageCanvas(viewer)
 
-    # Should simply set an informative status and not raise
-    canvas.open_crop_dialog()
-    assert getattr(viewer, "_status", None) == "No image to crop"
+    # Canvas should initialize properly even without image
+    assert canvas._zoom == 1.0
+    assert canvas._preset_mode == "fit"
+    assert canvas._pix_item.pixmap().isNull()  # No pixmap set

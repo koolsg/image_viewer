@@ -3,7 +3,7 @@ import pytest
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QImage, QPixmap
 
-from image_viewer.ui_crop import CropDialog, CropPreviewDialog
+from image_viewer.ui_crop import CropDialog
 
 
 def make_pixmap(w: int, h: int) -> QPixmap:
@@ -12,45 +12,91 @@ def make_pixmap(w: int, h: int) -> QPixmap:
     return QPixmap.fromImage(img)
 
 
-def test_crop_preview_shows_and_updates(qtbot):
+def test_crop_dialog_preview_mode(qtbot):
     pm = make_pixmap(64, 48)
-    dlg = CropDialog(None, "unused", initial_pixmap=pm)
+    dlg = CropDialog(None, "/test/path", pm)
     qtbot.addWidget(dlg)
 
-    # Create a square selection and call preview
-    dlg.canvas.set_selection_rect((10, 5, 20, 20))
+    # Test initial state - not in preview mode
+    assert dlg._preview_mode is False
+    assert dlg.preview_btn.isEnabled() is True
+    assert dlg.cancel_btn.isVisible() is False
+    assert dlg._selection.isVisible() is True
+
+    # Set a selection rectangle
+    from PySide6.QtCore import QRectF
+    initial_rect = QRectF(10, 5, 20, 20)
+    dlg._selection.setRect(initial_rect)
+
+    # Test entering preview mode
     dlg._on_preview()
 
-    # Either a preview object was created or at least a preview attempt was recorded
-    if hasattr(dlg, "_preview_dialog") and dlg._preview_dialog is not None:
-        preview = dlg._preview_dialog
+    # Verify preview mode state
+    assert dlg._preview_mode is True
+    assert dlg.preview_btn.isEnabled() is False
+    assert dlg.cancel_btn.isVisible() is True
+    assert dlg._selection.isVisible() is False
 
-        # Either a real CropPreviewDialog or a minimal placeholder with update_images
-        if isinstance(preview, CropPreviewDialog):
-            left_labels = preview.left_widget.findChildren(type(preview.left_widget.findChildren(QLabel)[0]))
-            assert left_labels[0].text().startswith("Original:")
-            right_labels = preview.right_widget.findChildren(type(preview.right_widget.findChildren(QLabel)[0]))
-            assert right_labels[0].text().startswith("Cropped:")
+    # Test canceling preview
+    dlg._on_cancel_preview()
 
-            # Update images and verify title changes
-            pm2 = make_pixmap(10, 10)
-            preview.update_images(pm, pm2, "file.jpg")
-            assert "file.jpg" in preview.windowTitle()
-        else:
-            # Placeholder should expose update_images and windowTitle/setWindowTitle
-            assert hasattr(preview, "update_images")
-            pm2 = make_pixmap(10, 10)
-            preview.update_images(pm, pm2, "file.jpg")
-            # Check the placeholder's title method if present
-            try:
-                assert "file.jpg" in (getattr(preview, "windowTitle")() if callable(getattr(preview, "windowTitle", None)) else getattr(preview, "_title", ""))
-            except Exception:
-                # Last-resort: accept that placeholder updated without failing
-                pass
-    else:
-        # The preview creation may have failed in constrained environments,
-        # but the preview attempt should have been recorded for diagnostics.
-        assert getattr(dlg, "_preview_attempted", False) is True
-        # If an error was captured, ensure it's recorded for diagnosis.
-        if hasattr(dlg, "_preview_error"):
-            assert dlg._preview_error is None or isinstance(dlg._preview_error, str)
+    # Verify back to original state
+    assert dlg._preview_mode is False
+    assert dlg.preview_btn.isEnabled() is True
+    assert dlg.cancel_btn.isVisible() is False
+    assert dlg._selection.isVisible() is True
+
+
+def test_crop_dialog_zoom_modes(qtbot):
+    pm = make_pixmap(64, 48)
+    dlg = CropDialog(None, "/test/path", pm)
+    qtbot.addWidget(dlg)
+
+    # Test initial zoom mode is "fit"
+    assert dlg._zoom_mode == "fit"
+    assert dlg.fit_btn.isChecked() is True
+    assert dlg.actual_btn.isChecked() is False
+
+    # Test switching to actual mode
+    dlg._apply_zoom_mode("actual")
+    assert dlg._zoom_mode == "actual"
+    assert dlg.fit_btn.isChecked() is False
+    assert dlg.actual_btn.isChecked() is True
+
+    # Test switching back to fit mode
+    dlg._apply_zoom_mode("fit")
+    assert dlg._zoom_mode == "fit"
+    assert dlg.fit_btn.isChecked() is True
+    assert dlg.actual_btn.isChecked() is False
+
+
+def test_crop_dialog_aspect_ratio_preset(qtbot):
+    pm = make_pixmap(64, 48)
+    dlg = CropDialog(None, "/test/path", pm)
+    qtbot.addWidget(dlg)
+
+    # Test setting aspect ratio
+    dlg._apply_preset((16, 9))
+    assert dlg._selection._aspect_ratio == (16, 9)
+
+    # Test clearing aspect ratio
+    dlg._selection.set_aspect_ratio(None)
+    assert dlg._selection._aspect_ratio is None
+
+
+def test_crop_dialog_save_info(qtbot):
+    pm = make_pixmap(64, 48)
+    dlg = CropDialog(None, "/test/path", pm)
+    qtbot.addWidget(dlg)
+
+    # Test initial state - no save info
+    assert dlg.get_save_info() is None
+
+    # Simulate save by setting internal attributes
+    dlg._saved_path = "/test/output.jpg"
+    dlg._crop_rect = (10, 5, 20, 15)
+
+    # Test save info is returned correctly
+    save_info = dlg.get_save_info()
+    assert save_info is not None
+    assert save_info == ((10, 5, 20, 15), "/test/output.jpg")

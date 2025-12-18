@@ -14,6 +14,10 @@ class _FakePool:
         self.submits.append((fn, args, kwargs))
         return None
 
+    def shutdown(self, wait=False, cancel_futures=False):  # noqa: ANN001
+        # Mock shutdown method for testing
+        pass
+
 
 def _noop_decode(path: str, target_width, target_height, size: str):  # noqa: ANN001
     return path, None, None

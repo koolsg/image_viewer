@@ -4,32 +4,31 @@ pytest.importorskip("PySide6")
 from PySide6.QtWidgets import QApplication
 from PySide6.QtCore import Qt, QPoint
 
-from image_viewer.ui_selection import SelectionCanvas as ImageCanvas
+from image_viewer.ui_crop import SelectionRectItem, QGraphicsPixmapItem
 
 
-def test_selection_drag_creates_rect(qtbot):
+def test_selection_rect_item_handles(qtbot):
     app = QApplication.instance() or QApplication([])
-    canvas = ImageCanvas()
-    qtbot.addWidget(canvas)
 
-    # Create a simple pixmap matching viewport size to simplify mapping
-    canvas.resize(200, 150)
+    # Create a pixmap item to parent the selection
     w, h = 200, 150
     from PySide6.QtGui import QImage, QPixmap
-
     img = QImage(w, h, QImage.Format.Format_RGB888)
     img.fill(0x112233)
     pix = QPixmap.fromImage(img)
-    canvas.set_pixmap(pix)
+    pix_item = QGraphicsPixmapItem(pix)
 
-    # Start selection mode and set selection programmatically (safer for headless runners)
-    canvas.start_selection()
-    canvas.set_selection_rect((10, 10, 50, 30))
+    # Create selection rect
+    selection = SelectionRectItem(pix_item)
 
-    rect = canvas.get_selection_in_image_coords()
-    assert rect is not None
-    left, top, width, height = rect
-    assert width == 50 and height == 30
+    # Test setting selection rectangle
+    from PySide6.QtCore import QRectF
+    rect = QRectF(10, 10, 50, 30)
+    selection.setRect(rect)
 
-    # Ensure handles were created
-    assert len(canvas._selection_handles) == 4
+    # Verify the rectangle was set correctly
+    crop_rect = selection.get_crop_rect()
+    assert crop_rect == (10, 10, 50, 30)
+
+    # Ensure handles were created (should be 8 handles for corners and edges)
+    assert len(selection._handles) == 8

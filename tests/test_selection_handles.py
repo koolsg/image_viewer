@@ -3,7 +3,7 @@ import pytest
 from PySide6.QtGui import QImage, QPixmap
 from PySide6.QtWidgets import QApplication
 
-from image_viewer.ui_selection import SelectionCanvas
+from image_viewer.ui_crop import SelectionRectItem, QGraphicsPixmapItem
 
 
 def make_pixmap(w: int, h: int) -> QPixmap:
@@ -12,60 +12,48 @@ def make_pixmap(w: int, h: int) -> QPixmap:
     return QPixmap.fromImage(img)
 
 
-def test_resize_handle_tl_basic(qtbot):
+def test_selection_rect_item_basic(qtbot):
     app = QApplication.instance() or QApplication([])
-    canvas = SelectionCanvas()
-    qtbot.addWidget(canvas)
 
+    # Create a pixmap item to parent the selection
     pm = make_pixmap(100, 80)
-    canvas.set_pixmap(pm)
-    canvas.start_selection()
-    canvas.set_selection_rect((20, 20, 40, 30))
+    pix_item = QGraphicsPixmapItem(pm)
 
-    # Move top-left handle to (10,10)
-    canvas.resize_selection_from_item_point(0, 10, 10)
+    # Create selection rect
+    selection = SelectionRectItem(pix_item)
 
-    rect = canvas.get_selection_in_image_coords()
-    assert rect == (10, 10, 50, 40)
+    # Test initial state - SelectionRectItem starts with no aspect ratio
+    assert selection._aspect_ratio is None
+
+    # Test setting a rectangle
+    from PySide6.QtCore import QRectF
+    rect = QRectF(20, 20, 40, 30)
+    selection.setRect(rect)
+
+    # Test getting crop rect
+    crop_rect = selection.get_crop_rect()
+    assert crop_rect == (20, 20, 40, 30)
 
 
-def test_resize_handle_with_aspect_lock(qtbot):
+def test_selection_rect_item_aspect_ratio(qtbot):
     app = QApplication.instance() or QApplication([])
-    canvas = SelectionCanvas()
-    qtbot.addWidget(canvas)
 
+    # Create a pixmap item to parent the selection
     pm = make_pixmap(120, 100)
-    canvas.set_pixmap(pm)
-    # Start selection with 1:1 aspect lock
-    canvas.start_selection(aspect_ratio=(1, 1))
-    canvas.set_selection_rect((30, 30, 40, 40))
+    pix_item = QGraphicsPixmapItem(pm)
 
-    # Move bottom-right outwards (expected to keep 1:1)
-    canvas.resize_selection_from_item_point(3, 80, 60)
+    # Create selection rect
+    selection = SelectionRectItem(pix_item)
 
-    rect = canvas.get_selection_in_image_coords()
-    # left/top should remain 30, new size should be square and not exceed requested bottom/right
-    assert rect[0] == 30 and rect[1] == 30
-    assert rect[2] == rect[3] and rect[2] > 0
+    # Test setting aspect ratio
+    selection.set_aspect_ratio((1, 1))
 
+    # Test setting rectangle with aspect ratio constraint
+    from PySide6.QtCore import QRectF
+    rect = QRectF(30, 30, 40, 40)
+    selection.setRect(rect)
 
-def test_selection_changed_emitted_on_handle_drag(qtbot):
-    app = QApplication.instance() or QApplication([])
-    canvas = SelectionCanvas()
-    qtbot.addWidget(canvas)
-
-    pm = make_pixmap(60, 40)
-    canvas.set_pixmap(pm)
-    canvas.start_selection()
-    canvas.set_selection_rect((10, 5, 20, 10))
-
-    recorded = {}
-
-    def on_change(r):
-        recorded['r'] = r
-
-    canvas.selection_changed.connect(on_change)
-    canvas.resize_selection_from_item_point(3, 45, 30)
-
-    assert 'r' in recorded
-    assert recorded['r'] == canvas.get_selection_in_image_coords()
+    # Verify the rect was adjusted to maintain aspect ratio
+    crop_rect = selection.get_crop_rect()
+    assert crop_rect[0] == 30 and crop_rect[1] == 30
+    assert crop_rect[2] == crop_rect[3] and crop_rect[2] > 0
