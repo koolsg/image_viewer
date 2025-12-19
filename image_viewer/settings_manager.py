@@ -24,6 +24,12 @@ class SettingsManager:
         "thumbnail_hspacing": 10,
         "thumbnail_cache_name": "image_viewer_thumbs",
         "font_size": 10,
+        "crop_presets": [
+            {"name": "16:9", "ratio": [16, 9]},
+            {"name": "4:3", "ratio": [4, 3]},
+            {"name": "3:2", "ratio": [3, 2]},
+            {"name": "1:1", "ratio": [1, 1]},
+        ],
     }
 
     def __init__(self, settings_path: str):

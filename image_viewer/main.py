@@ -1064,13 +1064,11 @@ class ImageViewer(QMainWindow):
     def _on_hover_crop_requested(self) -> None:
         """Handle crop request from hover menu."""
         try:
-            # TODO: Implement crop functionality (different from trim)
-            # This is a placeholder for future crop feature
-            _logger.debug("crop requested from hover menu - not implemented yet")
-            # For now, just show a debug message
-            print("Crop feature requested - coming soon!")
+            from image_viewer.crop_operations import start_crop_workflow  # noqa: PLC0415
+
+            start_crop_workflow(self)
         except Exception as ex:
-            _logger.debug("hover crop failed: %s", ex)
+            _logger.error("Crop workflow failed: %s", ex, exc_info=True)
 
     def open_folder_at(self, folder_path: str) -> None:
         """Open a specific folder directly (used in explorer mode)."""
