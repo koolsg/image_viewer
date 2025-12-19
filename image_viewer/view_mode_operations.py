@@ -122,11 +122,7 @@ def delete_current_file(viewer) -> None:
         viewer: The ImageViewer instance (View Mode)
     """
     # Validate state
-    if (
-        not viewer.image_files
-        or viewer.current_index < 0
-        or viewer.current_index >= len(viewer.image_files)
-    ):
+    if not viewer.image_files or viewer.current_index < 0 or viewer.current_index >= len(viewer.image_files):
         _logger.debug("[delete] abort: no images or invalid index")
         return
 
