@@ -9,7 +9,7 @@ import contextlib
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import QLineF, QPointF, QRect, QRectF, Qt, QTimer, QEvent, QObject
+from PySide6.QtCore import QLineF, QPointF, QRect, QRectF, Qt, QTimer
 from PySide6.QtGui import QBrush, QColor, QCursor, QGuiApplication, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QDialog,
@@ -919,7 +919,7 @@ class SelectionRectItem(QGraphicsRectItem):
 
         # Draw grid lines with float coordinates for subpixel smoothing
         r = self.rect()
-        painter.setPen(QPen(QColor(255, 255, 255, 128), 1, Qt.PenStyle.DotLine))
+        painter.setPen(QPen(QColor(255, 255, 255, 160), 2, Qt.PenStyle.DotLine))
 
         # Vertical lines
         for i in range(1, self.GRID_LINES):
@@ -1268,7 +1268,7 @@ class CropDialog(QDialog):
         layout.addWidget(self.preview_btn)
 
         # Cancel button (hidden initially)
-        self.cancel_btn = QPushButton("Cancel Preview")
+        self.cancel_btn = QPushButton("Cancel")
         self.cancel_btn.clicked.connect(self._on_cancel_preview)
         self.cancel_btn.setVisible(False)
         layout.addWidget(self.cancel_btn)
@@ -1394,6 +1394,8 @@ class CropDialog(QDialog):
 
         # Update UI state
         self._preview_mode = True
+        # Hide the preview button and show the cancel button (preview no longer applicable)
+        self.preview_btn.setVisible(False)
         self.preview_btn.setEnabled(False)
         self.cancel_btn.setVisible(True)
 
@@ -1411,6 +1413,8 @@ class CropDialog(QDialog):
 
         # Update UI state
         self._preview_mode = False
+        # Restore preview button visibility and enabled state
+        self.preview_btn.setVisible(True)
         self.preview_btn.setEnabled(True)
         self.cancel_btn.setVisible(False)
 
