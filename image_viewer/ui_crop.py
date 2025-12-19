@@ -9,7 +9,7 @@ import contextlib
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import QLineF, QPointF, QRect, QRectF, Qt, QTimer
+from PySide6.QtCore import QLineF, QPointF, QRect, QRectF, Qt, QTimer, QEvent, QObject
 from PySide6.QtGui import QBrush, QColor, QCursor, QGuiApplication, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QDialog,
@@ -141,9 +141,12 @@ class SelectionRectItem(QGraphicsRectItem):
             except Exception:
                 _logger.debug("Handle mousePress: idx=%s (failed to read positions)", self._index, exc_info=True)
 
-            # Change cursor to indicate active drag
+            # Change cursor to indicate active drag and grab mouse to prevent view panning
             with contextlib.suppress(Exception):
                 self.setCursor(Qt.ClosedHandCursor)
+                # Grab mouse so the view does not start panning before item receives events
+                with contextlib.suppress(Exception):
+                    self.grabMouse()
 
             event.accept()
 
@@ -190,9 +193,11 @@ class SelectionRectItem(QGraphicsRectItem):
                     with contextlib.suppress(Exception):
                         view.setDragMode(self._prev_view_state)
 
-            # Restore handle cursor
+            # Restore handle cursor and release mouse grab
             with contextlib.suppress(Exception):
                 self.setCursor(Qt.CrossCursor)
+                with contextlib.suppress(Exception):
+                    self.releaseMouse()
 
             event.accept()
 
@@ -287,6 +292,8 @@ class SelectionRectItem(QGraphicsRectItem):
         """Set the selection using parent (pixmap) coordinates.
 
         Converts the parent rect into view coordinates and stores as `_view_rect` and `_parent_rect`.
+        Clamps the provided rect to the parent item's bounding rect to prevent the selection from
+        being positioned outside the image.
         """
         scene = self.scene()
         if scene is None:
@@ -299,15 +306,27 @@ class SelectionRectItem(QGraphicsRectItem):
             self._deferred_parent_rect = QRectF(parent_rect)
             return
 
-        # Store authoritative parent rect
-        self._parent_rect = QRectF(
-            float(parent_rect.x()), float(parent_rect.y()), float(parent_rect.width()), float(parent_rect.height())
-        )
+        # Clamp incoming parent_rect to parent's bounds
+        parent_item = self.parentItem()
+        if parent_item is not None:
+            bounds = parent_item.boundingRect()
+            w = min(parent_rect.width(), bounds.width())
+            h = min(parent_rect.height(), bounds.height())
+            left = max(bounds.left(), min(parent_rect.x(), bounds.right() - w))
+            top = max(bounds.top(), min(parent_rect.y(), bounds.bottom() - h))
+            clamped = QRectF(float(left), float(top), float(w), float(h))
+        else:
+            clamped = QRectF(
+                float(parent_rect.x()), float(parent_rect.y()), float(parent_rect.width()), float(parent_rect.height())
+            )
+
+        # Store authoritative parent rect (clamped)
+        self._parent_rect = QRectF(clamped)
         self._last_update_by = "parent"
 
         # Map parent rect corners to view coordinates
-        tl_scene = self.parentItem().mapToScene(parent_rect.topLeft())
-        br_scene = self.parentItem().mapToScene(parent_rect.bottomRight())
+        tl_scene = self.parentItem().mapToScene(self._parent_rect.topLeft())
+        br_scene = self.parentItem().mapToScene(self._parent_rect.bottomRight())
         tl_view = view.mapFromScene(tl_scene)
         br_view = view.mapFromScene(br_scene)
         self._view_rect = QRectF(
@@ -471,6 +490,9 @@ class SelectionRectItem(QGraphicsRectItem):
             self._last_action = "press"
             with contextlib.suppress(Exception):
                 self.setCursor(Qt.ClosedHandCursor)
+                # Prevent the view from initiating panning while dragging selection interior
+                with contextlib.suppress(Exception):
+                    self.grabMouse()
 
             _logger.debug(
                 "Selection mousePress: BUTTON=Left scene=(%.1f,%.1f) drag_start_rect=%s view_rect=%s grab_offset=%s",
@@ -565,12 +587,46 @@ class SelectionRectItem(QGraphicsRectItem):
 
         return QRectF(target_x, target_y, width, height)
 
+    def _get_pixmap_view_rect(self, view) -> QRectF | None:
+        """Return the pixmap's bounding rectangle in VIEW coordinates, or None if unavailable."""
+        parent_item = self.parentItem()
+        if parent_item is None or view is None:
+            return None
+        try:
+            tl_scene = parent_item.mapToScene(parent_item.boundingRect().topLeft())
+            br_scene = parent_item.mapToScene(parent_item.boundingRect().bottomRight())
+            tl_view = view.mapFromScene(tl_scene)
+            br_view = view.mapFromScene(br_scene)
+            return QRectF(
+                float(tl_view.x()),
+                float(tl_view.y()),
+                float(br_view.x() - tl_view.x()),
+                float(br_view.y() - tl_view.y()),
+            )
+        except Exception:
+            return None
+
     def _clamp_to_viewport(self, view, target: QRectF) -> QRectF:
-        """Clamp target rectangle to viewport bounds."""
+        """Clamp target rectangle to the visible pixmap area (in view coords) where possible.
+
+        Falls back to the viewport rectangle if the pixmap mapping isn't available.
+        Also reduces width/height if they exceed the available area to ensure the selection remains
+        completely inside the pixmap (or viewport).
+        """
+        pv = self._get_pixmap_view_rect(view)
+        if pv is not None:
+            w = min(target.width(), pv.width())
+            h = min(target.height(), pv.height())
+            left = max(pv.left(), min(target.x(), pv.right() - w))
+            top = max(pv.top(), min(target.y(), pv.bottom() - h))
+            return QRectF(left, top, w, h)
+
         vb = view.viewport().rect()
-        left = max(vb.left(), min(target.x(), vb.right() - target.width()))
-        top = max(vb.top(), min(target.y(), vb.bottom() - target.height()))
-        return QRectF(left, top, target.width(), target.height())
+        w = min(target.width(), vb.width())
+        h = min(target.height(), vb.height())
+        left = max(vb.left(), min(target.x(), vb.right() - w))
+        top = max(vb.top(), min(target.y(), vb.bottom() - h))
+        return QRectF(left, top, w, h)
 
     def _update_scene(self) -> None:
         """Force scene and item update."""
@@ -664,6 +720,11 @@ class SelectionRectItem(QGraphicsRectItem):
                     view = views[0]
                     with contextlib.suppress(Exception):
                         view.setDragMode(self._prev_view_state)
+
+            # Release mouse grab in case we grabbed during press
+            with contextlib.suppress(Exception):
+                self.releaseMouse()
+
             event.accept()
         else:
             super().mouseReleaseEvent(event)
