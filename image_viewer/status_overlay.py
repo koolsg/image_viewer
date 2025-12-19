@@ -24,9 +24,7 @@ class StatusOverlayBuilder:
 
         if output_resolution:
             parts.append(f"Output {output_resolution[0]}x{output_resolution[1]}")
-            scale = self.viewer._calculate_scale(
-                output_resolution[0], output_resolution[1]
-            )
+            scale = self.viewer._calculate_scale(output_resolution[0], output_resolution[1])
         else:
             scale = self.viewer._calculate_scale(
                 file_resolution[0] if file_resolution else None,
