@@ -1,3 +1,10 @@
+# Central Agent Rules
+
+This file (.agents.md) is the single source of truth
+for all AI agents and tools, including GitHub Copilot, Gemini, and others.
+
+Any agent-specific instruction file must defer to this document.
+
 # Explanation aboiut this project
 
 ## Project overview
@@ -244,7 +251,7 @@ Configured in `pyproject.toml`:
   - `busy_cursor()` is a small context manager that switches the global cursor to `WaitCursor` during long operations and restores it afterwards; used around decode, delete, and other potentially slow actions.
 
 
-## Development policies
+# Development policies
 - **Pre-release project:** This project is in a pre-release state and prior to first public distribution; we do **not** maintain backward compatibility guarantees. Refactors that improve code quality and reduce maintenance burden may remove compatibility shims when appropriate.
 - **Fail fast, avoid excessive try/except:** Do not blanket code with broad `try/except` blocks. Prefer targeted exception handling and allow errors to surface so they can be immediately noticed and debugged; catch only expected exceptions and provide informative logs.
 - **Normalize paths using `path_utils.py`:** When working with filesystem paths, always use the utilities in `image_viewer.path_utils` (e.g., `abs_path`, `abs_dir`, `db_key`, `abs_path_str`) to normalize and canonicalize paths across the codebase.
@@ -272,6 +279,7 @@ Work rules (must follow)
   - uv run python -m ruff check . --fix
   - uv run python -m pyright
   - uv run python -m pytest (recommended)
+- Fail fast / avoid excessive try/except: Do not blanket-catch Exception. Prefer targeted exception handling and let unexpected errors surface quickly so they can be diagnosed and fixed; catch only expected exceptions and provide informative logs.
 - Record the results of checks in SESSIONS.md.
 - Only one task should be in_progress at a time.
 - Do not commit or push changes unless the user explicitly asks. When asked to commit, follow the commit checklist:
