@@ -11,12 +11,17 @@ Code is organized into the `image_viewer/` package for application logic and UI
 - Python: 3.11+
 - Package/dependency management: `uv` with `pyproject.toml` and `uv.lock`.
 - Core runtime deps (from `pyproject.toml`): `pyside6`, `pyvips[binary]`, `numpy`, `send2trash`.
-- Dev tools: `ruff`, `pyright`, `pyside6-stubs`.
+- Dev tools: `ruff`, `pyright`, `pytest`, `pytest-qt`, `pyside6-stubs`.
 - Windows-specific note: if pyvips DLLs are not discoverable on `PATH`, follow the README guidance (e.g. install `pyvips[binary]` or configure `LIBVIPS_BIN` via a `.env` file next to the app).
 
 ## Common commands
 
 All commands assume the repo root (`image_viewer`) as the working directory.
+
+### Tests
+
+- Run tests (pytest as module):
+  - `uv run python -m pytest`
 
 ### Environment setup
 
@@ -47,11 +52,11 @@ You can also provide an optional positional `start_path` to `image_viewer.main.r
 Configured in `pyproject.toml`:
 
 - Ruff lint (E/F/I/UP/B/SIM/PL/RUF;
-  - `uv run ruff check image_viewer`
+  - `uv run python -m ruff check --fix .`
 - Ruff format (code formatting):
-  - `uv run ruff format image_viewer`
+  - `uv run python -m ruff format .`
 - Pyright type checking (targets `image_viewer`, with relaxed rules for stub-heavy libs like PySide6/pyvips):
-  - `uv run pyright`
+  - `uv run python -m pyright`
 
 ## High-level architecture
 
@@ -246,46 +251,41 @@ Configured in `pyproject.toml`:
 
 # AGENTS — Operations SOP (Automation & Resume Rules)
 
-This document defines the operating procedures for agents working on this repository.
+Purpose
+- Short, practical operating procedures for agents: how to pick tasks, implement work, run checks, and report results.
 
-## Document Structure
+Single source of truth (SoT)
+- TASKS.md: multi-step plans and in-progress tracking (authoritative task plans)
+- SESSIONS.md: short, dated session logs (records of completed work)
 
-```
-AGENTS.md          → Operational SOP (this file)
-TASKS.md           → Multi-step task plans and in-progress tracking
-SESSIONS.md        → Short records of completed work
-```
+Quick start
+1. Open TASKS.md and SESSIONS.md. Pick a High Priority task if none provided.
+2. Single-prompt task: implement, run checks, and add a SESSIONS.md entry.
+3. Multi-step task: add a TASKS.md plan before starting and update it as you progress.
 
-**Single Source of Truth (SoT):** TASKS.md (task plans) and SESSIONS.md (session logs) are the canonical operational documents. `control.yaml` and `CONTROL_PANEL.md` are legacy files kept only for historical records under `dev-docs` and should not be used for tracking current work.
+Session checklist
+- Read TASKS.md (High Priority section) and recent SESSIONS.md entries for context.
+- Confirm environment/dependencies in pyproject.toml.
 
-## Purpose
+Work rules (must follow)
+- Always run checks before reporting completion:
+  - uv run python -m ruff check . --fix
+  - uv run python -m pyright
+  - uv run python -m pytest (recommended)
+- Record the results of checks in SESSIONS.md.
+- Only one task should be in_progress at a time.
+- Do not commit or push changes unless the user explicitly asks. When asked to commit, follow the commit checklist:
+  - Review git status/diff/log and stage only relevant files
+  - Draft a concise English commit message focused on the "why"
+  - If pre-commit hooks modify files, include/amend those changes in the commit
 
-Short, focused guidance so an agent can start a session and know how to plan, implement, and report work without reading other files.
+Reporting & completion
+1. Run checks and tests.
+2. Update TASKS.md (mark completed if used).
+3. Add a SESSIONS.md entry (minimal template below).
+4. Notify the user with a short summary and next steps.
 
-### Quick Start
-
-1. Ensure environment health: `uv run ruff check . --fix` then `uv run pyright`.
-2. Open `TASKS.md` and `SESSIONS.md`. If there is no user-specified task, pick a High Priority item from `TASKS.md`.
-3. If the task is short (one prompt), implement and log in `SESSIONS.md`. If it is multi-step, add a plan to `TASKS.md` first.
-
-## Session Checklist
-
-1. Read `TASKS.md` (High Priority section).
-2. Scan recent `SESSIONS.md` entries for context.
-3. Confirm any environment or dependency notes in `pyproject.toml`.
-
-## Work Rules (must follow)
-
-- Single-prompt tasks: Record only in `SESSIONS.md` (short entry: date, summary, files, checks).  (사용자 기준 1-prompt 작업은 `SESSIONS.md`만 기록)
-- Multi-step tasks: Add a `TASKS.md` entry with steps, files, and decision points before starting and update it as you progress.
-- Always run `uv run ruff check . --fix` and `uv run pyright` before marking work complete. Include the results in `SESSIONS.md`.
-- **Commit Messages**: All automated or agent-generated commit messages must be in English.
-
-## Reporting & Completion
-
-1. Run checks: `uv run ruff check . --fix`, `uv run pyright`
-2. Update `TASKS.md` status to `completed` (if used).
-3. Add a `SESSIONS.md` entry with files changed, short description, and checks:
+SIMPLE SESSIONS.md TEMPLATE
 
 ```
 ## YYYY-MM-DD
@@ -293,39 +293,13 @@ Short, focused guidance so an agent can start a session and know how to plan, im
 ### Short title
 **Files:** path/to/file.py
 **What:** One-line description
-**Checks:** Ruff: pass; Pyright: pass;
+**Checks:** Ruff: pass; Pyright: pass; Tests: N passed
 ```
 
-4. Report to the user with a short summary and next steps.
+When to ask the user
+- If scope, acceptance criteria, design decisions, or permissions (commit/PR) are unclear.
 
-## Templates (minimal)
+Final note
+- Keep entries concise and actionable so another agent can resume work quickly. Use `uv run python -m ...` for commands.
 
-- `SESSIONS.md` entry: see above.
-- `TASKS.md` entry example:
-
-```
-- [ ] T-###: Short title — plan: 1) step 2) step 3) verify
-  - files: path/to/file
-  - notes: blockers/decisions
-```
-
-## Code Quality
-
-- Use `uv run ruff check . --fix` and `uv run pyright` frequently. They must pass (0 errors) before reporting completion.
-
-## When to ask the user
-
-- If scope, acceptance criteria, or design decisions are unclear.
-
-
-## Final Note
-
-Keep entries concise and actionable so another agent can resume work from `TASKS.md` and `SESSIONS.md` alone.
-
-## Recent Activity (2025-12-16)
-
-- **Thumbnail DB hidden-attribute fix:** Moved hidden-attribute logic into the DB init path (operator task) and added an immediate, non-polling setter with a long-path fallback. Files changed: `image_viewer/image_engine/db/thumbdb_bytes_adapter.py`, `image_viewer/image_engine/thumbnail_cache.py`.
-- **Tests added:** `tests/test_thumbdb_hidden_attribute.py`, `tests/test_init_thumbdb_sets_hidden.py` to verify behavior across Windows/non-Windows and initialization paths. New tests pass locally (unit/integration slices); full test run had unrelated tool tests skip/fail due to missing PySide6 in the test environment.
-- **Git housekeeping:** Saved in-progress work to `wip/save-detached-882fff0`, backed up and then reset `main` to that stable point, pushed `main` (force), and removed the unneeded `main-backup` branch.
-- **Checks:** `ruff` and `pyright` pass; relevant tests for the fix pass locally.
 
