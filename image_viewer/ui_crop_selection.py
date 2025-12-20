@@ -180,7 +180,7 @@ class SelectionRectItem(QGraphicsRectItem):
             with contextlib.suppress(Exception):
                 scene = self.scene()
                 if scene and scene.views():
-                    scene.views()[0].viewport().setCursor(getattr(self, "_default_cursor", QCursor(Qt.ArrowCursor)))
+                    scene.views()[0].viewport().unsetCursor()
 
             event.accept()
 
@@ -233,7 +233,7 @@ class SelectionRectItem(QGraphicsRectItem):
                 scene = self.scene()
                 if scene and scene.views():
                     with contextlib.suppress(Exception):
-                        scene.views()[0].viewport().setCursor(Qt.CrossCursor)
+                        scene.views()[0].viewport().unsetCursor()
             except Exception:
                 pass
             super().hoverLeaveEvent(event)
@@ -430,11 +430,12 @@ class SelectionRectItem(QGraphicsRectItem):
                         scene.views()[0].viewport().setCursor(Qt.OpenHandCursor)
                 self._log_hit_transition(self.MOVE, "OpenHandCursor")
             else:
-                self.setCursor(Qt.CrossCursor)
+                with contextlib.suppress(Exception):
+                    self.unsetCursor()
                 scene = self.scene()
                 if scene and scene.views():
                     with contextlib.suppress(Exception):
-                        scene.views()[0].viewport().setCursor(Qt.CrossCursor)
+                        scene.views()[0].viewport().unsetCursor()
                 self._log_hit_transition(self.NONE, "CrossCursor")
 
             _logger.debug("Selection hoverEnter: hit=%s", hit)
@@ -481,11 +482,12 @@ class SelectionRectItem(QGraphicsRectItem):
         self._log_hit_transition(self.MOVE, "OpenHandCursor")
 
     def _handle_hover_none(self) -> None:
-        self.setCursor(Qt.CursorShape.CrossCursor)
+        with contextlib.suppress(Exception):
+            self.unsetCursor()
         scene = self.scene()
         if scene and scene.views():
             with contextlib.suppress(Exception):
-                scene.views()[0].viewport().setCursor(Qt.CursorShape.CrossCursor)
+                scene.views()[0].viewport().unsetCursor()
         self._overlay_update(self.NONE, cursor_shape=Qt.CursorShape.CrossCursor)
         self._log_hit_transition(self.NONE, "CrossCursor")
 
@@ -526,7 +528,7 @@ class SelectionRectItem(QGraphicsRectItem):
             scene = self.scene()
             if scene and scene.views():
                 view = scene.views()[0]
-                view.viewport().setCursor(Qt.CrossCursor)
+                view.viewport().unsetCursor()
             _logger.debug("Selection hoverLeave")
         except Exception:
             _logger.debug("Selection hoverLeave: failed to reset cursor", exc_info=True)

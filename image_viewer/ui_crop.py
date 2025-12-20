@@ -11,7 +11,7 @@ import os
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import QRect, QRectF, Qt, QTimer
+from PySide6.QtCore import QEvent, QObject, QRect, QRectF, Qt, QTimer
 from PySide6.QtGui import QCursor, QGuiApplication, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QDialog,
@@ -117,6 +117,67 @@ class PresetDialog(QDialog):
         self.accept()
 
 
+class _CropCursorResetFilter(QObject):
+    """Viewport-level safety net to prevent sticky resize cursors.
+
+    Hover leave transitions between child/parent QGraphicsItems (or leaving items quickly)
+    are not always delivered in a way that guarantees the cursor gets restored.
+    This filter unsets the viewport cursor whenever the mouse is not over the selection
+    or its handles, allowing the view's base cursor (crosshair) to show.
+    """
+
+    def __init__(self, view: QGraphicsView, selection: SelectionRectItem):
+        super().__init__(view.viewport())
+        self._view = view
+        self._selection = selection
+
+    def eventFilter(self, obj: QObject, event: QEvent) -> bool:  # type: ignore
+        try:
+            et = event.type()
+            if et == QEvent.Leave:
+                with contextlib.suppress(Exception):
+                    self._view.viewport().unsetCursor()
+                return False
+
+            if et not in (QEvent.MouseMove, QEvent.HoverMove):
+                return False
+
+            pos = None
+            if hasattr(event, "position"):
+                posf = event.position()  # type: ignore[attr-defined]
+                with contextlib.suppress(Exception):
+                    pos = posf.toPoint()
+            if pos is None and hasattr(event, "pos"):
+                pos = event.pos()  # type: ignore[attr-defined]
+            if pos is None:
+                return False
+
+            scene = self._view.scene()
+            if scene is None:
+                return False
+
+            scene_pos = self._view.mapToScene(pos)
+            items = scene.items(scene_pos)
+            if not any(self._is_selection_related(it) for it in items):
+                with contextlib.suppress(Exception):
+                    self._view.viewport().unsetCursor()
+        except Exception:
+            return False
+
+        return False
+
+    def _is_selection_related(self, item) -> bool:
+        try:
+            cur = item
+            while cur is not None:
+                if cur is self._selection:
+                    return True
+                cur = cur.parentItem()
+        except Exception:
+            return False
+        return False
+
+
 class CropDialog(QDialog):
     """Main crop dialog with interactive selection and preview."""
 
@@ -182,6 +243,12 @@ class CropDialog(QDialog):
         with contextlib.suppress(Exception):
             self._view.setAttribute(Qt.WidgetAttribute.WA_Hover, True)
             self._view.viewport().setAttribute(Qt.WidgetAttribute.WA_Hover, True)
+
+        # Cursor authority safety net: ensure the viewport cursor is restored when the mouse is
+        # no longer over the selection/handles (covers cases where hoverLeave isn't delivered).
+        with contextlib.suppress(Exception):
+            self._cursor_reset_filter = _CropCursorResetFilter(self._view, self._selection)
+            self._view.viewport().installEventFilter(self._cursor_reset_filter)
 
         self._view.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.setMinimumSize(640, 480)
