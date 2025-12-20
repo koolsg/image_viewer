@@ -133,7 +133,11 @@ class SelectionRectItem(QGraphicsRectItem):
                     parent_x = float(p.x())
                     parent_y = float(p.y())
 
-                    msg = f"Handle mouseMove: idx={self._index} scene=({scene_x:.1f},{scene_y:.1f}) parent=({parent_x:.1f},{parent_y:.1f})"
+                    msg = (
+                        f"Handle mouseMove: idx={self._index} "
+                        f"scene=({scene_x:.1f},{scene_y:.1f}) "
+                        f"parent=({parent_x:.1f},{parent_y:.1f})"
+                    )
                     _logger.debug(msg)
                     with contextlib.suppress(Exception):
                         self._selection._handle_move_log_history.append(msg)
@@ -268,36 +272,38 @@ class SelectionRectItem(QGraphicsRectItem):
         y = float(pos.y())
         hs = float(self.HANDLE_SIZE) / 2.0
 
+        result = self.NONE
+
+        # Corner proximity test
         if abs(x - r.left()) <= hs and abs(y - r.top()) <= hs:
-            return self.TOP_LEFT
-        if abs(x - r.right()) <= hs and abs(y - r.top()) <= hs:
-            return self.TOP_RIGHT
-        if abs(x - r.right()) <= hs and abs(y - r.bottom()) <= hs:
-            return self.BOTTOM_RIGHT
-        if abs(x - r.left()) <= hs and abs(y - r.bottom()) <= hs:
-            return self.BOTTOM_LEFT
+            result = self.TOP_LEFT
+        elif abs(x - r.right()) <= hs and abs(y - r.top()) <= hs:
+            result = self.TOP_RIGHT
+        elif abs(x - r.right()) <= hs and abs(y - r.bottom()) <= hs:
+            result = self.BOTTOM_RIGHT
+        elif abs(x - r.left()) <= hs and abs(y - r.bottom()) <= hs:
+            result = self.BOTTOM_LEFT
+        else:
+            edge_len_x = max(self.HANDLE_SIZE * 2, r.width() * 0.18)
+            edge_len_y = max(self.HANDLE_SIZE * 2, r.height() * 0.18)
+            edge_half_x = edge_len_x / 2.0
+            edge_half_y = edge_len_y / 2.0
 
-        edge_len_x = max(self.HANDLE_SIZE * 2, r.width() * 0.18)
-        edge_len_y = max(self.HANDLE_SIZE * 2, r.height() * 0.18)
-        edge_half_x = edge_len_x / 2.0
-        edge_half_y = edge_len_y / 2.0
+            cx = float(r.center().x())
+            cy = float(r.center().y())
 
-        cx = float(r.center().x())
-        cy = float(r.center().y())
+            if abs(y - r.top()) <= hs and abs(x - cx) <= edge_half_x:
+                result = self.TOP_CENTER
+            elif abs(y - r.bottom()) <= hs and abs(x - cx) <= edge_half_x:
+                result = self.BOTTOM_CENTER
+            elif abs(x - r.left()) <= hs and abs(y - cy) <= edge_half_y:
+                result = self.LEFT_CENTER
+            elif abs(x - r.right()) <= hs and abs(y - cy) <= edge_half_y:
+                result = self.RIGHT_CENTER
+            elif r.contains(pos):
+                result = self.MOVE
 
-        if abs(y - r.top()) <= hs and abs(x - cx) <= edge_half_x:
-            return self.TOP_CENTER
-        if abs(y - r.bottom()) <= hs and abs(x - cx) <= edge_half_x:
-            return self.BOTTOM_CENTER
-        if abs(x - r.left()) <= hs and abs(y - cy) <= edge_half_y:
-            return self.LEFT_CENTER
-        if abs(x - r.right()) <= hs and abs(y - cy) <= edge_half_y:
-            return self.RIGHT_CENTER
-
-        if r.contains(pos):
-            return self.MOVE
-
-        return self.NONE
+        return result
 
     def _hit_name(self, hit: int) -> str:
         names = {
@@ -436,6 +442,53 @@ class SelectionRectItem(QGraphicsRectItem):
             _logger.debug("Selection hoverEnter: failed to set cursor", exc_info=True)
         super().hoverEnterEvent(event)
 
+    def _get_parent_pos_from_event(self, event) -> tuple[float, float] | None:
+        try:
+            parent_item = self.parentItem()
+            scene = self.scene()
+            if parent_item is None or scene is None or not scene.views():
+                return None
+            scene_pt = scene.views()[0].mapToScene(event.pos())
+            ppos = parent_item.mapFromScene(scene_pt)
+            return (float(ppos.x()), float(ppos.y()))
+        except Exception:
+            return None
+
+    def _handle_hover_resize(self, hit: int, event, chosen_cursor) -> None:
+        self.setCursor(chosen_cursor)
+        scene = self.scene()
+        if scene and scene.views():
+            with contextlib.suppress(Exception):
+                scene.views()[0].viewport().setCursor(chosen_cursor)
+        parent_pos = self._get_parent_pos_from_event(event)
+        handle_index = hit if parent_pos is not None else None
+        self._overlay_update(
+            hit,
+            cursor_shape=chosen_cursor,
+            parent_x=(parent_pos[0] if parent_pos else None),
+            parent_y=(parent_pos[1] if parent_pos else None),
+            handle_index=handle_index,
+        )
+        self._log_hit_transition(hit, "ResizeCursor")
+
+    def _handle_hover_move(self) -> None:
+        self.setCursor(Qt.CursorShape.OpenHandCursor)
+        scene = self.scene()
+        if scene and scene.views():
+            with contextlib.suppress(Exception):
+                scene.views()[0].viewport().setCursor(Qt.CursorShape.OpenHandCursor)
+        self._overlay_update(self.MOVE, cursor_shape=Qt.CursorShape.OpenHandCursor)
+        self._log_hit_transition(self.MOVE, "OpenHandCursor")
+
+    def _handle_hover_none(self) -> None:
+        self.setCursor(Qt.CursorShape.CrossCursor)
+        scene = self.scene()
+        if scene and scene.views():
+            with contextlib.suppress(Exception):
+                scene.views()[0].viewport().setCursor(Qt.CursorShape.CrossCursor)
+        self._overlay_update(self.NONE, cursor_shape=Qt.CursorShape.CrossCursor)
+        self._log_hit_transition(self.NONE, "CrossCursor")
+
     def hoverMoveEvent(self, event) -> None:  # type: ignore
         try:
             pos = event.pos()
@@ -453,56 +506,15 @@ class SelectionRectItem(QGraphicsRectItem):
                 self.BOTTOM_CENTER: Qt.CursorShape.SizeVerCursor,
             }
 
-            new_hit = hit
-
             if hit in cursor_map:
-                chosen = cursor_map[hit]
-                self.setCursor(chosen)
-                scene = self.scene()
-                if scene and scene.views():
-                    with contextlib.suppress(Exception):
-                        scene.views()[0].viewport().setCursor(chosen)
-
-                parent_pos = None
-                handle_index = None
-                try:
-                    parent_item = self.parentItem()
-                    if parent_item is not None:
-                        scene_pt = scene.views()[0].mapToScene(event.pos())
-                        ppos = parent_item.mapFromScene(scene_pt)
-                        parent_pos = (float(ppos.x()), float(ppos.y()))
-                        handle_index = hit
-                except Exception:
-                    parent_pos = None
-                    handle_index = None
-
-                self._overlay_update(
-                    hit,
-                    cursor_shape=chosen,
-                    parent_x=(parent_pos[0] if parent_pos else None),
-                    parent_y=(parent_pos[1] if parent_pos else None),
-                    handle_index=handle_index,
-                )
-                self._log_hit_transition(hit, "ResizeCursor")
+                self._handle_hover_resize(hit, event, cursor_map[hit])
             elif hit == self.MOVE:
-                self.setCursor(Qt.CursorShape.OpenHandCursor)
-                scene = self.scene()
-                if scene and scene.views():
-                    with contextlib.suppress(Exception):
-                        scene.views()[0].viewport().setCursor(Qt.CursorShape.OpenHandCursor)
-                self._overlay_update(hit, cursor_shape=Qt.CursorShape.OpenHandCursor)
-                self._log_hit_transition(self.MOVE, "OpenHandCursor")
+                self._handle_hover_move()
             elif hit == self.NONE:
-                self.setCursor(Qt.CursorShape.CrossCursor)
-                scene = self.scene()
-                if scene and scene.views():
-                    with contextlib.suppress(Exception):
-                        scene.views()[0].viewport().setCursor(Qt.CursorShape.CrossCursor)
-                self._overlay_update(hit, cursor_shape=Qt.CursorShape.CrossCursor)
-                self._log_hit_transition(self.NONE, "CrossCursor")
+                self._handle_hover_none()
             else:
                 self._overlay_update(hit, cursor_shape=None)
-                self._log_hit_transition(hit, f"unknown({new_hit})")
+                self._log_hit_transition(hit, f"unknown({hit})")
         except Exception:
             _logger.debug("Selection hoverMove: failed to set cursor", exc_info=True)
         finally:
@@ -673,99 +685,61 @@ class SelectionRectItem(QGraphicsRectItem):
 
         self.setRect(QRectF(new_left, new_top, r.width(), r.height()))
 
-    def mousePressEvent(self, event) -> None:  # type: ignore  # noqa: PLR0915
-        if event.button() == Qt.LeftButton:
-            self._is_dragging = True
-            self._drag_start_scene = event.scenePos()
-            self._drag_start_rect = QRectF(self._get_parent_rect() or self.rect())
-            self._left_click_timestamp = QTimer().remainingTime()
-            scene = self.scene()
-            try:
-                view = scene.views()[0] if scene and scene.views() else None
-                press_view_pt: QPointF | None = None
-                if view is not None:
-                    self._refresh_view_rect_from_parent()
-                    press_view_pt = QPointF(view.mapFromScene(self._drag_start_scene))
-                    if self._view_rect is None:
-                        parent_rect = QRectF(self._get_parent_rect() or self.rect())
-                        tl_scene = self.parentItem().mapToScene(parent_rect.topLeft())
-                        br_scene = self.parentItem().mapToScene(parent_rect.bottomRight())
-                        tl_view = view.mapFromScene(tl_scene)
-                        br_view = view.mapFromScene(br_scene)
-                        self._view_rect = QRectF(
-                            float(tl_view.x()),
-                            float(tl_view.y()),
-                            float(br_view.x() - tl_view.x()),
-                            float(br_view.y() - tl_view.y()),
-                        )
+    def mousePressEvent(self, event) -> None:  # type: ignore
+        if event.button() != Qt.LeftButton:
+            super().mousePressEvent(event)
+            return
 
-                if self._view_rect is not None:
-                    self._start_view_rect = QRectF(self._view_rect)
-                    if press_view_pt is not None:
-                        self._grab_offset = QPointF(
-                            press_view_pt.x() - self._view_rect.x(),
-                            press_view_pt.y() - self._view_rect.y(),
-                        )
-                else:
-                    self._start_view_rect = None
-                    self._grab_offset = None
-            except Exception:
-                self._grab_offset = None
-                self._start_view_rect = None
+        # Begin drag
+        self._is_dragging = True
+        self._drag_start_scene = event.scenePos()
+        self._drag_start_rect = QRectF(self._get_parent_rect() or self.rect())
+        self._left_click_timestamp = QTimer().remainingTime()
 
-            self._was_dragged = False
-            self._last_action = "press"
-            with contextlib.suppress(Exception):
-                self.setCursor(Qt.ClosedHandCursor)
+        # Snapshot view-space press point (and ensure _view_rect is available)
+        press_view_pt = self._snapshot_press_view_point(self.scene(), self._drag_start_scene)
 
+        if self._view_rect is not None:
+            self._start_view_rect = QRectF(self._view_rect)
+            if press_view_pt is not None:
+                self._grab_offset = QPointF(
+                    press_view_pt.x() - self._view_rect.x(), press_view_pt.y() - self._view_rect.y()
+                )
+        else:
+            self._start_view_rect = None
+            self._grab_offset = None
+
+        self._was_dragged = False
+        self._last_action = "press"
+        with contextlib.suppress(Exception):
+            self.setCursor(Qt.ClosedHandCursor)
+
+        _logger.debug(
+            "Selection mousePress: BUTTON=Left scene=(%.1f,%.1f) drag_start_rect=%s view_rect=%s grab_offset=%s",
+            float(self._drag_start_scene.x()),
+            float(self._drag_start_scene.y()),
+            getattr(self, "_drag_start_rect", None),
+            getattr(self, "_view_rect", None),
+            getattr(self, "_grab_offset", None),
+        )
+
+        # Disable view panning and grab mouse, storing previous state
+        self._disable_view_panning()
+
+        try:
+            pt = self._drag_start_scene
             _logger.debug(
-                "Selection mousePress: BUTTON=Left scene=(%.1f,%.1f) drag_start_rect=%s view_rect=%s grab_offset=%s",
-                float(self._drag_start_scene.x()),
-                float(self._drag_start_scene.y()),
+                "Selection mousePress: scene=(%.1f,%.1f) drag_start_rect=%s view_rect=%s grab_offset=%s",
+                float(pt.x()),
+                float(pt.y()),
                 getattr(self, "_drag_start_rect", None),
                 getattr(self, "_view_rect", None),
                 getattr(self, "_grab_offset", None),
             )
+        except Exception:
+            _logger.debug("Selection mousePress: (failed to read positions)", exc_info=True)
 
-            scene = self.scene()
-            if scene is not None:
-                views = scene.views()
-                if views:
-                    view = views[0]
-                    try:
-                        self._prev_view_state = view.dragMode()
-                        view.setDragMode(QGraphicsView.DragMode.NoDrag)
-                        with contextlib.suppress(Exception):
-                            view.viewport().grabMouse()
-                    except Exception:
-                        self._prev_view_state = None
-
-            if scene is not None:
-                views = scene.views()
-                if views:
-                    view = views[0]
-                    try:
-                        self._prev_view_state = view.dragMode()
-                        view.setDragMode(QGraphicsView.DragMode.NoDrag)
-                    except Exception:
-                        self._prev_view_state = None
-
-            try:
-                pt = self._drag_start_scene
-                _logger.debug(
-                    "Selection mousePress: scene=(%.1f,%.1f) drag_start_rect=%s view_rect=%s grab_offset=%s",
-                    float(pt.x()),
-                    float(pt.y()),
-                    getattr(self, "_drag_start_rect", None),
-                    getattr(self, "_view_rect", None),
-                    getattr(self, "_grab_offset", None),
-                )
-            except Exception:
-                _logger.debug("Selection mousePress: (failed to read positions)", exc_info=True)
-
-            event.accept()
-        else:
-            super().mousePressEvent(event)
+        event.accept()
 
     def _compute_drag_target_view_rect(self, view, scene_pos) -> QRectF | None:
         cur_view_pt = view.mapFromScene(scene_pos)
@@ -882,6 +856,51 @@ class SelectionRectItem(QGraphicsRectItem):
 
         self.setRect(QRectF(new_left, new_top, start_rect.width(), start_rect.height()))
         self._update_scene()
+
+    def _snapshot_press_view_point(self, scene, scene_pos) -> QPointF | None:
+        """Return the view-space press point for a scene position, initializing _view_rect if needed."""
+        if scene is None:
+            return None
+        views = scene.views()
+        if not views:
+            return None
+        view = views[0]
+        try:
+            # Ensure _view_rect reflects current transform
+            self._refresh_view_rect_from_parent()
+            press_view_pt = QPointF(view.mapFromScene(scene_pos))
+            if self._view_rect is None:
+                parent_rect = QRectF(self._get_parent_rect() or self.rect())
+                tl_scene = self.parentItem().mapToScene(parent_rect.topLeft())
+                br_scene = self.parentItem().mapToScene(parent_rect.bottomRight())
+                tl_view = view.mapFromScene(tl_scene)
+                br_view = view.mapFromScene(br_scene)
+                self._view_rect = QRectF(
+                    float(tl_view.x()),
+                    float(tl_view.y()),
+                    float(br_view.x() - tl_view.x()),
+                    float(br_view.y() - tl_view.y()),
+                )
+            return press_view_pt
+        except Exception:
+            return None
+
+    def _disable_view_panning(self) -> None:
+        """Attempt to disable view panning and grab the mouse on the viewport."""
+        scene = self.scene()
+        if scene is None:
+            return
+        views = scene.views()
+        if not views:
+            return
+        view = views[0]
+        try:
+            self._prev_view_state = view.dragMode()
+            view.setDragMode(QGraphicsView.DragMode.NoDrag)
+            with contextlib.suppress(Exception):
+                view.viewport().grabMouse()
+        except Exception:
+            self._prev_view_state = None
 
     def mouseMoveEvent(self, event) -> None:  # type: ignore
         if getattr(self, "_is_dragging", False):

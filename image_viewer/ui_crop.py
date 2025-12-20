@@ -128,89 +128,83 @@ class CropDialog(QDialog):
         # Offer maximize/close hints; keep dialog modal for workflow requirements
         self.setWindowFlags(Qt.Window | Qt.WindowMaximizeButtonHint | Qt.WindowCloseButtonHint)
 
+        self._init_window_state(image_path, original_pixmap)
+        self._setup_graphics(original_pixmap)
+        self._configure_view()
+
+        self._setup_ui()
+        self._apply_zoom_mode("fit")
+
+        # Optionally enable the debug overlay when running in debug mode (env var or logger DEBUG)
+        self._maybe_init_debug_overlay()
+
+        self.show()
+        _logger.info("Opened crop dialog for: %s", image_path)
+
+    def _init_window_state(self, image_path: str, original_pixmap: QPixmap) -> None:
         self._image_path = image_path
         self._original_pixmap = original_pixmap
         self._preview_mode = False
-        self._zoom_mode = "fit"  # "fit" or "actual"
+        self._zoom_mode = "fit"
 
-        # Graphics setup
+    def _setup_graphics(self, original_pixmap: QPixmap) -> None:
         self._scene = QGraphicsScene()
         self._view = QGraphicsView(self._scene)
         self._pix_item = QGraphicsPixmapItem(original_pixmap)
         self._scene.addItem(self._pix_item)
 
-        # Selection rectangle
+        # Create selection item and set internal view rect via helper
         pixmap_rect = self._pix_item.boundingRect()
-        # Initialize view-space rectangle to centered half-size of pixmap; map to view coords
         initial_parent_rect = QRectF(
             pixmap_rect.width() * 0.25,
             pixmap_rect.height() * 0.25,
             pixmap_rect.width() * 0.5,
             pixmap_rect.height() * 0.5,
         )
-        # Create selection item and set internal view rect via helper
         self._selection = SelectionRectItem(self._pix_item)
-        self._selection.set_parent_rect(initial_parent_rect)  # sets _view_rect internally
+        self._selection.set_parent_rect(initial_parent_rect)
 
-        # View settings - use NoDrag to allow selection rectangle to receive mouse events
+    def _configure_view(self) -> None:
         self._view.setDragMode(QGraphicsView.DragMode.NoDrag)
         self._view.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self._view.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self._view.setRenderHint(QPainter.RenderHint.Antialiasing)
         self._view.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
 
-        # Use crosshair cursor in the canvas to indicate selection interactions
         try:
             self._view.setCursor(Qt.CrossCursor)
             self._view.viewport().setCursor(Qt.CrossCursor)
         except Exception:
             pass
 
-        # Ensure viewport accepts mouse events so clicks reach items
         self._view.setMouseTracking(True)
         self._view.viewport().setMouseTracking(True)
         with contextlib.suppress(Exception):
-            # Enable hover attribute on view and viewport so hoverMove events are delivered to items
             self._view.setAttribute(Qt.WidgetAttribute.WA_Hover, True)
             self._view.viewport().setAttribute(Qt.WidgetAttribute.WA_Hover, True)
 
-        # Encourage expanding layout but defer final geometry until showEvent
         self._view.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.setMinimumSize(640, 480)
         self._sized_shown = False
 
-        self._setup_ui()
-        self._apply_zoom_mode("fit")  # Start in fit mode
-
-        # Defer sizing to showEvent (will size to screen available geometry)
-        # Keep visible after construction to satisfy tests and callers that expect the dialog to be shown
-        # Optionally enable the debug overlay when running in debug mode (env var or logger DEBUG)
+    def _maybe_init_debug_overlay(self) -> None:
         self._debug_overlay = None
         try:
             debug_env = os.getenv("IMAGE_VIEWER_DEBUG_OVERLAY", "").lower() in ("1", "true", "yes")
             debug_logger = _logger.isEnabledFor(logging.DEBUG)
-            if debug_env or debug_logger:
-                # Use previously imported debug classes (imported at module scope) so we avoid
-                # localized imports that ruff flags as non-top-level.
-                if DebugOverlay is not None and ViewportWatcher is not None:
-                    try:
-                        self._debug_overlay = DebugOverlay(self._view.viewport())
-                        # Install event filter so overlay repositions on viewport resize
-                        watcher = ViewportWatcher(self._debug_overlay)
-                        self._view.viewport().installEventFilter(watcher)
-                        # Keep a reference so it isn't GC'd
-                        self._viewport_watcher = watcher
-                        self._debug_overlay.reposition()
-                        # Expose overlay to selection so selection can drive messages
-                        if getattr(self, "_selection", None) is not None:
-                            self._selection._debug_overlay = self._debug_overlay
-                    except Exception:
-                        _logger.debug("Failed to initialize debug overlay", exc_info=True)
+            if (debug_env or debug_logger) and DebugOverlay is not None and ViewportWatcher is not None:
+                try:
+                    self._debug_overlay = DebugOverlay(self._view.viewport())
+                    watcher = ViewportWatcher(self._debug_overlay)
+                    self._view.viewport().installEventFilter(watcher)
+                    self._viewport_watcher = watcher
+                    self._debug_overlay.reposition()
+                    if getattr(self, "_selection", None) is not None:
+                        self._selection._debug_overlay = self._debug_overlay
+                except Exception:
+                    _logger.debug("Failed to initialize debug overlay", exc_info=True)
         except Exception:
             pass
-
-        self.show()
-        _logger.info("Opened crop dialog for: %s", image_path)
 
     def _setup_ui(self) -> None:
         """Setup dialog layout."""
