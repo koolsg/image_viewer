@@ -16,7 +16,7 @@ from image_viewer.logger import get_logger
 from image_viewer.path_utils import abs_dir_str, abs_path_str
 from image_viewer.settings_manager import SettingsManager
 from image_viewer.status_overlay import StatusOverlayBuilder
-from image_viewer.trim_operations import start_trim_workflow
+from image_viewer.trim import start_trim_workflow
 from image_viewer.ui_canvas import ImageCanvas
 from image_viewer.ui_convert_webp import WebPConvertDialog
 from image_viewer.ui_hover_menu import HoverDrawerMenu
