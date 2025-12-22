@@ -276,23 +276,36 @@ class CropDialog(QDialog):
     def _setup_ui(self) -> None:
         """Setup dialog layout."""
         main_layout = QHBoxLayout(self)
+        # Prevent side panels from collapsing to zero width on maximize/resize.
+        # The center view has stretch=1; panels are fixed at stretch=0 with sensible minimums.
+        main_layout.setContentsMargins(12, 12, 12, 12)
+        main_layout.setSpacing(10)
 
         # Left panel: zoom + presets
         left_panel = self._create_left_panel()
-        main_layout.addWidget(left_panel)
+        main_layout.addWidget(left_panel, stretch=0)
 
         # Center: canvas
         main_layout.addWidget(self._view, stretch=1)
 
         # Right panel: action buttons
         right_panel = self._create_right_panel()
-        main_layout.addWidget(right_panel)
+        main_layout.addWidget(right_panel, stretch=0)
+
+        # Be explicit: center view consumes remaining space.
+        main_layout.setStretch(0, 0)
+        main_layout.setStretch(1, 1)
+        main_layout.setStretch(2, 0)
 
     def _create_left_panel(self) -> QWidget:
         """Create left panel with zoom controls and presets."""
         panel = QWidget()
+        # Ensure panel remains visible even when the view expands aggressively.
+        panel.setMinimumWidth(220)
+        panel.setMaximumWidth(280)
         panel.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
         layout = QVBoxLayout(panel)
+        layout.setContentsMargins(0, 0, 0, 0)
 
         # Zoom mode buttons
         layout.addWidget(QLabel("View Mode:"))
@@ -353,8 +366,12 @@ class CropDialog(QDialog):
     def _create_right_panel(self) -> QWidget:
         """Create right panel with action buttons."""
         panel = QWidget()
+        # Ensure panel remains visible even when the view expands aggressively.
+        panel.setMinimumWidth(150)
+        panel.setMaximumWidth(220)
         panel.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
         layout = QVBoxLayout(panel)
+        layout.setContentsMargins(0, 0, 0, 0)
 
         layout.addStretch()
 

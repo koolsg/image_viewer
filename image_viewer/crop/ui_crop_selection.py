@@ -101,19 +101,7 @@ class SelectionRectItem(QGraphicsRectItem):
                 pr = self._selection._compute_parent_rect_from_view()
                 self._start_parent_rect = QRectF(pr) if pr is not None else QRectF(self._selection.rect())
 
-            if getattr(self._selection, "_VERBOSE_DRAG_LOG", False):
-                try:
-                    pos = event.scenePos()
-                    _logger.debug(
-                        "Handle mousePress: idx=%s scenePos=(%.1f,%.1f) start_view_rect=%s start_parent_rect=%s",
-                        self._index,
-                        float(pos.x()),
-                        float(pos.y()),
-                        getattr(self, "_start_view_rect", None),
-                        getattr(self, "_start_parent_rect", None),
-                    )
-                except Exception:
-                    _logger.debug("Handle mousePress: idx=%s (failed to read positions)", self._index, exc_info=True)
+            # Debug logging moved to overlay in mouseMoveEvent
 
             with contextlib.suppress(Exception):
                 self.setCursor(Qt.ClosedHandCursor)
@@ -133,21 +121,22 @@ class SelectionRectItem(QGraphicsRectItem):
                     parent_x = float(p.x())
                     parent_y = float(p.y())
 
+                    # Store in history for testing; console logging removed
                     msg = (
                         f"Handle mouseMove: idx={self._index} "
                         f"scene=({scene_x:.1f},{scene_y:.1f}) "
                         f"parent=({parent_x:.1f},{parent_y:.1f})"
                     )
-                    _logger.debug(msg)
                     with contextlib.suppress(Exception):
                         self._selection._handle_move_log_history.append(msg)
 
+                    # Display only on overlay, not console
                     with contextlib.suppress(Exception):
                         ov = getattr(self._selection, "_debug_overlay", None)
                         if ov is not None:
                             ov.show_message(f"h{self._index}: x={round(parent_x)} y={round(parent_y)}")
                 except Exception:
-                    _logger.debug("Handle mouseMove: idx=%s (failed to read positions)", self._index, exc_info=True)
+                    pass
 
             start_rect = getattr(self, "_start_parent_rect", QRectF(self._selection.rect()))
             self._selection.resize_handle_to(self._index, p.x(), p.y(), start_rect)
@@ -389,7 +378,7 @@ class SelectionRectItem(QGraphicsRectItem):
         if getattr(self, "_transition_log_history", None) is None:
             self._transition_log_history = []
         if self._last_hit != new_hit:
-            _logger.info("hoverMove: hit=%s -> cursor=%s", self._hit_name(new_hit), cursor_name)
+            # Console logging removed; overlay shows state
             self._transition_log_history.append(f"hit={self._hit_name(new_hit)} cursor={cursor_name}")
             self._last_hit = new_hit
 
@@ -438,9 +427,9 @@ class SelectionRectItem(QGraphicsRectItem):
                         scene.views()[0].viewport().unsetCursor()
                 self._log_hit_transition(self.NONE, "CrossCursor")
 
-            _logger.debug("Selection hoverEnter: hit=%s", hit)
+            # Console logging removed; overlay shows state
         except Exception:
-            _logger.debug("Selection hoverEnter: failed to set cursor", exc_info=True)
+            pass  # Silent handling; overlay shows state
         super().hoverEnterEvent(event)
 
     def _get_parent_pos_from_event(self, event) -> tuple[float, float] | None:
@@ -518,7 +507,7 @@ class SelectionRectItem(QGraphicsRectItem):
                 self._overlay_update(hit, cursor_shape=None)
                 self._log_hit_transition(hit, f"unknown({hit})")
         except Exception:
-            _logger.debug("Selection hoverMove: failed to set cursor", exc_info=True)
+            pass  # Silent handling; overlay shows state
         finally:
             super().hoverMoveEvent(event)
 
@@ -529,9 +518,9 @@ class SelectionRectItem(QGraphicsRectItem):
             if scene and scene.views():
                 view = scene.views()[0]
                 view.viewport().unsetCursor()
-            _logger.debug("Selection hoverLeave")
+            # Console logging removed; overlay clears on leave
         except Exception:
-            _logger.debug("Selection hoverLeave: failed to reset cursor", exc_info=True)
+            pass  # Silent handling
         super().hoverLeaveEvent(event)
 
     def _create_handles(self) -> None:
@@ -716,49 +705,16 @@ class SelectionRectItem(QGraphicsRectItem):
         with contextlib.suppress(Exception):
             self.setCursor(Qt.ClosedHandCursor)
 
-        _logger.debug(
-            "Selection mousePress: BUTTON=Left scene=(%.1f,%.1f) drag_start_rect=%s view_rect=%s grab_offset=%s",
-            float(self._drag_start_scene.x()),
-            float(self._drag_start_scene.y()),
-            getattr(self, "_drag_start_rect", None),
-            getattr(self, "_view_rect", None),
-            getattr(self, "_grab_offset", None),
-        )
+        # Console logging removed; use overlay for debug info
 
         # Disable view panning and grab mouse, storing previous state
         self._disable_view_panning()
-
-        try:
-            pt = self._drag_start_scene
-            _logger.debug(
-                "Selection mousePress: scene=(%.1f,%.1f) drag_start_rect=%s view_rect=%s grab_offset=%s",
-                float(pt.x()),
-                float(pt.y()),
-                getattr(self, "_drag_start_rect", None),
-                getattr(self, "_view_rect", None),
-                getattr(self, "_grab_offset", None),
-            )
-        except Exception:
-            _logger.debug("Selection mousePress: (failed to read positions)", exc_info=True)
 
         event.accept()
 
     def _compute_drag_target_view_rect(self, view, scene_pos) -> QRectF | None:
         cur_view_pt = view.mapFromScene(scene_pos)
-        if getattr(self, "_VERBOSE_DRAG_LOG", False):
-            try:
-                _logger.debug(
-                    "_compute_drag_target_view_rect: scene_pos=(%.1f,%.1f) cur_view_pt=(%.1f,%.1f) "
-                    "start_view_rect=%s view_rect=%s",
-                    float(scene_pos.x()),
-                    float(scene_pos.y()),
-                    float(cur_view_pt.x()),
-                    float(cur_view_pt.y()),
-                    getattr(self, "_start_view_rect", None),
-                    getattr(self, "_view_rect", None),
-                )
-            except Exception:
-                _logger.debug("_compute_drag_target_view_rect: (failed to log positions)", exc_info=True)
+        # Debug logging removed; overlay handles display
 
         width = (
             self._start_view_rect.width()
@@ -915,25 +871,7 @@ class SelectionRectItem(QGraphicsRectItem):
 
                 if target is not None:
                     target = self._clamp_to_viewport(view, target)
-                    if getattr(self, "_VERBOSE_DRAG_LOG", False):
-                        try:
-                            _logger.debug(
-                                "Selection mouseMove: scene=(%.1f,%.1f) computed_target_view=(%.1f,%.1f,%.1f,%.1f) "
-                                "clamped_target=(%.1f,%.1f,%.1f,%.1f)",
-                                float(scene_pos.x()),
-                                float(scene_pos.y()),
-                                float(target.x()),
-                                float(target.y()),
-                                float(target.width()),
-                                float(target.height()),
-                                float(target.x()),
-                                float(target.y()),
-                                float(target.width()),
-                                float(target.height()),
-                            )
-                        except Exception:
-                            _logger.debug("Selection mouseMove: (failed to log target)", exc_info=True)
-
+                    # Debug logging removed; overlay shows drag state
                     self._view_rect = target
                     self._last_update_by = "view"
                     self._apply_view_rect_to_parent()
@@ -941,7 +879,7 @@ class SelectionRectItem(QGraphicsRectItem):
                     event.accept()
                     return
 
-            _logger.debug("Selection fallback drag: scene=(%.1f,%.1f)", float(scene_pos.x()), float(scene_pos.y()))
+            # Fallback drag; console logging removed
             self._handle_fallback_drag(scene_pos)
             event.accept()
         else:
@@ -951,12 +889,7 @@ class SelectionRectItem(QGraphicsRectItem):
         if getattr(self, "_is_dragging", False):
             self._is_dragging = False
             scene = self.scene()
-            try:
-                _logger.debug(
-                    "Selection mouseRelease: restoring prev_view_state=%s", getattr(self, "_prev_view_state", None)
-                )
-            except Exception:
-                _logger.debug("Selection mouseRelease: (failed to log prev state)", exc_info=True)
+            # Console logging removed
             if scene is not None and hasattr(self, "_prev_view_state") and self._prev_view_state is not None:
                 views = scene.views()
                 if views:
@@ -978,9 +911,7 @@ class SelectionRectItem(QGraphicsRectItem):
         else:
             super().mouseReleaseEvent(event)
 
-    def resize_handle_to(  # noqa: PLR0915
-        self, index: int, parent_x: float, parent_y: float, start_rect: QRectF | None = None
-    ) -> None:
+    def resize_handle_to(self, index: int, parent_x: float, parent_y: float, start_rect: QRectF | None = None) -> None:
         """Resize selection rectangle using a handle at `index`.
 
         parent_x/parent_y are in the parent (pixmap) coordinate system.
@@ -1042,19 +973,7 @@ class SelectionRectItem(QGraphicsRectItem):
             left, top, right, bottom = rect.left(), rect.top(), rect.right(), rect.bottom()
 
         new_left, new_top, new_right, new_bottom = self._calc_clamped_rect(left, top, right, bottom, min_size)
-        try:
-            _logger.debug(
-                "resize_handle_to: index=%s parent_xy=(%.1f,%.1f) -> new_parent_rect=(%.1f,%.1f,%.1f,%.1f)",
-                index,
-                float(parent_x),
-                float(parent_y),
-                float(new_left),
-                float(new_top),
-                float(new_right - new_left),
-                float(new_bottom - new_top),
-            )
-        except Exception:
-            _logger.debug("resize_handle_to: (failed to log values)", exc_info=True)
+        # Console logging removed; overlay shows handle position if VERBOSE_DRAG_LOG
         self._apply_new_rect(new_left, new_top, new_right, new_bottom, min_size)
 
     def _apply_aspect_ratio(self, index: int, rect: QRectF, min_size: int) -> QRectF:
@@ -1238,23 +1157,10 @@ class SelectionRectItem(QGraphicsRectItem):
     def _apply_view_rect_to_parent(self) -> None:
         pr = self._get_parent_rect()
         if pr is None:
-            _logger.debug(
-                "_apply_view_rect_to_parent: no parent rect (view_rect=%s)", getattr(self, "_view_rect", None)
-            )
+            # No parent rect; console logging removed
             return
         parent_rect = self.parentItem().boundingRect()
         left = max(parent_rect.left(), min(pr.left(), parent_rect.right() - pr.width()))
         top = max(parent_rect.top(), min(pr.top(), parent_rect.bottom() - pr.height()))
-        try:
-            _logger.debug(
-                "_apply_view_rect_to_parent: applying parent_rect=(%.1f,%.1f,%.1f,%.1f) clamped=(%.1f,%.1f)",
-                float(pr.x()),
-                float(pr.y()),
-                float(pr.width()),
-                float(pr.height()),
-                float(left),
-                float(top),
-            )
-        except Exception:
-            _logger.debug("_apply_view_rect_to_parent: (failed to log rects)", exc_info=True)
+        # Console logging removed; overlay shows state if needed
         self.setRect(QRectF(left, top, pr.width(), pr.height()))
