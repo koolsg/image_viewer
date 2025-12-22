@@ -19,13 +19,17 @@ Options
 - `--log-cats <cats>`
   - Comma-separated list. Combine category names below.
   - Supported categories (main):
-    - `main`, `loader`, `decoder`, `strategy`, `trim`, `trim_operations`
-    - `ui_canvas`, `ui_explorer_grid`, `ui_explorer_tree`, `ui_menus`, `ui_settings`, `ui_trim`
-    - `hover_menu`, `webp_converter`, `convert_webp`, `view_mode`, `explorer_mode`
-    - `file_operations`, `settings`, `fs_model`, `engine`, `thumbnail_cache`, `status_overlay`
-  - Example: `--log-cats main,loader`
+    - Core / CLI: `main`, `engine`, `engine_core`, `db_operator`
+    - Decoding / IO: `loader`, `decoder`, `convert_webp`, `strategy`
+    - Explorer / UI: `ui_canvas`, `ui_explorer_grid`, `ui_explorer_tree`, `explorer_model`, `ui_menus`, `ui_settings`
+    - Thumbnail / DB: `fs_db_worker`, `thumb_db`, `thumbnail_db`, `thumbnail_cache`
+    - Misc / ops: `trim`, `trim_operations`, `hover_menu`, `webp_converter`, `file_operations`, `settings`, `status_overlay`
+  - Thumbnail / DB-focused categories you may find useful:
+    - `--log-cats engine_core,fs_db_worker,thumbnail_db,explorer_model`
 
-Example Scenarios
+Example Scenarios (thumbnail debugging)
+- Narrow focus to thumbnail pipeline and DB preload:
+  - `uv run python -m image_viewer --log-level debug --log-cats engine_core,fs_db_worker,thumbnail_db,explorer_model,ui_explorer_grid`
 - Focus only on loader queue/decoding flow
   - `uv run python -m image_viewer --log-level debug --log-cats loader`
 

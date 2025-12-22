@@ -1,3 +1,125 @@
+# 📸 썸네일 캐시 시스템
+
+**업데이트 기준:** 2025-12-22
+
+> 현재 구현(2025-12-22 기준)을 문서 상단에 배치했습니다. 이전 문서는 문서 하단의 '레거시(보관용)' 섹션으로 이동했습니다.
+
+## 🏗️ 핵심 요약
+- 현재 구현에서는 **썸네일 DB 읽기/프리페치와 생성(디코드→PNG 바이트 저장)**을 `EngineCore`(비-GUI 쓰레드)가 담당합니다.
+- UI(Explorer model / grid)는 `ImageEngine`의 신호(`explorer_thumb_rows`, `explorer_thumb_generated`)를 소비하여 **바이트 → QPixmap/QIcon** 변환을 수행합니다.
+- 디스크 저장은 데이터 어댑터인 `ThumbDBBytesAdapter`를 통해 수행되며, 썸네일 BLOB은 **nullable**입니다 (메타는 존재할 수 있음).
+
+---
+
+## 🧭 아키텍처 개요
+
+```
+┌────────────────────────────┐            ┌──────────────────────────┐
+│  UI: ThumbnailGridWidget   │ <--------> │  ImageEngine (UI thread) │
+│  ExplorerTableModel (UI)   │            └─────────┬────────────────┘
+└───────┬────────────────────┘                      │
+        │ DecorationRole 요청 (icon)                 │ 전송: _core_request_thumbnail (signal)
+        ▼                                           ▼
+┌────────────────────────────┐            ┌──────────────────────────┐
+│ ExplorerTableModel.data()  │            │  EngineCore (core thread)│
+│  - checks _thumb_icons/_bytes│ -- (missing)-> request_thumbnail(path)   │
+└─────────┬──────────────────┘            │  - Loader(decode_image)  │
+          │                               │  - ThumbDBBytesAdapter   │
+          │                               │  - emits thumb_db_chunk / thumb_generated
+          ▼                               └──────────────────────────┘
+   (uses cached bytes/icon)                         ▲
+          │                                         │
+          └──────── UI updates (QPixmap/QIcon) ◀────┘
+```
+
+---
+
+## 🔁 상세 데이터 흐름 (현재 구현)
+
+1) 폴더 열기
+- `ImageEngine.open_folder()` → emits initial empty snapshots, sends `_core_open_folder` signal to `EngineCore.open_folder()`.
+- `EngineCore` scans folder, emits `folder_scanned` and starts DB prefetch or generation.
+
+2) DB 프리페치
+- `EngineCore._start_db_loader()`가 `FSDBLoadWorker`를 실행해 DB의 행(chunk)을 읽고 `thumb_db_chunk` 시그널로 전달.
+- Engine (`_on_core_thumb_db_chunk`)은 `_meta_cache`를 갱신하고 `explorer_thumb_rows`를 emit.
+- `ExplorerTableModel._on_thumb_rows()`는 전달받은 행에서 `thumbnail` 바이트(있다면)를 취해 `self._thumb_bytes`에 저장하고, 파일 해상도 메타를 업데이트하여 UI를 갱신.
+
+3) UI에서 아이템 렌더링
+- `ExplorerTableModel.data(..., DecorationRole)`:
+  - 우선 `self._thumb_icons`를 확인.
+  - 없으면 `self._thumb_bytes`에서 PNG 바이트를 읽어 `QPixmap`으로 변환, 스케일 후 `QIcon`으로 캐시 후 반환.
+  - 바이트도 없으면 `self._engine.request_thumbnail(path)`로 **지연 생성 요청**.
+
+4) 썸네일 생성 (누락시)
+- `ImageEngine.request_thumbnail(path)` → 코어 쓰레드로 `_core_request_thumbnail` 시그널.
+- `EngineCore.request_thumbnail()`는 중복·이미 생성된 경우를 검사(`_thumb_pending`, `_thumb_done`)하고, 내부 `Loader.request_load(path, tw, th, "both")`로 디코드 요청.
+- 디코더(주로 pyvips)에서 numpy 배열 리턴 → `EngineCore._on_thumb_decoded()`에서
+  - numpy → `QImage` → PNG bytes로 인코딩
+  - `ThumbDBBytesAdapter.upsert_meta()`로 메타/thumbnail 바이트 저장
+  - `_thumb_done`에 (mtime_ms, size, tw, th)로 마킹
+  - `thumb_generated` 시그널 emit (payload dict)
+
+5) UI 갱신 (생성 완료)
+- `ImageEngine._on_core_thumb_generated()`가 `_meta_cache`를 갱신하고 `explorer_thumb_generated`를 emit.
+- `ExplorerTableModel._on_thumb_generated()` → `_on_thumb_rows()` 호출로 내부 바이트/아이콘이 갱신되고 `dataChanged`를 emit하여 해당 셀이 즉시 그려짐.
+
+6) 결함 처리
+- DB에 저장된 썸네일이 손상되어 `QPixmap.loadFromData()` 실패 시, 구현은 해당 BLOB을 `thumbnail=None`으로 재저장하여 향후 재디코드를 유도합니다.
+
+---
+
+## 🗄️ DB 스키마 & 파일명
+- EngineCore는 폴더 DB 파일로 `SwiftView_thumbs.db`를 사용해 `ThumbDBBytesAdapter`를 생성합니다 (경로 비교 및 스캔 필터에는 내부적으로 소문자 `swiftview_thumbs.db` 상수가 사용됨).
+- 저장되는 메타/필드(업데이트 시):
+  - path, thumbnail (BLOB, nullable), width, height, mtime, size, thumb_width, thumb_height, created_at
+- 중요한 점: **thumbnail BLOB은 nullable**이며, 메타는 존재할 수 있음 (DB 프리페치 시에는 바이트 없이 메타만 채워진 행이 올 수 있음).
+
+---
+
+## ⚡ 캐시 계층 (현행)
+1. 메모리 (UI): ExplorerTableModel의 `_thumb_icons`/`_thumb_bytes` (즉시 렌더 가능)
+2. 디스크 (SQLite): `SwiftView_thumbs.db` (bytes + meta; fast lookup)
+3. 원본 디코드: `EngineCore`의 `Loader` → pyvips 디코더 (비동기)
+
+---
+
+## 🔍 디버깅 팁
+- 로그: --log-level DEBUG --log-cats engine_core,engine,ui_explorer_grid
+- DB 파일 위치: Path(folder) / "SwiftView_thumbs.db"
+- 캐시 점검: Explorer model 내부 상태
+  - `len(model._thumb_bytes)`, `len(model._thumb_icons)`
+- 손상된 BLOB 감지: 로그에 `cleared corrupt thumbnail blob for path:` 메시지
+
+---
+
+## 🔧 관련 코드 위치 (참고)
+- image_viewer/image_engine/engine_core.py  ← DB preload + thumbnail generation
+- image_viewer/image_engine/engine.py       ← UI-thread 엔진 브리지, signals: `explorer_thumb_rows`, `explorer_thumb_generated`
+- image_viewer/image_engine/db/thumbdb_bytes_adapter.py ← DB adapter (low-level)
+- image_viewer/image_engine/fs_db_worker.py ← DB chunk loader
+- image_viewer/image_engine/thumbnail_cache.py ← UI-facing helper (schema helpers, not used as the core path)
+- image_viewer/ui_explorer_grid.py / explorer_model.py ← UI 소비자 (bytes→pixmap)
+- image_viewer/loader.py / image_viewer/decoder.py ← 디코딩 파이프
+
+---
+
+## ✅ 주의/권장 사항
+- 문서화된 구현과 달리, **썸네일 생성은 Core thread에서 수행**되어 DB에 바이트로 저장되고 UI는 이를 소비합니다. 문서나 로그에서 혼동되지 않도록 이 책임 경계를 기억하세요.
+- 개선 아이디어(우선순위 제안):
+  - LRU 메모리 제한 (Explorer model에 적용)
+  - visible-only lazy generation (스캔 이후 즉시 전체 생성 대신)
+  - DB 정리 / vacuum 정기화 작업 자동화
+
+---
+
+**요약:** 실제 구현에서는 EngineCore가 DB 프리페치/생성(바이트 저장)을 담당하고, ImageEngine/ExplorerModel이 이를 소비해 최종적으로 UI에 `QIcon`/`QPixmap`을 렌더링합니다. 이 문서는 현재 코드베이스의 클래스/시그널/데이터 흐름을 반영하도록 갱신되었습니다.
+
+---
+
+## 레거시(보관용)
+아래는 기존(이전) 문서의 전체 내용(보관용)입니다. 원본 문장을 그대로 보존했습니다.
+
 # 📸 SwiftView 썸네일 캐시 시스템 설명
 
 ## 🏗️ 아키텍처 개요
@@ -64,7 +186,7 @@ def load_folder(self, folder_path: str) -> None:
         self._list.setRootIndex(idx)
 ```
 
-### 2️⃣ **Qt가 각 아이템 렌더링 요청**
+### 2️⃣ **Qt가 각아이템 렌더링 요청**
 ```python
 # ImageFileSystemModel.data()
 def data(self, index: QModelIndex, role: int):
@@ -328,24 +450,24 @@ D:\Photos\
 ## 🐛 디버깅 팁
 
 1. **캐시 확인:**
-   ```python
-   # 메모리 캐시 크기
-   len(model._thumb_cache)
+```python
+# 메모리 캐시 크기
+len(model._thumb_cache)
 
-   # 디스크 캐시 위치
-   Path(folder) / "SwiftView_thumbs.db"
-   ```
+# 디스크 캐시 위치
+Path(folder) / "SwiftView_thumbs.db"
+```
 
 2. **로그 확인:**
-   ```bash
-   # 썸네일 로딩 로그
-   --log-level DEBUG --log-cats thumbnail_cache,ui_explorer_grid
-   ```
+```bash
+# 썸네일 로딩 로그
+--log-level DEBUG --log-cats thumbnail_cache,ui_explorer_grid
+```
 
 3. **캐시 무효화:**
-   - 파일 수정 시간 변경: 자동 무효화
-   - 썸네일 크기 변경: 자동 무효화
-   - 수동 삭제: `SwiftView_thumbs.db` 파일 삭제
+- 파일 수정 시간 변경: 자동 무효화
+- 썸네일 크기 변경: 자동 무효화
+- 수동 삭제: `SwiftView_thumbs.db` 파일 삭제
 
 ---
 

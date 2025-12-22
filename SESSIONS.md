@@ -1,3 +1,19 @@
+## 2025-12-22
+
+### Logging refactor: Move cursor/coordinate debug output to overlay
+**Files:** image_viewer/crop/ui_crop_selection.py
+**What:** Replaced console-based debug logging (`_logger.debug()`, `_logger.info()`) with on-screen overlay display for cursor shapes and coordinates. Changes:
+- Removed `_logger.info("hoverMove: ...")` from `_log_hit_transition()`
+- Removed `_logger.debug()` calls in `hoverEnterEvent()`, `hoverMoveEvent()`, `hoverLeaveEvent()`
+- Removed `_logger.debug()` calls in `Handle._HandleItem.mousePressEvent()`
+- Removed console logging in `Handle._HandleItem.mouseMoveEvent()`; kept overlay display
+- Removed `_logger.debug()` calls in `Selection.mousePressEvent()` (two instances removed)
+- Removed `_logger.debug()` from fallback drag, mouseReleaseEvent, resize_handle_to, _compute_drag_target_view_rect, _apply_view_rect_to_parent
+- Maintained internal `_transition_log_history` and `_handle_move_log_history` lists for test compatibility
+- All debug info now shown via `DebugOverlay.show_message()` in bottom-left corner
+**Result:** Clean console output; interactive cursor/coordinate debug info displayed on-screen overlay when `_debug_overlay` is attached
+**Checks:** Ruff: pass; Py compile: pass; Verification: console info/debug removed ✅, overlay calls present ✅
+
 ## 2025-12-19
 
 ### Crop feature implementation (interactive region selection + preview)
