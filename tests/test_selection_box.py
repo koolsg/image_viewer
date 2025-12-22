@@ -4,7 +4,9 @@ pytest.importorskip("PySide6")
 from PySide6.QtWidgets import QApplication
 from PySide6.QtCore import Qt, QPoint
 
-from image_viewer.ui_crop import SelectionRectItem, QGraphicsPixmapItem
+from PySide6.QtWidgets import QGraphicsPixmapItem
+
+from image_viewer.crop.ui_crop_selection import SelectionRectItem
 
 
 def test_selection_rect_item_handles(qtbot):

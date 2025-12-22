@@ -6,7 +6,7 @@ from PySide6.QtCore import Qt, QPoint, QPointF, QEvent
 from PySide6.QtGui import QImage, QPixmap
 from PySide6.QtWidgets import QGraphicsSceneHoverEvent
 
-from image_viewer.ui_crop import CropDialog
+from image_viewer.crop.ui_crop import CropDialog
 
 
 def test_handle_cursor_changes_on_drag(qtbot):

@@ -3,7 +3,9 @@ import pytest
 from PySide6.QtGui import QImage, QPixmap
 from PySide6.QtWidgets import QApplication
 
-from image_viewer.ui_crop import SelectionRectItem, QGraphicsPixmapItem
+from PySide6.QtWidgets import QGraphicsPixmapItem
+
+from image_viewer.crop.ui_crop_selection import SelectionRectItem
 
 
 def make_pixmap(w: int, h: int) -> QPixmap:

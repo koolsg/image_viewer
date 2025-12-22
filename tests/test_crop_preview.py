@@ -3,7 +3,7 @@ import pytest
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QImage, QPixmap
 
-from image_viewer.ui_crop import CropDialog
+from image_viewer.crop.ui_crop import CropDialog
 
 
 def make_pixmap(w: int, h: int) -> QPixmap:
