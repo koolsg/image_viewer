@@ -60,3 +60,4 @@ exclude = [".venv", ".cache", ".pytest_cache", ".ruff_cache", ".uv-cache", "**/b
 
 [tool.pytest.ini_options]
 markers = ["imaging: marks tests that require imaging libraries (pyvips/numpy)"]
+testpaths = ["tests"]
