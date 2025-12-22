@@ -1064,7 +1064,7 @@ class ImageViewer(QMainWindow):
     def _on_hover_crop_requested(self) -> None:
         """Handle crop request from hover menu."""
         try:
-            from image_viewer.crop_operations import start_crop_workflow  # noqa: PLC0415
+            from image_viewer.crop.crop_operations import start_crop_workflow  # noqa: PLC0415
 
             start_crop_workflow(self)
         except Exception as ex:
