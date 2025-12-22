@@ -14,6 +14,14 @@
 **Result:** Clean console output; interactive cursor/coordinate debug info displayed on-screen overlay when `_debug_overlay` is attached
 **Checks:** Ruff: pass; Py compile: pass; Verification: console info/debug removed ✅, overlay calls present ✅
 
+### Crop module cleanup: remove heavy root shim + fix pytest collection
+**Files:** image_viewer/ui_crop.py, pyproject.toml, tests/conftest.py
+**What:**
+- Replaced the legacy root-level `image_viewer/ui_crop.py` monkey-patching shim with a tiny, side-effect-free re-export module.
+- Restricted pytest discovery to `tests/` (`testpaths = ["tests"]`) so helper scripts like `tools/test_db_creation.py` are not imported during collection.
+- Added a session-wide `QApplication` bootstrap/teardown in `tests/conftest.py` to keep Qt initialization consistent across runs.
+**Checks:** Ruff: pass; Pyright: pass; Tests: 36 passed
+
 ## 2025-12-19
 
 ### Crop feature implementation (interactive region selection + preview)
