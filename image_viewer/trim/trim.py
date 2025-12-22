@@ -3,7 +3,7 @@ import os
 import numpy as np
 import pyvips  # type: ignore
 
-from .logger import get_logger
+from image_viewer.logger import get_logger
 
 
 def detect_trim_box_stats(path: str, profile: str | None = None) -> tuple[int, int, int, int] | None:
