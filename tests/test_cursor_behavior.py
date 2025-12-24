@@ -138,10 +138,23 @@ def test_hover_move_logs_transition_only(caplog, qtbot):
     scene_pt = parent_item.mapToScene(selection.rect().center())
     view_pt = view.mapFromScene(scene_pt)
 
+    # Use a small helper to simulate lightweight hover events without constructing
+    # real Qt `QGraphicsSceneHoverEvent` objects. Constructing and forwarding a
+    # full Qt hover event to `hoverMoveEvent` can invoke internal C++/Python
+    # type checks (including isinstance checks against parameterized generics)
+    # which may raise TypeError in test contexts. The tests only need an object
+    # that exposes `pos()` with item-local coordinates, so we use a tiny helper
+    # to keep the tests robust and focused.
+    class _HoverEvent:
+        def __init__(self, x, y):
+            self._pt = QPointF(x, y)
+
+        def pos(self):
+            return self._pt
+
     # Create hover events with item-local coordinates to trigger hoverMoveEvent directly
     item_center = selection.mapFromScene(scene_pt)
-    ev = QGraphicsSceneHoverEvent()
-    ev.setPos(QPointF(item_center.x(), item_center.y()))
+    ev = _HoverEvent(item_center.x(), item_center.y())
     selection._transition_log_history.clear()
     selection._last_hit = None
     selection.hoverMoveEvent(ev)
@@ -152,8 +165,7 @@ def test_hover_move_logs_transition_only(caplog, qtbot):
     prev_count = sum(1 for s in selection._transition_log_history if "hit=MOVE" in s)
 
     # Move slightly within same interior region; should NOT log a transition
-    ev2 = QGraphicsSceneHoverEvent()
-    ev2.setPos(QPointF(item_center.x() + 1, item_center.y() + 1))
+    ev2 = _HoverEvent(item_center.x() + 1, item_center.y() + 1)
     selection.hoverMoveEvent(ev2)
 
     new_count = sum(1 for s in selection._transition_log_history if "hit=MOVE" in s)
@@ -164,8 +176,7 @@ def test_hover_move_logs_transition_only(caplog, qtbot):
     # Compute handle center in item coords
     handle_center_item = selection.mapFromScene(parent_item.mapToScene(handle.pos() + handle.rect().center()))
 
-    ev3 = QGraphicsSceneHoverEvent()
-    ev3.setPos(QPointF(handle_center_item.x(), handle_center_item.y()))
+    ev3 = _HoverEvent(handle_center_item.x(), handle_center_item.y())
     selection.hoverMoveEvent(ev3)
 
     assert any("hit=TOP_LEFT" in s and "ResizeCursor" in s for s in selection._transition_log_history)
