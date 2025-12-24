@@ -1,3 +1,4 @@
+import contextlib
 import logging
 import os
 import sys
@@ -67,6 +68,54 @@ def setup_logger(level: int = logging.INFO, name: str = "image_viewer") -> loggi
                 return suffix in allowed
 
         stream_handler.addFilter(_CategoryFilter())
+
+    # Optionally install a lightweight stderr wrapper to filter noisy 'FIXME qt_isinstance' lines
+    # Controlled by the IMAGE_VIEWER_FILTER_QT_FIXME env var so suppression is opt-in.
+    try:
+        enabled = os.getenv("IMAGE_VIEWER_FILTER_QT_FIXME", "").strip().lower() in ("1", "true", "yes")
+        if enabled and not getattr(sys.stderr, "_filtered_by_image_viewer", False):
+            outfile = os.path.join(os.getcwd(), "debug.log.filtered")
+
+            class _FilteredStderr:
+                """Wrap stderr and suppress known noisy lines while recording them to a file.
+
+                Suppresses lines containing the text 'FIXME qt_isinstance' and appends them to
+                a separate file (debug.log.filtered) so diagnostics are preserved even when
+                the lines are suppressed from stderr.
+                """
+
+                def __init__(self, orig, out_path: str):
+                    self._orig = orig
+                    self._out_path = out_path
+                    # visible marker for tests
+                    self._filtered_by_image_viewer = True
+
+                def write(self, s: str) -> None:  # pragma: no cover - thin wrapper
+                    try:
+                        if isinstance(s, str) and "FIXME qt_isinstance" in s:
+                            # Persist the suppressed line for later inspection
+                            with contextlib.suppress(Exception), open(self._out_path, "a", encoding="utf-8") as f:
+                                f.write(s)
+                            return
+                    except Exception:
+                        pass
+                    with contextlib.suppress(Exception):
+                        self._orig.write(s)
+
+                def flush(self) -> None:  # pragma: no cover - thin wrapper
+                    with contextlib.suppress(Exception):
+                        return getattr(self._orig, "flush", lambda: None)()
+
+                def isatty(self) -> bool:  # pragma: no cover - thin wrapper
+                    try:
+                        return getattr(self._orig, "isatty", lambda: False)()
+                    except Exception:
+                        return False
+
+            sys.stderr = _FilteredStderr(sys.stderr, outfile)
+    except Exception:
+        # Never fail logger setup for this convenience wrapper
+        pass
 
     # Do not propagate beyond the project logger
     logger.propagate = False
