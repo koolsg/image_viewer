@@ -158,9 +158,38 @@ class _CropCursorResetFilter(QObject):
 
             scene_pos = self._view.mapToScene(pos)
             items = scene.items(scene_pos)
+
+            # Show mouse position and current cursor in overlay when available.
+            with contextlib.suppress(Exception):
+                ov = getattr(self._selection, "_debug_overlay", None)
+                if ov is not None:
+                    try:
+                        cur_shape = self._view.viewport().cursor().shape()
+                        cur_name = cursor_name(cur_shape) if callable(cursor_name) else str(cur_shape)
+                        msg = {"mouse": f"{int(scene_pos.x())},{int(scene_pos.y())}", "cursor": cur_name}
+                        debug_requested = getattr(self, "_debug_overlay_requested", False)
+                        if ov is not None:
+                            ov.show_message(msg)
+                        elif not debug_requested:
+                            _logger.debug("hover: %s", msg)
+                        # else: debug was requested and overlay missing -> silent
+                    except Exception:
+                        pass
+
             if not any(self._is_selection_related(it) for it in items):
                 with contextlib.suppress(Exception):
                     self._view.viewport().unsetCursor()
+                    # Indicate cursor exit in overlay
+                    ov = getattr(self._selection, "_debug_overlay", None)
+                    if ov is not None:
+                        with contextlib.suppress(Exception):
+                            msg = {"mouse": f"{int(scene_pos.x())},{int(scene_pos.y())}", "cursor": "exit"}
+                            debug_requested = getattr(self, "_debug_overlay_requested", False)
+                            if ov is not None:
+                                ov.show_message(msg)
+                            elif not debug_requested:
+                                _logger.debug("hover exit: %s", msg)
+                            # else: debug requested and overlay missing -> silent
         except Exception:
             return False
 
@@ -259,17 +288,33 @@ class CropDialog(QDialog):
         try:
             debug_env = os.getenv("IMAGE_VIEWER_DEBUG_OVERLAY", "").lower() in ("1", "true", "yes")
             debug_logger = _logger.isEnabledFor(logging.DEBUG)
+            self._debug_overlay_requested = debug_env or debug_logger
             if (debug_env or debug_logger) and DebugOverlay is not None and ViewportWatcher is not None:
                 try:
-                    self._debug_overlay = DebugOverlay(self._view.viewport())
+                    # Parent overlay to the left panel so it appears in the left panel's
+                    # bottom-left instead of the canvas viewport
+                    parent_for_overlay = getattr(self, "_left_panel", self._view.viewport())
+                    self._debug_overlay = DebugOverlay(parent_for_overlay)
+                    # Mark overlay with the requested state so it can persist visibility
+                    self._debug_overlay._debug_requested = self._debug_overlay_requested
                     watcher = ViewportWatcher(self._debug_overlay)
-                    self._view.viewport().installEventFilter(watcher)
+                    # Watch parent resize events so overlay repositions correctly
+                    parent_for_overlay.installEventFilter(watcher)
                     self._viewport_watcher = watcher
                     self._debug_overlay.reposition()
                     if getattr(self, "_selection", None) is not None:
                         self._selection._debug_overlay = self._debug_overlay
+                        # Always communicate that debug mode was requested to the selection
+                        self._selection._debug_overlay_requested = self._debug_overlay_requested
                 except Exception:
                     _logger.debug("Failed to initialize debug overlay", exc_info=True)
+            else:
+                # Communicate debug-requested state to selection even when overlay init skipped
+                try:
+                    if getattr(self, "_selection", None) is not None:
+                        self._selection._debug_overlay_requested = getattr(self, "_debug_overlay_requested", False)
+                except Exception:
+                    pass
         except Exception:
             pass
 
@@ -283,6 +328,8 @@ class CropDialog(QDialog):
 
         # Left panel: zoom + presets
         left_panel = self._create_left_panel()
+        # Keep a reference so we can parent the debug overlay to the left panel (bottom-left)
+        self._left_panel = left_panel
         main_layout.addWidget(left_panel, stretch=0)
 
         # Center: canvas
@@ -514,9 +561,25 @@ class CropDialog(QDialog):
 
         _logger.info("Preview mode enabled")
 
-        # Re-apply zoom
-        if self._zoom_mode == "fit":
-            self._view.fitInView(self._pix_item, Qt.AspectRatioMode.KeepAspectRatio)
+        # Re-apply zoom and center the pixmap (deferred so pixmap update is settled)
+        def _deferred_fit_center_preview() -> None:
+            try:
+                # Make scene match the pixmap bounds to simplify centering
+                with contextlib.suppress(Exception):
+                    self._scene.setSceneRect(self._pix_item.boundingRect())
+                    self._pix_item.setPos(0, 0)
+                if self._zoom_mode == "fit":
+                    self._view.fitInView(self._pix_item, Qt.AspectRatioMode.KeepAspectRatio)
+                with contextlib.suppress(Exception):
+                    self._pix_item.setOffset(0, 0)
+                with contextlib.suppress(Exception):
+                    center_scene_pt = self._pix_item.mapToScene(self._pix_item.boundingRect().center())
+                    self._view.centerOn(center_scene_pt)
+            except Exception:
+                _logger.debug("_deferred_fit_center_preview: error", exc_info=True)
+
+        with contextlib.suppress(Exception):
+            QTimer.singleShot(0, _deferred_fit_center_preview)
 
     def _on_cancel_preview(self) -> None:
         """Restore original image."""
@@ -531,9 +594,25 @@ class CropDialog(QDialog):
         self.preview_btn.setEnabled(True)
         self.cancel_btn.setVisible(False)
 
-        # Re-apply zoom
-        if self._zoom_mode == "fit":
-            self._view.fitInView(self._pix_item, Qt.AspectRatioMode.KeepAspectRatio)
+        # Re-apply zoom and center the pixmap (deferred so pixmap update is settled)
+        def _deferred_fit_center_restore() -> None:
+            try:
+                # Make scene match the pixmap bounds to simplify centering
+                with contextlib.suppress(Exception):
+                    self._scene.setSceneRect(self._pix_item.boundingRect())
+                    self._pix_item.setPos(0, 0)
+                if self._zoom_mode == "fit":
+                    self._view.fitInView(self._pix_item, Qt.AspectRatioMode.KeepAspectRatio)
+                with contextlib.suppress(Exception):
+                    self._pix_item.setOffset(0, 0)
+                with contextlib.suppress(Exception):
+                    center_scene_pt = self._pix_item.mapToScene(self._pix_item.boundingRect().center())
+                    self._view.centerOn(center_scene_pt)
+            except Exception:
+                _logger.debug("_deferred_fit_center_restore: error", exc_info=True)
+
+        with contextlib.suppress(Exception):
+            QTimer.singleShot(0, _deferred_fit_center_restore)
 
     def _on_save(self) -> None:
         """Save cropped image."""
@@ -569,8 +648,46 @@ class CropDialog(QDialog):
             return (self._crop_rect, self._saved_path)
         return None
 
-    def keyPressEvent(self, event: QKeyEvent) -> None:
+    def wheelEvent(self, event) -> None:
+        """Handle mouse wheel for zoom in/out with 25% multiplication ratio.
+
+        - Scroll up: 1.25x zoom in
+        - Scroll down: 0.8x zoom out
+        Zoom is applied to the view/scene scale directly.
+        """
+        try:
+            if self._view is None or self._pix_item.pixmap().isNull():
+                return
+
+            angle = event.angleDelta().y()
+            if angle == 0:
+                return
+
+            # Calculate zoom factor: 25% increment (1.25x or 0.8x)
+            factor = 1.25 if angle > 0 else 0.8
+
+            # Get current scale from view
+            transform = self._view.transform()
+            current_scale = transform.m11()  # Extract horizontal scale
+            new_scale = current_scale * factor
+
+            # Apply limits to prevent extreme zoom
+            min_scale = 0.1
+            max_scale = 10.0
+            new_scale = max(min_scale, min(new_scale, max_scale))
+
+            # Apply the new scale to the view
+            self._view.resetTransform()
+            self._view.scale(new_scale, new_scale)
+
+            event.accept()
+        except Exception as ex:
+            _logger.debug("wheelEvent error: %s", ex)
+            event.ignore()
+
+    def keyPressEvent(self, arg__1: QKeyEvent) -> None:  # type: ignore
         """Handle ESC and Enter keys."""
+        event = arg__1
         if event.key() == Qt.Key.Key_Escape:
             if self._preview_mode:
                 # ESC in preview mode: restore original
