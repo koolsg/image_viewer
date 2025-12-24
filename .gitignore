@@ -20,6 +20,5 @@ image_viewer\settings.json
 swiftview*.db
 /tools
 /.githooks
-sessions.md
 debug.log
 image-view_session.log
