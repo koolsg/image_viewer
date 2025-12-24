@@ -1,3 +1,52 @@
+## 2025-12-25
+
+### Add mouse wheel zoom to crop dialog with 25% multiplication ratio
+**Files:** image_viewer/crop/ui_crop.py
+**What:** Implemented wheelEvent() method in CropDialog to enable interactive zoom on the crop canvas:
+- Scroll up: 1.25x zoom in
+- Scroll down: 0.8x zoom out
+- Zoom applied directly via `QGraphicsView.scale()` transform
+- Scale clamped to 0.1–10.0 range to prevent extreme zoom levels
+- Proper event handling: `event.accept()` on success, `event.ignore()` on error
+- Robust exception handling with debug logging
+- No conflicts with existing SelectionRectItem mouse handling (SelectionRectItem only accepts LeftButton, doesn't override wheelEvent)
+**Analysis:** Confirmed SelectionRectItem handles only left-mouse events; wheelEvent bubbles up to CropDialog without interference
+**Checks:** Ruff: pass; Pyright: 0 errors; Tests: 36 passed
+
+### Center previewed image in crop dialog (fix left-aligned preview)
+**Files:** image_viewer/crop/ui_crop.py
+**What:** Fixed an issue where the cropped preview shown after pressing Preview was left-aligned in the view. The preview (and restored original) are now centered by resetting the pixmap offset and calling `QGraphicsView.centerOn()` after `fitInView`.
+- Reset item offset via `self._pix_item.setOffset(0, 0)` (safe, suppressed exceptions)
+- Call `self._view.centerOn(self._pix_item)` to center the pixmap in the viewport
+- Added defensive `contextlib.suppress` blocks and debug logging around the fit/center steps
+**Checks:** Ruff: pass; Pyright: 0 errors; Tests: 36 passed
+
+### Route hover debug to overlay; suppress console debug output
+**Files:** image_viewer/crop/ui_crop_selection.py
+**What:** Prevent hover debug messages (e.g., "hoverMoveEvent called: pos=... last_hit=...") from being emitted to the console. Instead, when the crop dialog debug overlay is enabled, hover info is shown in the dialog's bottom-left overlay via `DebugOverlay.show_message()` and not through `logger.debug()`.
+- Replaced the console `_logger.debug(...)` call in `SelectionRectItem.hoverMoveEvent` with an overlay-only message when available
+- Ensured message forwarding is guarded and exceptions are suppressed to avoid noisy console output
+**Checks:** Ruff: pass; Pyright: 0 errors; Tests: 36 passed
+
+### Move debug overlay to left panel + show mouse position & cursor-exit
+**Files:** image_viewer/crop/ui_crop.py, image_viewer/crop/ui_crop_debug_overlay.py, image_viewer/crop/ui_crop_selection.py
+**What:** Moved the debug overlay from the canvas viewport to the **left panel bottom-left** and added messages showing mouse coordinates and cursor state. The `_CropCursorResetFilter` now forwards mouse coordinates and cursor names to the overlay on hover/move events and displays a `cursor=exit` message when the cursor leaves the selection area. Overlay repositioning now watches the left panel resize events.
+**Checks:** Ruff: pass (lint warnings from older code unchanged); Pyright: 0 errors; Tests: 36 passed
+
+### Debug overlay: table layout, fixed rows, left column always visible
+**Files:** image_viewer/crop/ui_crop_debug_overlay.py, image_viewer/crop/ui_crop_selection.py, image_viewer/crop/ui_crop.py, tests/test_debug_overlay_table.py, tests/test_preview_centering.py, tests/test_cursor_behavior.py
+**What:** Improved the debug overlay to use a fixed set of rows and a two-column layout:
+- Fixed row keys (in order): `mouse`, `hit`, `cursor`, `handler`, `info` (left column) — these labels are always shown
+- Right column displays the corresponding values; if a value is missing/empty the right cell is left blank
+- If none of the rows contain any value, the overlay hides itself to avoid showing an empty box
+- Callers now pass structured dicts (e.g., `{"mouse": "x,y", "hit": "MOVE", "cursor": "OpenHandCursor"}`)
+**Checks:** Ruff: pass; Pyright: 0 errors; Tests: 38 passed
+
+### Document dummy hover usage in cursor tests & guard super() call
+**Files:** tests/test_cursor_behavior.py, image_viewer/crop/ui_crop_selection.py
+**What:** Added a concise comment in `tests/test_cursor_behavior.py` explaining why a lightweight hover helper is used instead of `QGraphicsSceneHoverEvent` (forwarding full Qt events can trigger internal C++/Python type checks that raise TypeError in tests). Also added a guard in `SelectionRectItem.hoverMoveEvent` to only call `super().hoverMoveEvent(event)` when `event` is a real `QGraphicsSceneHoverEvent`, preventing TypeError when tests pass simple dummies.
+**Checks:** Ruff: pass; Pyright: 0 errors; Tests: 36 passed
+
 ## 2025-12-22
 
 ### Logging refactor: Move cursor/coordinate debug output to overlay
