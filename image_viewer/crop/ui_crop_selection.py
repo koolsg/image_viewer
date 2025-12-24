@@ -6,6 +6,19 @@ from PySide6.QtCore import QLineF, QPointF, QRectF, Qt, QTimer
 from PySide6.QtGui import QBrush, QColor, QCursor, QPainter, QPen
 from PySide6.QtWidgets import QGraphicsPixmapItem, QGraphicsRectItem, QGraphicsView
 
+# Optional import for type guarding when forwarding real Qt hover events
+try:
+    from PySide6.QtWidgets import QGraphicsSceneHoverEvent
+except Exception:
+    QGraphicsSceneHoverEvent = None
+
+# Optional import for cursor/overlay helpers
+try:
+    from .crop_selection_debug import cursor_name, overlay_message
+except Exception:
+    cursor_name = None
+    overlay_message = None
+
 from image_viewer.logger import get_logger
 
 _logger = get_logger("ui_crop")
@@ -133,8 +146,14 @@ class SelectionRectItem(QGraphicsRectItem):
                     # Display only on overlay, not console
                     with contextlib.suppress(Exception):
                         ov = getattr(self._selection, "_debug_overlay", None)
+                        debug_requested = getattr(self._selection, "_debug_overlay_requested", False)
+                        msg = {"handler": f"h{self._index}", "mouse": f"{round(parent_x)},{round(parent_y)}"}
                         if ov is not None:
-                            ov.show_message(f"h{self._index}: x={round(parent_x)} y={round(parent_y)}")
+                            ov.show_message(msg)
+                        elif not debug_requested:
+                            _logger.debug("Handle mouseMove: %s", msg)
+                        # else: debug was requested and overlay missing -> prefer silent (overlay-only mode)
+
                 except Exception:
                     pass
 
@@ -370,7 +389,15 @@ class SelectionRectItem(QGraphicsRectItem):
                 line2 = f"cursor={c} handler={handler_name} (x={round(parent_x)} y={round(parent_y)})"
             else:
                 line2 = f"cursor={c} handler={handler_name}"
-            ov.show_message(line1 + "\n" + line2)
+            with contextlib.suppress(Exception):
+                ov = getattr(self, "_debug_overlay", None)
+                debug_requested = getattr(self, "_debug_overlay_requested", False)
+                if ov is not None:
+                    ov.show_message(line1 + "\n" + line2)
+                elif not debug_requested:
+                    _logger.debug("%s %s", line1, line2)
+                # else: debug requested and overlay missing -> silent
+
         except Exception:
             pass
 
@@ -384,8 +411,13 @@ class SelectionRectItem(QGraphicsRectItem):
 
             try:
                 ov = getattr(self, "_debug_overlay", None)
+                debug_requested = getattr(self, "_debug_overlay_requested", False)
                 if ov is not None:
                     ov.show_message(f"hover: hit={self._hit_name(new_hit)}")
+                elif not debug_requested:
+                    _logger.debug("hit=%s", self._hit_name(new_hit))
+                # else: debug requested and overlay missing -> silent
+
             except Exception:
                 pass
 
@@ -483,8 +515,29 @@ class SelectionRectItem(QGraphicsRectItem):
     def hoverMoveEvent(self, event) -> None:  # type: ignore
         try:
             pos = event.pos()
-            _logger.debug("hoverMoveEvent called: pos=%s last_hit=%s", pos, getattr(self, "_last_hit", None))
+            # Compute hit early so we can show structured overlay info
             hit = self.hit_test(pos)
+
+            # Send hover info to the debug overlay when present (structured table)
+            with contextlib.suppress(Exception):
+                ov = getattr(self, "_debug_overlay", None)
+                if ov is not None:
+                    try:
+                        cur_shape = self.cursor().shape() if hasattr(self, "cursor") else None
+                        cur_name = cursor_name(cur_shape) if callable(cursor_name) else str(cur_shape)
+                    except Exception:
+                        cur_name = ""
+                    msg = {
+                        "mouse": f"{int(pos.x())},{int(pos.y())}",
+                        "hit": self._hit_name(hit) if getattr(self, "_hit_name", None) else str(hit),
+                        "cursor": cur_name,
+                    }
+                    debug_requested = getattr(self, "_debug_overlay_requested", False)
+                    if ov is not None:
+                        ov.show_message(msg)
+                    elif not debug_requested:
+                        _logger.debug("hover: %s", msg)
+                    # else: debug requested and overlay missing -> silent
 
             cursor_map = {
                 self.TOP_LEFT: Qt.CursorShape.SizeFDiagCursor,
@@ -509,7 +562,16 @@ class SelectionRectItem(QGraphicsRectItem):
         except Exception:
             pass  # Silent handling; overlay shows state
         finally:
-            super().hoverMoveEvent(event)
+            # Only call the Qt base implementation if we were passed a real
+            # QGraphicsSceneHoverEvent; tests sometimes pass lightweight
+            # dummies that implement pos(), which should not be forwarded to
+            # the Qt C++ method (it will raise TypeError).
+            try:
+                if QGraphicsSceneHoverEvent is not None and isinstance(event, QGraphicsSceneHoverEvent):
+                    super().hoverMoveEvent(event)
+            except Exception:
+                # Avoid any exception bubbling from type checks or imports
+                pass
 
     def hoverLeaveEvent(self, event) -> None:  # type: ignore
         try:
