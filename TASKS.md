@@ -23,6 +23,10 @@
   - 목표: "Save Rotated" 버튼 추가
   - 파일: file_operations.py
 
+- [ ] Fix scroll/transform state inconsistency when switching HQ prescale/normal path in Fit mode
+  - 문제: View transform/scroll offsets become inconsistent when switching decoding path (HQ prescale vs normal), causing misaligned selection/view.
+  - 파일: `ui_canvas.py`, `image_viewer/image_engine/decoder.py`, `image_viewer/image_engine/strategy.py`
+
 
 ## 📋 Medium Priority (곧 할 것)
 
@@ -81,6 +85,20 @@
 
 
 
+### Decoding & Quality
+- [ ] HQ Downscale quality automation: Apply BICUBIC + GaussianBlur(0.4~0.6) for heavy downscaling (scale < 0.6), Lanczos otherwise
+  - 파일: `image_viewer/image_engine/decoder.py`, `image_viewer/image_engine/strategy.py`
+- [ ] HQ prescale debounce: Resample only once 150~250ms after resize ends
+  - 파일: `image_viewer/ui_canvas.py`, `image_viewer/image_engine/loader.py`
+- [ ] Save/restore HQ toggle/filter/blur/gamma-aware options in settings.json
+  - 파일: `image_viewer/settings_manager.py`, `image_viewer/ui_settings.py`
+- [ ] Make prefetch window size configurable (back/ahead)
+  - 파일: `image_viewer/image_engine/engine.py`, `image_viewer/main.py` (settings)
+- [ ] Introduce current frame priority processing (priority queue/epoch), ignore stale results
+  - 파일: `image_viewer/image_engine/loader.py`, `image_viewer/image_engine/engine.py`
+- [ ] Add cursor-based zoom/pan lock option during left-click temporary zoom
+  - 파일: `image_viewer/ui_canvas.py`, `image_viewer/crop/ui_crop.py`
+
 ## 🔮 Low Priority (나중에)
 
 ### [ ] LRU 캐시 메모리 제한 (현재 무제한)
@@ -106,6 +124,11 @@
 - [ ] Phase 3: 메타데이터 관리 분리 (우선순위: Low)
   - 로직이 단순하여 분리 효과 미미
   - 현재 코드로 충분히 관리 가능
+
+- [ ] HQ path: Add viewport alignment (1:1 placement) option and code separation
+  - 파일: `image_viewer/ui_canvas.py`, `image_viewer/image_engine/decoder.py`
+- [ ] Modularize loader/sliding window logic (maintain_decode_window → util)
+  - 파일: `image_viewer/image_engine/loader.py`, `image_viewer/image_engine/engine.py`
 
 **결론:** Phase 2 완료로 주요 리팩토링 목표 달성. 추가 분리는 실제 필요성 발생 시 진행.
 
