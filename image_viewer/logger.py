@@ -69,10 +69,13 @@ def setup_logger(level: int = logging.INFO, name: str = "image_viewer") -> loggi
 
         stream_handler.addFilter(_CategoryFilter())
 
-    # Optionally install a lightweight stderr wrapper to filter noisy 'FIXME qt_isinstance' lines
-    # Controlled by the IMAGE_VIEWER_FILTER_QT_FIXME env var so suppression is opt-in.
+    # Install a lightweight stderr wrapper to filter noisy 'FIXME qt_isinstance' lines
+    # Controlled by the IMAGE_VIEWER_FILTER_QT_FIXME env var; default is enabled so users are
+    # not spammed by known Qt/pybind11 warnings. Set env var to '0' or 'false' to opt-out.
     try:
-        enabled = os.getenv("IMAGE_VIEWER_FILTER_QT_FIXME", "").strip().lower() in ("1", "true", "yes")
+        env = os.getenv("IMAGE_VIEWER_FILTER_QT_FIXME")
+        enabled = True if env is None else env.strip().lower() in ("1", "true", "yes")
+
         if enabled and not getattr(sys.stderr, "_filtered_by_image_viewer", False):
             outfile = os.path.join(os.getcwd(), "debug.log.filtered")
 
