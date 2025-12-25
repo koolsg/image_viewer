@@ -33,10 +33,15 @@ def setup_logger(level: int = logging.INFO, name: str = "image_viewer") -> loggi
     # FileHandler for session logs; the application avoids writing a session log
     # file by default to respect environments where disk writes are undesired.
     stream_handler: logging.StreamHandler | None = None
+
+    def _unwrap_stream(s):
+        """Return the original stream if wrapped by our wrapper, else s."""
+        return getattr(s, "_orig", s)
+
     for h in list(logger.handlers):
         if isinstance(h, logging.StreamHandler):
             try:
-                if getattr(h, "stream", None) is sys.stderr:
+                if _unwrap_stream(getattr(h, "stream", None)) is _unwrap_stream(sys.stderr):
                     stream_handler = h
             except Exception:
                 continue
