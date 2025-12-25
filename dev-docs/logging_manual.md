@@ -68,3 +68,9 @@ Troubleshooting
   - Check if categories are missing in `--log-cats` (e.g., `main,loader`).
 - File saving not working
   - Output to standard error. Use `2>` redirection.
+
+Suppress noisy Qt/pybind warnings
+- The app suppresses recurring Qt/pybind-derived lines that contain `FIXME qt_isinstance` by default to avoid console spam.
+  - This suppression is enabled by default; suppressed lines are appended to `debug.log.filtered` in the current working directory for later inspection.
+  - To opt out and see the original lines on stderr, set `IMAGE_VIEWER_FILTER_QT_FIXME=0` (or `false`) before launching the app.
+  - The feature is controlled via the `IMAGE_VIEWER_FILTER_QT_FIXME` environment variable (unset = enabled, `0`/`false` = disabled).
