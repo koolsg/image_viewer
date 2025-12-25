@@ -131,7 +131,7 @@ class _CropCursorResetFilter(QObject):
         self._view = view
         self._selection = selection
 
-    def eventFilter(self, obj: QObject, event: QEvent) -> bool:  # type: ignore
+    def eventFilter(self, obj: QObject, event: QEvent) -> bool:  # type: ignore  # noqa: PLR0912
         try:
             et = event.type()
             if et == QEvent.Leave:
@@ -222,11 +222,19 @@ class CropDialog(QDialog):
         self._setup_graphics(original_pixmap)
         self._configure_view()
 
+        self._viewer = parent
+        self._engine = getattr(parent, "engine", None)
+        self._pending_image_path: str | None = None
+        self._nav_prev_btn: QPushButton | None = None
+        self._nav_next_btn: QPushButton | None = None
+
         self._setup_ui()
+        self._update_nav_buttons()
         self._apply_zoom_mode("fit")
 
         # Optionally enable the debug overlay when running in debug mode (env var or logger DEBUG)
         self._maybe_init_debug_overlay()
+        self._subscribe_to_engine_signals()
 
         self.show()
         _logger.info("Opened crop dialog for: %s", image_path)
@@ -245,14 +253,56 @@ class CropDialog(QDialog):
 
         # Create selection item and set internal view rect via helper
         pixmap_rect = self._pix_item.boundingRect()
-        initial_parent_rect = QRectF(
+        initial_parent_rect = self._compute_initial_parent_rect(pixmap_rect)
+        self._selection = SelectionRectItem(self._pix_item)
+        self._selection.set_parent_rect(initial_parent_rect)
+
+    def _compute_initial_parent_rect(self, pixmap_rect: QRectF) -> QRectF:
+        """Return a default centered parent rect for selection based on `pixmap_rect`."""
+        if pixmap_rect.width() <= 0 or pixmap_rect.height() <= 0:
+            return QRectF()
+        return QRectF(
             pixmap_rect.width() * 0.25,
             pixmap_rect.height() * 0.25,
             pixmap_rect.width() * 0.5,
             pixmap_rect.height() * 0.5,
         )
-        self._selection = SelectionRectItem(self._pix_item)
-        self._selection.set_parent_rect(initial_parent_rect)
+
+    def _set_view_pixmap(self, pixmap: QPixmap) -> None:
+        """Safely set the current pixmap on the scene and reset positioning."""
+        with contextlib.suppress(Exception):
+            self._pix_item.setPixmap(pixmap)
+            self._scene.setSceneRect(self._pix_item.boundingRect())
+            self._pix_item.setPos(0, 0)
+            self._pix_item.setOffset(0, 0)
+
+    def _fit_or_reset_and_center(self, deferred: bool = True) -> None:
+        """Apply zoom mode (fit or actual), center the view, optionally deferred via QTimer."""
+
+        def _do() -> None:
+            try:
+                with contextlib.suppress(Exception):
+                    self._scene.setSceneRect(self._pix_item.boundingRect())
+                    self._pix_item.setPos(0, 0)
+                if self._zoom_mode == "fit":
+                    with contextlib.suppress(Exception):
+                        self._view.fitInView(self._pix_item, Qt.AspectRatioMode.KeepAspectRatio)
+                else:
+                    with contextlib.suppress(Exception):
+                        self._view.resetTransform()
+                with contextlib.suppress(Exception):
+                    self._pix_item.setOffset(0, 0)
+                with contextlib.suppress(Exception):
+                    center_scene_pt = self._pix_item.mapToScene(self._pix_item.boundingRect().center())
+                    self._view.centerOn(center_scene_pt)
+            except Exception:
+                _logger.debug("_fit_or_reset_and_center: error", exc_info=True)
+
+        if deferred:
+            with contextlib.suppress(Exception):
+                QTimer.singleShot(0, _do)
+        else:
+            _do()
 
     def _configure_view(self) -> None:
         self._view.setDragMode(QGraphicsView.DragMode.NoDrag)
@@ -444,6 +494,25 @@ class CropDialog(QDialog):
         layout.addWidget(close_btn)
 
         layout.addStretch()
+
+        nav_layout = QHBoxLayout()
+        nav_layout.setContentsMargins(0, 0, 0, 0)
+        nav_layout.setSpacing(6)
+
+        prev_btn = QPushButton("<")
+        prev_btn.setToolTip("Load previous image")
+        prev_btn.clicked.connect(self._on_prev_image)
+        nav_layout.addWidget(prev_btn)
+
+        next_btn = QPushButton(">")
+        next_btn.setToolTip("Load next image")
+        next_btn.clicked.connect(self._on_next_image)
+        nav_layout.addWidget(next_btn)
+
+        self._nav_prev_btn = prev_btn
+        self._nav_next_btn = next_btn
+
+        layout.addLayout(nav_layout)
         return panel
 
     def showEvent(self, event) -> None:  # type: ignore
@@ -521,6 +590,124 @@ class CropDialog(QDialog):
             self.actual_btn.setChecked(True)
             self._view.resetTransform()
 
+    def _reset_selection_for_current_pixmap(self) -> None:
+        pixmap_rect = self._pix_item.boundingRect()
+        if pixmap_rect.width() <= 0 or pixmap_rect.height() <= 0:
+            return
+        parent_rect = self._compute_initial_parent_rect(pixmap_rect)
+        self._selection.set_parent_rect(parent_rect)
+
+    def _refresh_view_after_pixmap_update(self) -> None:
+        # Defer to centralized helper which handles fit/reset, centering and safety
+        self._fit_or_reset_and_center(deferred=True)
+
+    def _update_nav_buttons(self) -> None:
+        prev_btn = getattr(self, "_nav_prev_btn", None)
+        next_btn = getattr(self, "_nav_next_btn", None)
+        if prev_btn is None or next_btn is None:
+            return
+
+        viewer = getattr(self, "_viewer", None)
+        image_files = getattr(viewer, "image_files", None) if viewer is not None else None
+        if not viewer or not image_files:
+            prev_btn.setEnabled(False)
+            next_btn.setEnabled(False)
+            return
+
+        current_index = getattr(viewer, "current_index", -1)
+        total = len(image_files)
+        prev_btn.setEnabled(current_index > 0)
+        next_btn.setEnabled(current_index < total - 1)
+
+    def _reset_preview_state(self) -> None:
+        self._preview_mode = False
+        with contextlib.suppress(Exception):
+            self.preview_btn.setVisible(True)
+            self.preview_btn.setEnabled(True)
+            self.cancel_btn.setVisible(False)
+
+    def _on_prev_image(self) -> None:
+        self._navigate_to_adjacent(-1)
+
+    def _on_next_image(self) -> None:
+        self._navigate_to_adjacent(1)
+
+    def _navigate_to_adjacent(self, delta: int) -> None:
+        viewer = getattr(self, "_viewer", None)
+        if viewer is None:
+            return
+        image_files = getattr(viewer, "image_files", None)
+        if not image_files:
+            return
+
+        target_index = viewer.current_index + delta
+        if target_index < 0 or target_index >= len(image_files):
+            return
+
+        target_path = image_files[target_index]
+
+        # IMPORTANT: set pending path BEFORE invoking navigation.
+        # - If the engine emits signals synchronously, we won't miss them.
+        # - If the navigation ends up being ignored (e.g., current image still loading),
+        #   we clear the pending marker below.
+        self._pending_image_path = target_path
+
+        nav_method = viewer.prev_image if delta < 0 else viewer.next_image
+        nav_method()
+
+        if getattr(viewer, "current_index", None) != target_index:
+            self._pending_image_path = None
+            return
+
+        # If the viewer hit its own pixmap cache, it will update itself without
+        # going through engine.image_ready. In that case, we must refresh our
+        # dialog from the engine cache immediately.
+        engine = getattr(self, "_engine", None)
+        if engine is not None:
+            with contextlib.suppress(Exception):
+                cached = engine.get_cached_pixmap(target_path)
+                if cached is not None and not cached.isNull():
+                    self._set_dialog_pixmap(target_path, cached)
+                    return
+
+        self._reset_preview_state()
+        self._update_nav_buttons()
+
+    def _on_engine_image_ready(self, path: str, pixmap: QPixmap, error: object) -> None:
+        if path != getattr(self, "_pending_image_path", None):
+            return
+        if error is not None:
+            self._pending_image_path = None
+            return
+        if pixmap is None or pixmap.isNull():
+            self._pending_image_path = None
+            return
+        self._set_dialog_pixmap(path, pixmap)
+
+    def _set_dialog_pixmap(self, path: str, pixmap: QPixmap) -> None:
+        if not path or pixmap.isNull():
+            return
+        self._image_path = path
+        self._original_pixmap = pixmap
+        with contextlib.suppress(Exception):
+            self.setWindowTitle(str(path))
+        # Safely set pixmap and reset positioning using helper
+        self._set_view_pixmap(pixmap)
+        self._selection.setVisible(True)
+        self._reset_selection_for_current_pixmap()
+        # Defer fit/center to match previous semantics
+        self._refresh_view_after_pixmap_update()
+        self._reset_preview_state()
+        self._pending_image_path = None
+        self._update_nav_buttons()
+
+    def _subscribe_to_engine_signals(self) -> None:
+        engine = getattr(self, "_engine", None)
+        if engine is None:
+            return
+        with contextlib.suppress(Exception):
+            engine.image_ready.connect(self._on_engine_image_ready)
+
     def _apply_preset(self, ratio: tuple[int, int]) -> None:
         """Apply aspect ratio preset to selection."""
         _logger.info("Applying preset ratio: %s", ratio)
@@ -562,24 +749,7 @@ class CropDialog(QDialog):
         _logger.info("Preview mode enabled")
 
         # Re-apply zoom and center the pixmap (deferred so pixmap update is settled)
-        def _deferred_fit_center_preview() -> None:
-            try:
-                # Make scene match the pixmap bounds to simplify centering
-                with contextlib.suppress(Exception):
-                    self._scene.setSceneRect(self._pix_item.boundingRect())
-                    self._pix_item.setPos(0, 0)
-                if self._zoom_mode == "fit":
-                    self._view.fitInView(self._pix_item, Qt.AspectRatioMode.KeepAspectRatio)
-                with contextlib.suppress(Exception):
-                    self._pix_item.setOffset(0, 0)
-                with contextlib.suppress(Exception):
-                    center_scene_pt = self._pix_item.mapToScene(self._pix_item.boundingRect().center())
-                    self._view.centerOn(center_scene_pt)
-            except Exception:
-                _logger.debug("_deferred_fit_center_preview: error", exc_info=True)
-
-        with contextlib.suppress(Exception):
-            QTimer.singleShot(0, _deferred_fit_center_preview)
+        self._fit_or_reset_and_center(deferred=True)
 
     def _on_cancel_preview(self) -> None:
         """Restore original image."""
@@ -588,31 +758,10 @@ class CropDialog(QDialog):
         self._selection.setVisible(True)
 
         # Update UI state
-        self._preview_mode = False
-        # Restore preview button visibility and enabled state
-        self.preview_btn.setVisible(True)
-        self.preview_btn.setEnabled(True)
-        self.cancel_btn.setVisible(False)
+        self._reset_preview_state()
 
         # Re-apply zoom and center the pixmap (deferred so pixmap update is settled)
-        def _deferred_fit_center_restore() -> None:
-            try:
-                # Make scene match the pixmap bounds to simplify centering
-                with contextlib.suppress(Exception):
-                    self._scene.setSceneRect(self._pix_item.boundingRect())
-                    self._pix_item.setPos(0, 0)
-                if self._zoom_mode == "fit":
-                    self._view.fitInView(self._pix_item, Qt.AspectRatioMode.KeepAspectRatio)
-                with contextlib.suppress(Exception):
-                    self._pix_item.setOffset(0, 0)
-                with contextlib.suppress(Exception):
-                    center_scene_pt = self._pix_item.mapToScene(self._pix_item.boundingRect().center())
-                    self._view.centerOn(center_scene_pt)
-            except Exception:
-                _logger.debug("_deferred_fit_center_restore: error", exc_info=True)
-
-        with contextlib.suppress(Exception):
-            QTimer.singleShot(0, _deferred_fit_center_restore)
+        self._fit_or_reset_and_center(deferred=True)
 
     def _on_save(self) -> None:
         """Save cropped image."""
