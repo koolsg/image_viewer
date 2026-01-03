@@ -62,9 +62,9 @@ _logger.debug("ui_crop module loaded")
 class PresetDialog(QDialog):
     """Dialog for adding custom aspect ratio presets."""
 
-    def __init__(self, parent: QWidget | None = None):
+    def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Add Crop Preset")
+        self.setWindowTitle("Configure Crop Preset")
         self.setModal(True)
 
         self.preset_data: dict[str, list[int]] | None = None
@@ -105,7 +105,7 @@ class PresetDialog(QDialog):
 
     def _on_ok(self) -> None:
         """Validate and accept dialog."""
-        name = self.name_input.text().strip()
+        name: str = self.name_input.text().strip()
         if not name:
             QMessageBox.warning(self, "Invalid Input", "Please enter a preset name")
             return
@@ -202,6 +202,23 @@ class _CropCursorResetFilter(QObject):
                 if cur is self._selection:
                     return True
                 cur = cur.parentItem()
+        except Exception:
+            return False
+        return False
+
+
+class _CropWheelEventFilter(QObject):
+    """Forward viewport wheel events to the dialog's wheel handler."""
+
+    def __init__(self, dialog: CropDialog):
+        super().__init__(dialog)
+        self._dialog = dialog
+
+    def eventFilter(self, obj: QObject, event: QEvent) -> bool:  # type: ignore
+        try:
+            if event.type() == QEvent.Type.Wheel:
+                self._dialog.wheelEvent(event)
+                return True
         except Exception:
             return False
         return False
@@ -322,6 +339,11 @@ class CropDialog(QDialog):
         with contextlib.suppress(Exception):
             self._view.setAttribute(Qt.WidgetAttribute.WA_Hover, True)
             self._view.viewport().setAttribute(Qt.WidgetAttribute.WA_Hover, True)
+
+        # Forward wheel events from the viewport to the dialog so zoom is reliable.
+        with contextlib.suppress(Exception):
+            self._wheel_filter = _CropWheelEventFilter(self)
+            self._view.viewport().installEventFilter(self._wheel_filter)
 
         # Cursor authority safety net: ensure the viewport cursor is restored when the mouse is
         # no longer over the selection/handles (covers cases where hoverLeave isn't delivered).
@@ -452,9 +474,9 @@ class CropDialog(QDialog):
         scroll.setWidget(preset_widget)
         layout.addWidget(scroll)
 
-        # Add preset button
-        add_preset_btn = QPushButton("Add Preset...")
-        add_preset_btn.clicked.connect(self._on_add_preset)
+        # Configure preset button
+        add_preset_btn = QPushButton("Configure Preset")
+        add_preset_btn.clicked.connect(self._on_configure_presets)
         layout.addWidget(add_preset_btn)
 
         layout.addStretch()
@@ -801,7 +823,7 @@ class CropDialog(QDialog):
         """Handle mouse wheel for zoom in/out with 25% multiplication ratio.
 
         - Scroll up: 1.25x zoom in
-        - Scroll down: 0.8x zoom out
+        - Scroll down: 0.75x zoom out
         Zoom is applied to the view/scene scale directly.
         """
         try:
@@ -812,8 +834,8 @@ class CropDialog(QDialog):
             if angle == 0:
                 return
 
-            # Calculate zoom factor: 25% increment (1.25x or 0.8x)
-            factor = 1.25 if angle > 0 else 0.8
+            # Calculate zoom factor: 25% increment (1.25x or 0.75x)
+            factor = 1.25 if angle > 0 else 0.75
 
             # Get current scale from view
             transform = self._view.transform()
