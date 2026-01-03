@@ -44,7 +44,7 @@ Dialog and widgets:
 - **Left Panel (QVBoxLayout):**
   - Zoom toggle buttons: "Fit to Window" / "1:1" (controls QGraphicsView transform)
   - QScrollArea with preset buttons (from SettingsManager)
-  - "Add Preset" button → opens PresetDialog
+  - "Configure Preset" button → opens PresetDialog
 
 - **Right/Bottom Panel:**
   - "Preview" button (always visible) → shows cropped region only
