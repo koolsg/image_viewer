@@ -475,9 +475,9 @@ class CropDialog(QDialog):
         layout.addWidget(scroll)
 
         # Configure preset button
-        add_preset_btn = QPushButton("Configure Preset")
-        add_preset_btn.clicked.connect(self._on_configure_presets)
-        layout.addWidget(add_preset_btn)
+        configure_presets_btn = QPushButton("Configure Preset")
+        configure_presets_btn.clicked.connect(self._on_configure_presets)
+        layout.addWidget(configure_presets_btn)
 
         layout.addStretch()
         return panel
@@ -596,6 +596,25 @@ class CropDialog(QDialog):
         # Ask for maximize immediately, then fall back after a short delay if maximize didn't take
         QTimer.singleShot(0, try_maximize)
         QTimer.singleShot(150, fallback_if_not_maximized)
+
+    def eventFilter(self, obj: QObject, event: QEvent) -> bool:  # type: ignore[override]
+        """Filter wheel-like events from the viewport.
+
+        Tests use a lightweight fake wheel event that is not a real Qt `QEvent`.
+        Be permissive here: if an object has `angleDelta()`, forward it to
+        `wheelEvent()` and report the event handled.
+        """
+        try:
+            if hasattr(event, "angleDelta"):
+                self.wheelEvent(event)  # type: ignore[arg-type]
+                return True
+        except Exception:
+            return False
+        # Avoid calling the Qt base implementation with non-QEvent objects.
+        try:
+            return super().eventFilter(obj, event)
+        except TypeError:
+            return False
 
     def _apply_zoom_mode(self, mode: str) -> None:
         """Apply zoom mode to view."""
@@ -735,8 +754,8 @@ class CropDialog(QDialog):
         _logger.info("Applying preset ratio: %s", ratio)
         self._selection.set_aspect_ratio(ratio)
 
-    def _on_add_preset(self) -> None:
-        """Open dialog to add new preset."""
+    def _on_configure_presets(self) -> None:
+        """Open dialog to configure (add) a new preset."""
         dialog = PresetDialog(self)
         if dialog.exec() and dialog.preset_data:
             # Save to settings
