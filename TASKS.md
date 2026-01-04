@@ -27,6 +27,35 @@
   - 문제: View transform/scroll offsets become inconsistent when switching decoding path (HQ prescale vs normal), causing misaligned selection/view.
   - 파일: `ui_canvas.py`, `image_viewer/image_engine/decoder.py`, `image_viewer/image_engine/strategy.py`
 
+### QML Migration — Viewer POC (High Priority)
+- [ ] QML Viewer POC skeleton (T-QLM-01)
+  - 목표: `ViewerPage.qml`을 `QMainWindow` 중앙에 embed 하고 `AppController` bridge를 추가하여 QML에서 이미지를 표시할 수 있음을 검증.
+  - 완료 기준: QML Viewer가 이미지 표시, fit/actual, wheel zoom, drag pan의 기본 동작이 작동.
+  - 작업 파일: `image_viewer/main.py`, `image_viewer/qml/ViewerPage.qml`, `image_viewer/qml_bridge.py`
+
+- [ ] QML ImageProvider & engine integration (T-QLM-02)
+  - 구현: `QQuickImageProvider` 또는 QObject bridge를 통해 엔진 캐시/디코더와 연동. preview decode 요청 및 generation id로 stale discard 보장.
+  - 테스트: generation discard 단위 테스트 추가.
+  - 작업 파일: `image_viewer/image_engine/engine.py`, `image_viewer/qml_bridge.py`
+
+- [ ] Fullscreen behavior validation & fix (T-QLM-03)
+  - 구현: embed → detached `QQuickView` 전환 로직(윈도우 전용 fullscreen 처리 검증).
+  - 테스트: Windows에서 풀스크린 전환 시 깜박임/플리커/크래시 없는지 확인.
+  - 작업 파일: `image_viewer/main.py`, `image_viewer/qml/ViewerPage.qml`
+
+- [ ] Metrics & instrumentation (T-QLM-04)
+  - 구현: decode time, cache hit/miss, frame upload latency 측정 및 로그/메트릭 노출.
+  - 작업 파일: `image_viewer/image_engine/metrics.py`, `image_viewer/qml_bridge.py`
+
+- [ ] Refine flow & stale result handling (T-QLM-05)
+  - 구현: preview → refine 프레임 교체, stale generation 무시, LRU frame cache 상한 적용.
+  - 테스트: 빠른 전환 상황에서 오래된 프레임이 표시되지 않음.
+  - 작업 파일: `image_viewer/image_engine/loader.py`, `viewer/ViewerItem`(예정)
+
+- [ ] Acceptance tests & docs (T-QLM-06)
+  - 통합 테스트(프리뷰 요청 → QML에서 이미지 수신), 풀스크린 시나리오, 메모리 회귀 테스트
+  - 문서: `dev-docs/QML/QML_migration_for_view.md` 작성 및 업데이트.
+
 
 ## 📋 Medium Priority (곧 할 것)
 
