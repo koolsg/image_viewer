@@ -16,6 +16,7 @@ import time
 from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 from PySide6.QtCore import (
@@ -34,9 +35,17 @@ from image_viewer.logger import get_logger
 from image_viewer.path_utils import abs_dir, abs_dir_str, db_key
 
 from .db.thumbdb_bytes_adapter import ThumbDBBytesAdapter
-from .decoder import decode_image, get_image_dimensions
+from .decoder import encode_image_to_png, get_image_dimensions
 from .fs_db_worker import FSDBLoadWorker
 from .loader import Loader
+
+# Optional dependency: pyvips may not be available in all environments; keep a
+# top-level reference so imports are resolved at module import time and linters
+# can reason about the name.
+try:
+    import pyvips  # type: ignore
+except Exception:
+    pyvips = None  # type: ignore
 
 _logger = get_logger("engine_core")
 
@@ -131,7 +140,9 @@ class EngineCore(QObject):
         self._missing_thumb_timer.setInterval(0)
         self._missing_thumb_timer.timeout.connect(self._pump_missing_thumb_queue)
 
-        self._thumb_loader = Loader(decode_image)
+        # Thumbnails are encoded directly to PNG bytes by the loader to avoid
+        # materializing intermediate numpy arrays and extra copies.
+        self._thumb_loader = Loader(encode_image_to_png)
         self._thumb_loader.image_decoded.connect(self._on_thumb_decoded)
         _logger.debug("EngineCore initialized in thread")
 
@@ -570,26 +581,32 @@ class EngineCore(QObject):
                 self.error.emit("thumb_decode", f"{path}: {error}")
                 return
 
-            # Convert numpy RGB array -> QImage (thread-safe) -> PNG bytes.
-            arr = np.asarray(image_data)
-            if arr.ndim != _RGB_DIMS or arr.shape[2] != _RGB_CHANNELS:
-                self.error.emit("thumb_decode", f"unexpected array shape for {path}: {arr.shape}")
-                return
+            # Loader returns PNG bytes directly (preferred) to avoid extra copies.
+            png_bytes: bytes | None = None
+            if isinstance(image_data, (bytes, bytearray, memoryview)):
+                png_bytes = bytes(image_data)
+            else:
+                # If we receive a numpy array, attempt to encode it — but this is
+                # considered a secondary path and will produce an error if encoding
+                # fails. The loader should be using `encode_image_to_png` instead.
+                arr = np.asarray(image_data)
+                if arr.ndim != _RGB_DIMS or arr.shape[2] != _RGB_CHANNELS:
+                    self.error.emit("thumb_decode", f"unexpected array shape for {path}: {arr}")
+                    return
 
-            h, w, _c = arr.shape
-            # Ensure contiguous bytes
-            rgb = np.ascontiguousarray(arr, dtype=np.uint8)
-            bytes_per_line = int(_RGB_CHANNELS * _BYTES_PER_CHANNEL * w)
-            qimg = QImage(rgb.data, w, h, bytes_per_line, QImage.Format.Format_RGB888).copy()
+                h, w, _ = arr.shape
+                # Ensure contiguous bytes
+                rgb = np.ascontiguousarray(arr, dtype=np.uint8)
 
-            png_bytes = self._qimage_to_png_bytes(qimg)
-            if not png_bytes:
-                with contextlib.suppress(Exception):
-                    self.error.emit(
-                        "thumb_encode",
-                        f"failed to encode png for {path} (thumb={w}x{h} fmt={qimg.format()})",
-                    )
-                return
+                try:
+                    png_bytes = self._numpy_to_png_bytes_vips(rgb)
+                except Exception as e:  # pragma: no cover - surface vips failures as thumb_encode errors
+                    self.error.emit("thumb_encode", f"pyvips failed to encode png for {path}: {e}")
+                    return
+
+                if not png_bytes:
+                    self.error.emit("thumb_encode", f"pyvips produced empty png for {path} (thumb={w}x{h})")
+                    return
 
             # Stat for meta.
             try:
@@ -675,3 +692,37 @@ class EngineCore(QObject):
             return bytes(arr.data())
         except Exception:
             return b""
+
+    @staticmethod
+    def _numpy_to_png_bytes_vips(rgb: np.ndarray) -> bytes:
+        """Encode an RGB numpy array to PNG bytes using pyvips.
+
+        This method prefers pyvips for direct encoding from memory to avoid the
+        `QImage -> QImageWriter` round-trip. It requires `pyvips` to be available
+        in the environment and raises on failure so callers can decide how to
+        handle the error (we intentionally do not fall back to QImage here).
+        """
+        # Require pyvips to be available; we intentionally do not fall back to
+        # QImage encoding here (caller will handle error reporting).
+        if pyvips is None:
+            raise RuntimeError("pyvips is not available in this environment")
+
+        if rgb.ndim != _RGB_DIMS or rgb.shape[2] != _RGB_CHANNELS:
+            raise ValueError("expected RGB numpy array with shape (h, w, 3)")
+
+        h, w, _ = rgb.shape
+        if rgb.dtype != np.uint8:
+            rgb = rgb.astype(np.uint8)
+
+        # pyvips expects a contiguous bytes buffer in C order
+        buf = rgb.tobytes()
+        img: Any = pyvips.Image.new_from_memory(buf, w, h, _RGB_CHANNELS, "uchar")
+        # Ensure interpretation is sRGB for consistent PNGs; ignore if not supported
+        with contextlib.suppress(Exception):
+            img = img.copy(interpretation="srgb")
+
+        out = img.write_to_buffer(".png")
+        # Normalize to bytes in case pyvips returns a memoryview-like object
+        if isinstance(out, bytes):
+            return out
+        return bytes(out)

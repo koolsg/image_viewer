@@ -126,3 +126,53 @@ def decode_image(
     except Exception as e:
         _logger.debug("decode failed: %s", e)
         return file_path, None, str(e)
+
+
+def encode_image_to_png(
+    file_path: str, target_width: int | None = None, target_height: int | None = None, size: str = "both"
+) -> tuple[str, object | None, str | None]:
+    """Encode image from file path directly to PNG bytes using pyvips.
+
+    Returns (path, png_bytes|None, error|None).
+    """
+    try:
+        pyvips = _get_pyvips_module()
+        # Configure pyvips caches to avoid memory growth
+        with contextlib.suppress(Exception):
+            pyvips.cache_set_max(0)
+            pyvips.cache_set_max_mem(0)
+            pyvips.cache_set_max_files(0)
+
+        # Use thumbnail when a target size is requested to avoid full-file decode
+        if (target_width and target_width > 0) or (target_height and target_height > 0):
+            tw = int(target_width or 0)
+            th = int(target_height or 0)
+            if tw > 0 and th > 0:
+                image = pyvips.Image.thumbnail(file_path, tw, height=th, size=size)
+            elif tw > 0:
+                image = pyvips.Image.thumbnail(file_path, tw, size=size)
+            else:
+                image = pyvips.Image.new_from_file(file_path, access="sequential")
+        else:
+            image = pyvips.Image.new_from_file(file_path, access="sequential")
+
+        with contextlib.suppress(Exception):
+            image = image.copy_memory()
+        with contextlib.suppress(Exception):
+            image = image.colourspace("srgb")
+        if image.hasalpha():
+            image = image.flatten(background=[0, 0, 0])
+        if image.bands > RGB_CHANNELS:
+            image = image.extract_band(0, RGB_CHANNELS)
+        elif image.bands < RGB_CHANNELS:
+            image = pyvips.Image.bandjoin([image] * RGB_CHANNELS)
+        if image.format != "uchar":
+            image = image.cast("uchar")
+
+        out = image.write_to_buffer(".png")
+        if isinstance(out, bytes):
+            return file_path, out, None
+        return file_path, bytes(out), None
+    except Exception as e:
+        _logger.debug("encode to png failed: %s", e)
+        return file_path, None, str(e)
