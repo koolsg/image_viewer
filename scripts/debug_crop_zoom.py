@@ -1,5 +1,6 @@
 """Debug script to test crop dialog pointer-centered zoom."""
 
+import logging
 import sys
 from pathlib import Path
 
@@ -24,8 +25,6 @@ def debug_crop_zoom():
     dialog = CropDialog(None, "test_image.jpg", test_image)
 
     # Set up debug logging to see what happens during wheel events
-    import logging
-
     logging.basicConfig(level=logging.DEBUG)
 
     # Override the _handle_wheel_event to add debug output
@@ -66,5 +65,4 @@ def debug_crop_zoom():
 
 
 if __name__ == "__main__":
-
     debug_crop_zoom()
