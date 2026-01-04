@@ -218,14 +218,6 @@ class ThumbnailGridWidget(QWidget):
 
         _logger.debug("ThumbnailGridWidget initialized (stacked list/tree)")
 
-    # Compatibility hooks -------------------------------------------------------
-    def set_loader(self, loader) -> None:
-        try:
-            _logger.debug("set_loader called: loader=%s has_signal=%s", loader, hasattr(loader, "image_decoded"))
-            self._model.set_loader(loader)
-        except Exception as exc:
-            _logger.debug("set_loader failed: %s", exc)
-
     def resume_pending_thumbnails(self) -> None:
         return
 

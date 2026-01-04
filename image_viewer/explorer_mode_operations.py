@@ -61,14 +61,6 @@ def _setup_view_mode(viewer) -> None:
             viewer.explorer_state._saved_maximized = viewer.isMaximized()
             _logger.debug("saved explorer window state: maximized=%s", viewer.explorer_state._saved_maximized)
 
-        # Disconnect Explorer Grid loader (to prevent UI load after jump)
-        try:
-            grid = getattr(viewer.explorer_state, "_explorer_grid", None)
-            if grid is not None:
-                grid.set_loader(None)
-        except Exception:
-            pass
-
         current_widget = viewer.centralWidget()
 
         # Check if we're using the stacked widget architecture
