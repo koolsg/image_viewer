@@ -3,7 +3,7 @@
 This package provides the core data and processing functionality:
 - File system management (engine-thread folder scanning + Qt watcher)
 - Image decoding (decoder, loader)
-- Caching (cache, thumbnail_cache)
+- Caching (pixmap cache + thumbnail DB adapter)
 - Decoding strategies (strategy)
 
 Usage:
