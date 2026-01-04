@@ -13,6 +13,7 @@ from __future__ import annotations
 import contextlib
 import os
 import time
+from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -27,7 +28,7 @@ from PySide6.QtCore import (
     QTimer,
     Signal,
 )
-from PySide6.QtGui import QImage
+from PySide6.QtGui import QImage, QImageWriter
 
 from image_viewer.logger import get_logger
 from image_viewer.path_utils import abs_dir, abs_dir_str, db_key
@@ -96,6 +97,12 @@ class EngineCore(QObject):
         # repeatedly while the previous result is being finalized/propagated.
         self._thumb_done: dict[str, tuple[int, int, int, int]] = {}
 
+        # Missing/outdated thumbnails can be numerous (esp. when DB is empty).
+        # We queue them and request thumbnails in small batches to avoid a decode storm.
+        self._missing_thumb_queue: deque[str] = deque()
+        self._missing_thumb_seen: set[str] = set()
+        self._missing_thumb_timer: QTimer | None = None
+
         # Watcher suppression + change detection.
         # QFileSystemWatcher will fire when we update the thumbnail DB in the folder.
         # Keep a short suppression window for self-induced writes, and only refresh
@@ -119,6 +126,11 @@ class EngineCore(QObject):
         self._refresh_timer.setInterval(200)
         self._refresh_timer.timeout.connect(self._refresh_current_folder)
 
+        self._missing_thumb_timer = QTimer(self)
+        self._missing_thumb_timer.setSingleShot(True)
+        self._missing_thumb_timer.setInterval(0)
+        self._missing_thumb_timer.timeout.connect(self._pump_missing_thumb_queue)
+
         self._thumb_loader = Loader(decode_image)
         self._thumb_loader.image_decoded.connect(self._on_thumb_decoded)
         _logger.debug("EngineCore initialized in thread")
@@ -128,6 +140,10 @@ class EngineCore(QObject):
         with contextlib.suppress(Exception):
             if self._refresh_timer is not None:
                 self._refresh_timer.stop()
+
+        with contextlib.suppress(Exception):
+            if self._missing_thumb_timer is not None:
+                self._missing_thumb_timer.stop()
 
         with contextlib.suppress(Exception):
             if self._watcher is not None:
@@ -148,6 +164,8 @@ class EngineCore(QObject):
                 self._db.close()
         self._thumb_pending.clear()
         self._thumb_done.clear()
+        self._missing_thumb_queue.clear()
+        self._missing_thumb_seen.clear()
 
     # ---- configuration --------------------------------------------
     def set_thumb_size(self, width: int, height: int) -> None:
@@ -181,6 +199,11 @@ class EngineCore(QObject):
         self._current_folder = folder_abs
         self._thumb_pending.clear()
         self._thumb_done.clear()
+        self._missing_thumb_queue.clear()
+        self._missing_thumb_seen.clear()
+        with contextlib.suppress(Exception):
+            if self._missing_thumb_timer is not None:
+                self._missing_thumb_timer.stop()
         self._last_dir_sig = None
         self._db_was_created = False
 
@@ -230,7 +253,7 @@ class EngineCore(QObject):
                     with contextlib.suppress(Exception):
                         self.request_thumbnail(img_path)
             else:
-                self._start_db_loader(folder_abs)
+                self._start_db_loader(folder_abs, image_count=len(image_paths))
         except Exception as exc:
             self.error.emit("db_init", str(exc))
 
@@ -391,10 +414,23 @@ class EngineCore(QObject):
             self._db = ThumbDBBytesAdapter(db_path)
             self._db_was_created = not exists_before
 
-    def _start_db_loader(self, folder_abs: str) -> None:
+    def _start_db_loader(self, folder_abs: str, *, image_count: int | None = None) -> None:
         self._stop_db_loader()
         if self._db is None:
             return
+
+        # If the DB exists but contains no thumbnails yet, the preload worker will
+        # report everything as missing. For small folders we can just generate all
+        # thumbnails up-front so the grid isn't sparsely populated.
+        # For large folders we cap this to avoid a decode storm.
+        prefetch_limit = 48
+        if image_count is not None:
+            try:
+                n = int(image_count)
+            except Exception:
+                n = 0
+            if n > 0:
+                prefetch_limit = min(n, 256)
 
         self._db_generation += 1
         generation = self._db_generation
@@ -402,12 +438,12 @@ class EngineCore(QObject):
         worker = FSDBLoadWorker(
             folder_path=folder_abs,
             db_path=str(Path(folder_abs) / "SwiftView_thumbs.db"),
-            db_operator=self._db._db_operator,
+            db_operator=self._db.operator,
             use_operator_for_reads=True,
             thumb_width=self._thumb_size[0],
             thumb_height=self._thumb_size[1],
             generation=generation,
-            prefetch_limit=48,
+            prefetch_limit=prefetch_limit,
             chunk_size=800,
         )
         thread = QThread(self)
@@ -487,14 +523,43 @@ class EngineCore(QObject):
         except Exception:
             sample = []
         _logger.debug("db preload missing_paths: count=%d sample=%s", len(paths), sample)
+
+        # Queue and throttle so we can eventually generate all thumbs.
         for path in paths:
             try:
-                # FSDBLoadWorker returns normalized paths.
+                # FSDBLoadWorker returns canonical db_key() paths (forward slashes).
+                # Convert to a local filesystem path before handing off to the decoder.
                 p = str(Path(path))
-                if Path(p).suffix.lower() in _IMAGE_EXTS:
-                    self.request_thumbnail(p)
+                if Path(p).suffix.lower() not in _IMAGE_EXTS:
+                    continue
+                key = db_key(p)
+                if key in self._missing_thumb_seen:
+                    continue
+                self._missing_thumb_seen.add(key)
+                self._missing_thumb_queue.append(p)
             except Exception:
                 continue
+
+        with contextlib.suppress(Exception):
+            if self._missing_thumb_timer is not None and not self._missing_thumb_timer.isActive():
+                self._missing_thumb_timer.start()
+
+    def _pump_missing_thumb_queue(self) -> None:
+        """Drain missing thumbnail queue in small batches."""
+        # Keep this conservative; the Loader has its own concurrency, but the queue
+        # can be huge and we don't want to enqueue everything immediately.
+        batch = 8
+        for _ in range(batch):
+            try:
+                p = self._missing_thumb_queue.popleft()
+            except IndexError:
+                break
+            with contextlib.suppress(Exception):
+                self.request_thumbnail(p)
+
+        with contextlib.suppress(Exception):
+            if self._missing_thumb_queue and self._missing_thumb_timer is not None:
+                self._missing_thumb_timer.start()
 
     # ---- thumbnail generation --------------------------------------
     def _on_thumb_decoded(self, path: str, image_data, error) -> None:
@@ -519,7 +584,11 @@ class EngineCore(QObject):
 
             png_bytes = self._qimage_to_png_bytes(qimg)
             if not png_bytes:
-                self.error.emit("thumb_encode", f"failed to encode png for {path}")
+                with contextlib.suppress(Exception):
+                    self.error.emit(
+                        "thumb_encode",
+                        f"failed to encode png for {path} (thumb={w}x{h} fmt={qimg.format()})",
+                    )
                 return
 
             # Stat for meta.
@@ -581,10 +650,25 @@ class EngineCore(QObject):
     @staticmethod
     def _qimage_to_png_bytes(qimg: QImage) -> bytes:
         try:
+            if qimg.isNull():
+                return b""
+
+            # Encode from a 32-bit format to avoid edge cases with 24-bit scanlines
+            # (e.g., odd widths / non-4-byte aligned bytesPerLine) and to keep the PNG
+            # writer path consistent.
+            try:
+                img = qimg.convertToFormat(QImage.Format.Format_ARGB32)
+            except Exception:
+                img = qimg
+
             arr = QByteArray()
             buf = QBuffer(arr)
             buf.open(QIODevice.OpenModeFlag.WriteOnly)
-            ok = qimg.save(buf, b"PNG")
+
+            writer = QImageWriter(buf, b"png")
+            writer.setQuality(100)
+            ok = writer.write(img)
+
             buf.close()
             if not ok:
                 return b""

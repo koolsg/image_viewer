@@ -73,9 +73,14 @@ class FSDBLoadWorker(QObject):
             folder = abs_dir(self._folder_path)
             if not folder.is_dir() or not Path(self._db_path).exists():
                 # fallback: emit missing for current dir
-                paths: list[str] = [db_key(p) for p in folder.iterdir() if p.is_file()][: self._prefetch_limit]
+                paths: list[str] = [db_key(p) for p in folder.iterdir() if p.is_file()]
                 if paths:
-                    self.missing_paths.emit(paths)
+                    # Emit in chunks so the receiver can throttle generation.
+                    step = max(1, self._prefetch_limit)
+                    for i in range(0, len(paths), step):
+                        if self._stopped:
+                            break
+                        self.missing_paths.emit(paths[i : i + step])
                 self.finished.emit(self._generation)
                 return
 
@@ -98,7 +103,13 @@ class FSDBLoadWorker(QObject):
                     continue
 
             if not paths_with_stats:
-                self.missing_paths.emit([p for (p, _m, _s) in paths_with_stats[: self._prefetch_limit]])
+                paths = [p for (p, _m, _s) in paths_with_stats]
+                if paths:
+                    step = max(1, self._prefetch_limit)
+                    for i in range(0, len(paths), step):
+                        if self._stopped:
+                            break
+                        self.missing_paths.emit(paths[i : i + step])
                 self.finished.emit(self._generation)
                 return
 
@@ -194,7 +205,7 @@ class FSDBLoadWorker(QObject):
                     self.progress.emit(processed, total)
 
             missing = [p for (p, _m, _s) in paths_with_stats if p not in have_thumb]
-            emit_count = min(len(missing), self._prefetch_limit)
+            emit_count = len(missing)
             _logger.debug(
                 "FSDBLoadWorker missing/outdated: total_missing=%d have_thumb=%d emit=%d limit=%d",
                 len(missing),
@@ -203,7 +214,11 @@ class FSDBLoadWorker(QObject):
                 self._prefetch_limit,
             )
             if missing:
-                self.missing_paths.emit(missing[: self._prefetch_limit])
+                step = max(1, self._prefetch_limit)
+                for i in range(0, len(missing), step):
+                    if self._stopped:
+                        break
+                    self.missing_paths.emit(missing[i : i + step])
             elapsed = time.time() - start_ts
             _logger.debug("FSDBLoadWorker finished: processed=%d total=%d elapsed=%.3fs", processed, total, elapsed)
             with suppress(Exception):
