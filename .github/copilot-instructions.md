@@ -2,8 +2,8 @@
 
 All Copilot behavior and rules are defined in the following file:
 
-./.agents.md
+@../AGENTS.md
 
 This file is the single source of truth.
-If there is any conflict between this file and .agents.md,
-the instructions in .agents.md MUST be followed.
+If there is any conflict between this file and AGENTS.md,
+the instructions in AGENTS.md MUST be followed.
