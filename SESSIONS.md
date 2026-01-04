@@ -1,3 +1,35 @@
+## 2026-01-04
+
+### Strict thumbnail DB schema + remove legacy compatibility
+**Files:** image_viewer/image_engine/db/thumbdb_bytes_adapter.py, image_viewer/image_engine/db/thumbdb_core.py, image_viewer/image_engine/thumbnail_cache.py, image_viewer/image_engine/db/__init__.py, image_viewer/image_engine/__init__.py, image_viewer/image_engine/fs_db_worker.py, image_viewer/crop/ui_crop.py
+**What:**
+- Centralized the thumbnail DB schema into a single spec and generated SQL via f-strings (including column types/constraints).
+- Enforced strict schema validation; when the on-disk schema/version mismatches, the thumbnails table is dropped and recreated (no migrations/compat).
+- Removed legacy `ThumbDB`/`ThumbDBOperatorAdapter` and legacy `ThumbnailCache` implementation code (modules now fail fast if imported).
+- Unified crop preset UI so “Configure Preset” is the single entry point (removed the separate “add preset” path).
+**Checks:** Ruff: pass; Pyright: 0 errors; Tests: 55 passed, 7 skipped
+
+### Fix EngineCore ThumbDBBytesAdapter operator access
+**Files:** image_viewer/image_engine/engine_core.py, tests/test_enginecore_db_operator_wiring.py
+**What:** Fixed DB preload startup to use `ThumbDBBytesAdapter.operator` (public API) instead of referencing a non-existent private `_db_operator` attribute.
+**Checks:** Ruff: pass; Pyright: 0 errors; Tests: 56 passed
+
+### Harden EngineCore thumbnail PNG encoding
+**Files:** image_viewer/image_engine/engine_core.py, tests/test_enginecore_png_encode.py
+**What:** Made thumbnail PNG encoding more robust by converting to ARGB32 and encoding via `QImageWriter`; added a regression test for odd-width RGB888 thumbnails.
+**Checks:** Ruff: pass; Pyright: 0 errors; Tests: 57 passed
+
+### Explorer: avoid sparse thumbnail grid on empty DB
+**Files:** image_viewer/image_engine/engine_core.py
+**What:** Make DB preload `prefetch_limit` dynamic (min(image_count, 256)) so small folders queue thumbnail generation for all missing images instead of only the first 48.
+**Checks:** Ruff: pass; Pyright: 0 errors; Tests: 57 passed
+
+### Explorer: generate all missing thumbnails (throttled)
+**Files:** image_viewer/image_engine/fs_db_worker.py, image_viewer/image_engine/engine_core.py
+**What:** FSDB worker now emits *all* missing/outdated thumbnail paths in chunks; EngineCore queues them and requests thumbnail decodes in small batches via a timer so the grid eventually fills completely without a decode storm.
+**Checks:** Ruff: pass; Pyright: 0 errors; Tests: 57 passed
+
+
 ## 2025-12-25
 
 ### Add mouse wheel zoom to crop dialog with 25% multiplication ratio
