@@ -159,9 +159,10 @@ class ExplorerTableModel(QAbstractTableModel):
                         self._thumb_icons[key] = icon
                         return icon
 
-                # Request lazy generation.
-                with contextlib.suppress(Exception):
-                    self._engine.request_thumbnail(entry.path)
+                # IMPORTANT: Do not trigger decoding from paint/DecorationRole.
+                # Thumbnail generation is driven by the engine-core FS/DB worker
+                # which compares (path + size + mtime + thumb dims) and only
+                # requests decodes for missing/outdated entries.
 
             # Fallback: OS icon
             with contextlib.suppress(Exception):
