@@ -11,7 +11,7 @@ from image_viewer.logger import get_logger
 from image_viewer.path_utils import abs_dir, db_key
 
 from .db.db_operator import DbOperator
-from .db.thumbdb_core import ThumbDB, ThumbDBOperatorAdapter
+from .db.thumbdb_bytes_adapter import ThumbDBBytesAdapter
 from .meta_utils import to_mtime_ms_from_stat as _to_mtime_ms_from_stat
 
 _logger = get_logger("fs_db_worker")
@@ -39,7 +39,6 @@ class FSDBLoadWorker(QObject):
         folder_path: str = "",
         db_path: str = "",
         db_operator: DbOperator | None = None,
-        use_operator_for_reads: bool = True,
         **kwargs,
     ) -> None:
         parent = kwargs.get("parent")
@@ -53,7 +52,6 @@ class FSDBLoadWorker(QObject):
         self._chunk_size = int(kwargs.get("chunk_size", 800))
         self._stopped = False
         self._db_operator = db_operator
-        self._use_operator_for_reads = bool(use_operator_for_reads)
 
     def configure(self, **kwargs) -> None:
         """구성 옵션 설정(예: chunk_size, whitelist 등)."""
@@ -81,10 +79,7 @@ class FSDBLoadWorker(QObject):
                 self.finished.emit(self._generation)
                 return
 
-            if self._use_operator_for_reads and self._db_operator is not None:
-                db = ThumbDBOperatorAdapter(self._db_operator, self._db_path)
-            else:
-                db = ThumbDB(self._db_path)
+            db = ThumbDBBytesAdapter(self._db_path, operator=self._db_operator)
             # Collect path stats
             paths_with_stats: list[tuple[str, int, int]] = []
             for p in folder.iterdir():
@@ -117,13 +112,15 @@ class FSDBLoadWorker(QObject):
                 self.progress.emit(0, total)
 
             have_thumb: set[str] = set()
-            # Use ThumbDB to query rows in chunks
+            # Use ThumbDBBytesAdapter (via ThumbDBBytesAdapter/ThumbDBOperator) to query rows in chunks
             for i in range(0, len(paths_with_stats), self._chunk_size):
                 if self._stopped:
                     self.finished.emit(self._generation)
                     return
                 chunk = paths_with_stats[i : i + self._chunk_size]
                 paths = [path for (path, _m, _s) in chunk]
+                # Fast lookup for current file stats using canonical DB keys.
+                cur_by_key: dict[str, tuple[int, int]] = {p: (mt, sz) for (p, mt, sz) in chunk}
                 rows = db.get_rows_for_paths(paths)
                 if not rows:
                     processed += len(chunk)
@@ -131,38 +128,80 @@ class FSDBLoadWorker(QObject):
                         self.progress.emit(processed, total)
                     continue
                 filtered: list[dict] = []
-                for path, thumbnail, w, h, db_mtime, db_size, *_ in rows:
-                    cur = next(((mt, sz) for (p, mt, sz) in chunk if p == path), None)
+                rows_total = 0
+                rows_matched = 0
+                rows_valid = 0
+                for path, thumbnail, w, h, db_mtime, db_size, db_tw, db_th, _created_at in rows:
+                    rows_total += 1
+                    # Rows are stored and queried using canonical db_key().
+                    key = str(path)
+
+                    cur = cur_by_key.get(key)
                     if cur is None:
                         continue
+                    rows_matched += 1
                     cur_mtime_ms, cur_size = cur
                     try:
                         if db_size is None or int(db_size) != int(cur_size):
                             continue
                         if db_mtime is None or int(db_mtime) != int(cur_mtime_ms):
                             continue
+                        # If DB stored thumbnail dimensions, ensure they match current target.
+                        # If they don't match, treat as invalid so the thumbnail gets regenerated.
+                        if db_tw is not None and int(db_tw) not in (0, self._thumb_width):
+                            continue
+                        if db_th is not None and int(db_th) not in (0, self._thumb_height):
+                            continue
                     except Exception:
                         continue
+                    rows_valid += 1
+
+                    thumb_present = False
+                    try:
+                        thumb_present = thumbnail is not None and len(thumbnail) > 0
+                    except Exception:
+                        thumb_present = False
+
                     filtered.append(
                         {
-                            "path": path,
+                            # Emit canonical path so downstream caches/keying are stable.
+                            "path": key,
                             "thumbnail": thumbnail,
                             "width": w,
                             "height": h,
                             "mtime": db_mtime,
                             "size": db_size,
+                            "thumb_width": db_tw,
+                            "thumb_height": db_th,
                         }
                     )
-                    if thumbnail is not None:
-                        have_thumb.add(path)
+                    # Only treat as "have thumbnail" if bytes are present and valid.
+                    # Otherwise, the core should regenerate it.
+                    if thumb_present:
+                        have_thumb.add(key)
                 if filtered:
                     self.chunk_loaded.emit(filtered)
+                _logger.debug(
+                    "FSDBLoadWorker chunk: paths=%d db_rows=%d matched=%d valid=%d",
+                    len(chunk),
+                    rows_total,
+                    rows_matched,
+                    rows_valid,
+                )
                 # update processed count and emit progress
                 processed += len(chunk)
                 with suppress(Exception):
                     self.progress.emit(processed, total)
 
             missing = [p for (p, _m, _s) in paths_with_stats if p not in have_thumb]
+            emit_count = min(len(missing), self._prefetch_limit)
+            _logger.debug(
+                "FSDBLoadWorker missing/outdated: total_missing=%d have_thumb=%d emit=%d limit=%d",
+                len(missing),
+                len(have_thumb),
+                emit_count,
+                self._prefetch_limit,
+            )
             if missing:
                 self.missing_paths.emit(missing[: self._prefetch_limit])
             elapsed = time.time() - start_ts
