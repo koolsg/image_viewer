@@ -413,6 +413,7 @@ class EngineCore(QObject):
         thread = QThread(self)
         worker.moveToThread(thread)
         thread.started.connect(worker.run)
+        worker.chunk_loaded.connect(self._on_db_chunk)
         worker.chunk_loaded.connect(self.thumb_db_chunk)
         worker.finished.connect(self.thumb_db_finished)
         worker.missing_paths.connect(self._on_db_missing_paths)
@@ -423,6 +424,49 @@ class EngineCore(QObject):
         self._db_loader_thread = thread
         self._db_loader_worker = worker
         thread.start()
+
+    def _on_db_chunk(self, rows: list[dict]) -> None:
+        """Update thumbnail-done cache from DB preload rows.
+
+        This lets `request_thumbnail()` short-circuit (mtime/size/target match)
+        even if the UI asks for thumbnails before the bytes are displayed.
+        """
+        try:
+            tw, th = self._thumb_size
+        except Exception:
+            tw, th = (256, 195)
+
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            path = row.get("path")
+            if not path:
+                continue
+            thumb = row.get("thumbnail")
+            try:
+                if thumb is None or len(thumb) == 0:
+                    continue
+            except Exception:
+                continue
+
+            try:
+                key = db_key(str(path))
+            except Exception:
+                continue
+
+            mtime = row.get("mtime")
+            size = row.get("size")
+            try:
+                mtime_ms = int(mtime) if mtime is not None else None
+                size_b = int(size) if size is not None else None
+            except Exception:
+                continue
+
+            if mtime_ms is None or size_b is None:
+                continue
+
+            # Record as done for current target size.
+            self._thumb_done[key] = (mtime_ms, size_b, int(tw), int(th))
 
     def _stop_db_loader(self) -> None:
         try:
@@ -438,6 +482,11 @@ class EngineCore(QObject):
             self._db_loader_thread = None
 
     def _on_db_missing_paths(self, paths: list[str]) -> None:
+        try:
+            sample = [str(p) for p in paths[:3]]
+        except Exception:
+            sample = []
+        _logger.debug("db preload missing_paths: count=%d sample=%s", len(paths), sample)
         for path in paths:
             try:
                 # FSDBLoadWorker returns normalized paths.
@@ -535,7 +584,7 @@ class EngineCore(QObject):
             arr = QByteArray()
             buf = QBuffer(arr)
             buf.open(QIODevice.OpenModeFlag.WriteOnly)
-            ok = qimg.save(buf, "PNG")
+            ok = qimg.save(buf, b"PNG")
             buf.close()
             if not ok:
                 return b""
