@@ -29,6 +29,7 @@ dev = [
     "pyside6-stubs>=6.7.3.0",
     "pytest>=9.0.2",
     "pytest-qt>=4.5.0",
+    "pytest-timeout>=2.1.0",
     "ruff>=0.14.4",
 ]
 
@@ -61,3 +62,6 @@ exclude = [".venv", ".cache", ".pytest_cache", ".ruff_cache", ".uv-cache", "**/b
 [tool.pytest.ini_options]
 markers = ["imaging: marks tests that require imaging libraries (pyvips/numpy)"]
 testpaths = ["tests"]
+# Default per-test timeout (seconds) provided by pytest-timeout plugin to avoid hung tests
+timeout = 60
+
