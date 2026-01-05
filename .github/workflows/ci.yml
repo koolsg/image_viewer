@@ -28,3 +28,76 @@ jobs:
 
       - name: Run pyright
         run: pyright
+
+  test:
+    name: Lint, QML, Tests (matrix)
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python-version: [3.11]
+    env:
+      QT_QPA_PLATFORM: offscreen
+      QT_QPA_FONTDIR: ${{ github.workspace }}/third_party/fonts
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+          pip install pyvips[binary] --prefer-binary || true
+
+      - name: Check bundled fonts
+        run: |
+          python - << 'PY'
+import pathlib, sys
+p = pathlib.Path('third_party/fonts')
+ttf = list(p.glob('*.ttf')) if p.is_dir() else []
+if not ttf:
+    print('Bundled fonts not found in third_party/fonts', file=sys.stderr)
+    sys.exit(1)
+print(f'Found {len(ttf)} bundled fonts')
+PY
+
+      - name: Lint: ruff (auto-fix)
+        run: python -m ruff check --fix .
+
+      - name: Type check: pyright
+        run: python -m pyright
+
+      - name: QML lint (auto-fix + verify)
+        shell: bash
+        run: |
+          python - << 'PY'
+import glob, subprocess, sys
+files = glob.glob('image_viewer/qml/*.qml')
+if not files:
+    print('No QML files found')
+    sys.exit(0)
+for f in files:
+    print('Linting QML:', f)
+    subprocess.check_call(['pyside6-qmllint', '-f', '--max-warnings=0', f])
+    subprocess.check_call(['pyside6-qmllint', '--max-warnings=0', '--json', '-', f])
+PY
+
+      - name: Ensure there are no uncommitted auto-fix changes
+        shell: bash
+        run: |
+          python - << 'PY'
+import subprocess, sys
+out = subprocess.run(["git", "status", "--porcelain"], capture_output=True, text=True)
+if out.stdout.strip():
+    print("Auto-fix changed files; please commit them:")
+    print(out.stdout)
+    sys.exit(1)
+print("No auto-fix changes")
+PY
+
+      - name: Run tests (offscreen, fail-fast)
+        run: python scripts/run_tests_offscreen.py
