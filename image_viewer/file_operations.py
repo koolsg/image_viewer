@@ -43,7 +43,6 @@ class DeleteConfirmationDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle(title)
         self.setModal(True)
-        # self.setMinimumWidth(500)
 
         # Main Layout
         layout = QVBoxLayout(self)
