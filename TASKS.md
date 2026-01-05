@@ -28,15 +28,17 @@
   - 파일: `ui_canvas.py`, `image_viewer/image_engine/decoder.py`, `image_viewer/image_engine/strategy.py`
 
 ### QML Migration — Viewer POC (High Priority)
-- [ ] QML Viewer POC skeleton (T-QLM-01)
+- [x] QML Viewer POC skeleton (T-QLM-01)
   - 목표: `ViewerPage.qml`을 `QMainWindow` 중앙에 embed 하고 `AppController` bridge를 추가하여 QML에서 이미지를 표시할 수 있음을 검증.
   - 완료 기준: QML Viewer가 이미지 표시, fit/actual, wheel zoom, drag pan의 기본 동작이 작동.
   - 작업 파일: `image_viewer/main.py`, `image_viewer/qml/ViewerPage.qml`, `image_viewer/qml_bridge.py`
 
-- [ ] QML ImageProvider & engine integration (T-QLM-02)
+
+- [x] QML ImageProvider & engine integration (T-QLM-02)
   - 구현: `QQuickImageProvider` 또는 QObject bridge를 통해 엔진 캐시/디코더와 연동. preview decode 요청 및 generation id로 stale discard 보장.
   - 테스트: generation discard 단위 테스트 추가.
   - 작업 파일: `image_viewer/image_engine/engine.py`, `image_viewer/qml_bridge.py`
+
 
 - [ ] Fullscreen behavior validation & fix (T-QLM-03)
   - 구현: embed → detached `QQuickView` 전환 로직(윈도우 전용 fullscreen 처리 검증).

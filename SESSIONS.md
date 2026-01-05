@@ -1,3 +1,51 @@
+## 2026-01-06
+
+### Fix: Avoid previous image flash when switching from Explorer → View (T-UI-03)
+**Files:** image_viewer/explorer_mode_operations.py
+**What:** When selecting an image in Explorer and switching to View mode, the QML view could briefly display the previously shown image before the newly-selected image finished loading. I added an early call to `viewer.app_controller.setCurrentPathSlot(normalized_path)` before switching the UI so the QML controller clears any previous image and starts loading the new one immediately, preventing the transient flash. The change is defensive (wrapped in try/except) to remain compatible with setups that do not use QML.
+**Checks:** Ruff: pass; Pyright: pass; Tests: 65 passed
+### Cleanup: remove leftover commented sizing lines
+**Files:** image_viewer/main.py, image_viewer/file_operations.py
+**What:** Removed obsolete commented-out UI sizing lines (`# self.resize(1024, 768)`, `# self.setMinimumWidth(500)`) that were left behind from earlier debugging. These were purely cosmetic/commented traces; no behavior change.
+**Checks:** Ruff: pass; Pyright: pass; Tests: 76 passed
+## 2026-01-05
+
+### QML Explorer plan update + QML grid model cleanup
+**Files:** dev-docs/QML/plan-qml-migration.md, image_viewer/qml_models.py
+**What:** Updated the QML migration plan to reflect the decided full QML shell direction and the Explorer priorities (thumbnail grid, metadata, context menu, shortcuts). Also refactored `QmlImageGridModel.data()` to remove a Ruff `PLR0912` “too many branches” violation by switching to a role->getter mapping.
+**Checks:** Ruff: pass; Pyright: pass; Tests: 76 passed
+
+### QML ImageProvider & engine integration (T-QLM-02)
+**Files:** image_viewer/qml_bridge.py, image_viewer/main.py, tests/test_qml_image_provider.py, tests/test_qml_bridge_integration.py
+**What:** Implemented a custom `QQuickImageProvider` to serve images from the engine cache directly to QML, replacing the inefficient base64 data URL approach.
+- Added `EngineImageProvider` in `qml_bridge.py` supporting `image://engine/{generation}/{path}` URL scheme.
+- Registered the provider in `ImageViewer` (main.py).
+- Updated `AppController` to emit `image://` URLs and improved path splitting logic with numeric generation validation.
+- Added path decoding (percent-encoding) in `EngineImageProvider` to handle special characters and spaces correctly.
+- Added unit tests for the image provider, including percent-encoded path resolution.
+**Checks:** Ruff: pass; Pyright: pass; Tests: 65 passed
+
+### QML Viewer POC skeleton (T-QLM-01)
+**Files:** image_viewer/qml_bridge.py, image_viewer/main.py, image_viewer/explorer_mode_operations.py, image_viewer/qml/ViewerPage.qml
+**What:** Implemented the initial QML Viewer POC.
+- Enhanced `AppController` in `qml_bridge.py` with properties (currentPath, zoom, fitMode) and generation tracking.
+- Embedded `QQuickView` into `ImageViewer` using `createWindowContainer`.
+- Connected `ImageEngine` signals to `AppController` for direct image push to QML via data URLs.
+- Updated `explorer_mode_operations.py` to be aware of the QML container during mode switching.
+- Created a functional `ViewerPage.qml` that displays images and handles stale results via generation IDs.
+**Checks:** Ruff: pass; Pyright: (manual check of imports); POC ready for manual verification.
+
+### Pyvips-first thumbnail encoding (no QImage fallback)
+
+**Files:** image_viewer/image_engine/engine_core.py, tests/test_enginecore_vips_thumb_encode.py
+**What:** Replaced thumbnail PNG encoding to use **pyvips** directly from decoded RGB numpy arrays (`_numpy_to_png_bytes_vips`), removing the QImage encoding fallback for thumbnails as requested. Added a unit test validating odd-width RGB encodes.
+**Checks:** Ruff: pass; Pyright: 0 errors; Tests: 58 passed
+
+### 문서화: 디코딩 아키텍처 한글 기술
+**Files:** dev-docs/architecture_description/deconding_architecture.md
+**What:** 전체 이미지 디코딩 및 썸네일 디코딩의 함수/스레드/프로세스 관점 아키텍처, 데이터 흐름, 성능 위험과 개선 방안을 한국어로 정리해 문서화함. 또한 왜 현재 아키텍처를 선택했는지(장점, 대안 및 선택하지 않은 이유)를 명시.
+**Checks:** 문서 추가 완료; 관련 코드 참조 확인
+
 ## 2026-01-04
 
 ### Strict thumbnail DB schema + remove legacy compatibility

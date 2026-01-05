@@ -1,53 +1,59 @@
-# Plan: QWidget → QML 전환 (요약)
+# Plan: QML Shell 전면 전환 (결정)
 
-목표: 현재 PySide6 QWidget/QGraphicsView 기반 UI를 QML( Qt Quick Controls )로 전환하는 실용적이고 안전한 로드맵을 제시합니다. 최대한 기존 엔진(디코드/캐시/DB)을 재사용하면서, 사용자 경험과 유지보수성을 개선하는 것이 핵심입니다.
-
----
-
-## 1) 핵심 요약 ✅
-- 권장 방식: **하이브리드(점진적 도입)** — 기존 `QMainWindow`는 유지하고, 화면 단위(먼저 Viewer)를 QML로 교체해 점진 마이그레이션.
-- 최종 옵션: 전면 QML Shell(모든 UI를 QML로 재작성) — 더 깔끔하나 위험/리소스·시간 비용 큼.
-- POC(우선): `Viewer`만 QML로 옮겨 **렌더 성능과 엔진 통합(이미지 제공)** 이슈를 먼저 검증.
+목표: 기존 QWidget UI는 더 이상 유지하지 않고, **사용자 조작 UI는 전부 QML**로 옮긴다.
+Python은 `AppController`(명령/상태) + `ImageEngine`(디코드/캐시/DB/스캔)만 담당한다.
 
 ---
 
-## 2) 왜 하이브리드가 좋은가
-- 엔진과 IO(썸네일 DB, multi-process decode)가 이미 잘 분리되어 있어 재사용 이점이 큼.
-- Crop 도구 및 Explorer 같은 복잡한 위젯을 즉시 포팅하기보다 안정성을 보장하며 단계적으로 교체 가능.
-- Windows fullscreen/렌더링 문제 같은 플랫폼별 버그를 단계적으로 검증 가능.
+## 1) 현재 결정/상태 ✅
+
+- **전면 QML Shell로 전환한다.** 과도기/하이브리드는 하지 않는다.
+- 엔트리포인트는 `QQmlApplicationEngine` 기반이며, QML의 `ApplicationWindow`가 메인 윈도우다.
+- 이미지 제공은 QML ImageProvider로 한다.
+   - full image: `image://engine/...` (엔진 pixmap cache)
+   - thumbnail: `image://thumb/...` (thumb DB PNG bytes)
 
 ---
 
-## 3) 세부 마이그레이션 단계 (하이브리드, 권장)
+## 2) 우선순위 (trim/crop은 나중)
 
-1. 준비: QML 호스트 도입
-   - `QQuickWidget` 또는 `QQuickView`를 중앙 위젯 대안으로 추가한다.
-   - `AppController`(QObject)로 핵심 명령/상태/시그널을 QML에 노출.
-
-2. POC: Viewer 페이지만 QML로 전환
-   - QML `ViewerPage.qml` + C++ `ViewerItem : QQuickItem`(권장) 또는 `Image` 기반으로 빠르게 구현.
-   - 기존 `DecodeService`와 `ImageEngine`에서 제공하는 이미지(또는 provider)를 QML에서 소비할 수 있도록 `QQuickImageProvider` 또는 `ImageProvider` 계층을 추가.
-
-3. Explorer(썸네일 그리드) 전환
-   - `FolderItemsModel(QAbstractListModel)`로 roles 정의(`thumbKey`, `fileName`, `dimensions` 등).
-   - `GridView`에서 delegate와 바인딩.
-
-4. Settings / Menus / Dialogs 전환
-   - 설정 창 등은 QML Dialogs 또는 기존 QWidget과 혼용.
-
-5. Crop 포팅(마지막)
-   - 고난이도: 핸들, 좌표계, press-zoom, preview 동작을 QML로 옮기기 전, 임시로 기존 `ui_crop.py` 다이얼로그를 QML에서 호출하는 하이브리드 유지 가능.
-
-6. 정리: 완전 전환하거나, 필요한 부분만 QML로 유지 후 QWidget 제거.
+1) Explorer: **썸네일 grid + 메타데이터 + 컨텍스트 메뉴 + 단축키 체계(QML)**
+2) Viewer: QML View가 Explorer와 자연스럽게 연동되고 키보드 네비가 일관적일 것
+3) 마지막: trim/crop 포팅
 
 ---
 
-## 4) 전면 QML Shell (대안)
-- `QQmlApplicationEngine` 기반으로 모든 UI를 QML로 재작성.
-- 장점: 깔끔한 상태 관리, 일관된 스타일, QML 장점(애니메이션, 레이아웃)
-- 단점: 많은 UI 재작성 비용, 복잡·위험이 큰 작업(특히 Crop/Explorer)
+## 3) Explorer(QML) 구현 스펙
 
-권장 시나리오: 하이브리드 진행 후 문제를 모두 확인한 뒤에 결정.
+### 3.1 Model (Python)
+- `QAbstractListModel` 기반(예: `QmlImageGridModel`)
+- 역할(roles) 예시:
+  - `path`, `name`, `sizeText`, `mtimeText`, `resolutionText`, `thumbUrl`
+- 데이터 소스는 `ImageEngine` 스냅샷 신호를 사용한다:
+  - `explorer_entries_changed(folder, entries)`
+  - `explorer_thumb_rows(rows)` / `explorer_thumb_generated(payload)`
+
+### 3.2 View (QML)
+- `GridView` + delegate 카드 UI
+- 우클릭 `Menu`:
+  - Open
+  - Copy path
+  - Reveal in Explorer
+
+### 3.3 Shortcuts (QML)
+- `Ctrl+O`: 폴더 열기
+- `Esc`: Viewer → Explorer
+- `Left/Right/Home/End`: Viewer에서 이미지 이동
+- `Ctrl+C`: 현재 path 복사
+
+---
+
+## 4) 검증 체크리스트
+
+- Explorer에서 썸네일이 DB preload/생성에 따라 점진적으로 채워진다.
+- Explorer에서 더블클릭(또는 Open) → Viewer로 진입하고 currentIndex/currentPath가 일치한다.
+- Viewer에서 키보드 네비(Left/Right/Home/End)와 Esc 종료가 안정적으로 동작한다.
+- 컨텍스트 메뉴 동작(복사/탐색기 열기)이 Windows에서 정상.
 
 ---
 
@@ -84,9 +90,9 @@
 
 ## 8) 권장 작업 순서(단계별, 단기 목표)
 1. Viewer POC(2주): Viewer QML 구현 + engine provider 연결
-2. Explorer model 준비(1–2주): QAbstractListModel 작성 및 QML grid 연결
-3. 썸네일 캐시/프리패치 확인(1–2주)
-4. Crop 하이브리드 유지(설계 1주) → QML 포팅(2–4주)
+2. Explorer model 준비(1-2주): QAbstractListModel 작성 및 QML grid 연결
+3. 썸네일 캐시/프리패치 확인(1-2주)
+4. Crop 하이브리드 유지(설계 1주) -> QML 포팅(2-4주)
 5. 완전 전환/정리
 
 ---
