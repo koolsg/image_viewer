@@ -16,7 +16,6 @@ from .file_operations import (
 )
 from .logger import get_logger
 from .path_utils import abs_dir, abs_dir_str, abs_path, abs_path_str
-from .ui_canvas import ImageCanvas
 
 _logger = get_logger("explorer_mode")
 
@@ -72,33 +71,19 @@ def _setup_view_mode(viewer) -> None:
             except Exception as e:
                 _logger.warning("failed to switch stacked widget page: %s", e)
         else:
-            # Fallback: manually set canvas as central widget
+            # Fallback: manually set viewer widget as central widget
             try:
-                # Verify canvas is valid
-                if viewer.canvas:
-                    viewer.canvas.parent()  # This will raise if C++ object deleted
-
-                    # Set canvas as central widget
-                    viewer.setCentralWidget(viewer.canvas)
-                    viewer.canvas.show()
-                    _logger.debug("switched to View Mode with existing canvas")
-            except RuntimeError as e:
-                # Canvas C++ object is deleted
-                _logger.warning("canvas C++ object is invalid: %s", e)
-                try:
-                    viewer.canvas = ImageCanvas(viewer)
-                    viewer.setCentralWidget(viewer.canvas)
-                    _logger.warning("canvas recreated and set as central widget")
-                except Exception as e2:
-                    _logger.error("failed to recreate canvas: %s", e2)
+                # Use QML container if available (POC), else fallback to legacy canvas
+                view_widget = getattr(viewer, "qml_container", getattr(viewer, "canvas", None))
+                if view_widget:
+                    viewer.setCentralWidget(view_widget)
+                    view_widget.show()
+                    _logger.debug(
+                        "switched to View Mode with %s",
+                        "QML" if view_widget == getattr(viewer, "qml_container", None) else "canvas",
+                    )
             except Exception as e:
-                _logger.warning("failed to set canvas as central widget: %s", e)
-                try:
-                    viewer.canvas = ImageCanvas(viewer)
-                    viewer.setCentralWidget(viewer.canvas)
-                    _logger.warning("canvas recreated and set as central widget")
-                except Exception as e2:
-                    _logger.error("failed to recreate canvas: %s", e2)
+                _logger.warning("failed to set view widget as central widget: %s", e)
 
     except Exception as e:
         _logger.error("failed to setup view mode: %s", e)
@@ -131,13 +116,14 @@ def _setup_explorer_mode(viewer) -> None:  # noqa: PLR0912, PLR0915
             _logger.debug("reusing existing stacked widget")
         else:
             stacked_widget = QStackedWidget()
-            if isinstance(current_widget, ImageCanvas):
+            view_widget = getattr(viewer, "qml_container", getattr(viewer, "canvas", None))
+            if current_widget == view_widget:
                 viewer.takeCentralWidget()
                 stacked_widget.addWidget(current_widget)
-            elif viewer.canvas:
-                stacked_widget.addWidget(viewer.canvas)
+            elif view_widget:
+                stacked_widget.addWidget(view_widget)
             viewer.setCentralWidget(stacked_widget)
-            _logger.debug("created stacked widget for mode switching")
+            _logger.debug("created stacked widget for mode switching (QML POC aware)")
 
         # If Page 1 already exists, reuse it (preserve grid/tree/thumbnail cache)
         if stacked_widget.count() > 1:
@@ -339,6 +325,14 @@ def _on_explorer_image_selected(viewer, image_path: str) -> None:  # noqa: PLR09
                 "explorer select[%s]: fallback single-item list; will rely on folder_changed to restore index",
                 trace_id,
             )
+
+        # Pre-clear QML controller to avoid showing previous image while UI swaps
+        try:
+            if hasattr(viewer, "app_controller") and viewer.app_controller is not None:
+                # Set the pending path early so QML can clear and start its own prefetch
+                viewer.app_controller.setCurrentPathSlot(normalized_path)
+        except Exception:
+            pass
 
         # Switch to View Mode and display the image
         if not viewer.explorer_state.view_mode:

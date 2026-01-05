@@ -4,9 +4,20 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import QEvent, Qt
+from PySide6.QtCore import QEvent, QObject, QStandardPaths, Qt, QUrl
 from PySide6.QtGui import QColor, QPixmap
-from PySide6.QtWidgets import QApplication, QColorDialog, QFileDialog, QInputDialog, QMainWindow
+from PySide6.QtQuick import QQuickView
+from PySide6.QtQuickWidgets import QQuickWidget
+from PySide6.QtWidgets import (
+    QApplication,
+    QColorDialog,
+    QDialog,
+    QFileDialog,
+    QInputDialog,
+    QMainWindow,
+    QVBoxLayout,
+    QWidget,
+)
 
 from image_viewer.busy_cursor import busy_cursor
 from image_viewer.explorer_mode_operations import open_folder_at, toggle_view_mode
@@ -14,6 +25,7 @@ from image_viewer.image_engine import ImageEngine
 from image_viewer.image_engine.strategy import DecodingStrategy, FastViewStrategy
 from image_viewer.logger import get_logger
 from image_viewer.path_utils import abs_dir_str, abs_path_str
+from image_viewer.qml_bridge import AppController, EngineImageProvider
 from image_viewer.settings_manager import SettingsManager
 from image_viewer.status_overlay import StatusOverlayBuilder
 from image_viewer.trim import start_trim_workflow
@@ -90,7 +102,6 @@ class ImageViewer(QMainWindow):
     def __init__(self):  # noqa: PLR0915
         super().__init__()
         self.setWindowTitle("Image Viewer")
-        # self.resize(1024, 768)
         _logger.debug("ImageViewer initialization started")
 
         self.view_state = ViewState()
@@ -102,6 +113,8 @@ class ImageViewer(QMainWindow):
         self.engine.image_ready.connect(self._on_engine_image_ready)
         self.engine.folder_changed.connect(self._on_engine_folder_changed)
         _logger.debug("ImageEngine connected")
+        # Provide a status builder early so image_ready handlers can safely use it
+        self._status_builder = StatusOverlayBuilder(self)
 
         self.image_files: list[str] = []  # Synced from engine
         self.current_index = -1
@@ -122,8 +135,362 @@ class ImageViewer(QMainWindow):
         self.decoding_strategy: DecodingStrategy = self.engine.get_decoding_strategy()
 
         self.canvas = ImageCanvas(self)
-        self.setCentralWidget(self.canvas)
 
+        # QML POC setup
+        self.app_controller = AppController(self.engine, self)
+        # Connect engine's image_ready to AppController for QML push
+        self.engine.image_ready.connect(self.app_controller.on_engine_image_ready)
+
+        # Use QQuickWidget (a QWidget) rather than QQuickView (a QWindow) so that
+        # ownership/destruction is tied to the main window. This avoids intermittent
+        # access violations at interpreter shutdown in the test environment.
+        self.quick_view = None
+        self.quick_widget = QQuickWidget()
+        self.quick_widget.setResizeMode(QQuickWidget.ResizeMode.SizeRootObjectToView)
+
+        # QML loads asynchronously; ensure we force focus only once the root object exists.
+        def _on_qml_status_changed(status) -> None:
+            try:
+                if status != QQuickWidget.Status.Ready:
+                    return
+                root = self.quick_widget.rootObject()
+                if root is None:
+                    return
+                # Wire the controller via an explicit root property to avoid
+                # relying on unqualified context properties in QML.
+                with contextlib.suppress(Exception):
+                    root.setProperty("appController", self.app_controller)
+                if hasattr(root, "forceActiveFocus"):
+                    root.forceActiveFocus()
+                elif hasattr(root, "setProperty"):
+                    root.setProperty("focus", True)
+            except Exception:
+                return
+
+        with contextlib.suppress(Exception):
+            self.quick_widget.statusChanged.connect(_on_qml_status_changed)
+            self._qml_status_handler = _on_qml_status_changed
+
+        # Register the custom image provider for "image://engine/..." URLs
+        # NOTE: Do NOT share a single provider instance across multiple engines.
+        self._qml_image_provider = EngineImageProvider(self.engine)
+        self.quick_widget.engine().addImageProvider("engine", self._qml_image_provider)
+
+        qml_path = _BASE_DIR / "qml" / "ViewerPage.qml"
+        self.quick_widget.setSource(QUrl.fromLocalFile(str(qml_path)))
+
+        # Preserve the public attribute used by explorer mode + tests.
+        self.qml_container = self.quick_widget
+        self.qml_container.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.qml_container.setMinimumSize(1, 1)
+
+        # Initially use the QML container for the POC
+        self.setCentralWidget(self.qml_container)
+
+        # In some environments (notably offscreen/headless test runs), QML Keys
+        # handlers may not reliably receive key events. Forward the keybindings
+        # on the container widget to the existing viewer actions.
+        self._install_qml_key_filter()
+
+        # Create status builder and menus so actions (e.g., fullscreen) exist for tests
+        self._status_builder = StatusOverlayBuilder(self)
+        build_menus(self)
+
+        # Initialize settings (path, manager, defaults)
+        self._initialize_settings()
+
+        # View window reference (for QML top-level view mode)
+        self._view_window = None
+        self._current_app = None
+
+        # Ensure settings exist early so startup code can read them
+        try:
+            self._initialize_settings()
+        except Exception as ex:
+            # Initialize fallback settings manager to avoid startup crashes
+            logger.error("_initialize_settings failed: %s", ex)
+
+            class _FallbackSettings:
+                def __init__(self):
+                    self.data = {}
+
+                def get(self, k, default=None):
+                    return default
+
+                @property
+                def fast_view_enabled(self):
+                    return False
+
+                def determine_startup_background(self):
+                    return "dark"
+
+            self._settings_path = abs_path_str(_BASE_DIR / "settings.json")
+            self._settings_manager = _FallbackSettings()
+            self._settings = self._settings_manager.data
+            self._bg_color = self._settings_manager.determine_startup_background()
+
+    def _initialize_settings(self) -> None:
+        """Initialize settings path, manager, and UI defaults.
+
+        This is safe to call multiple times; it will set up `_settings_manager`,
+        `_settings` and `_bg_color` and apply decoding strategy defaults.
+        """
+        try:
+            app_config = QStandardPaths.writableLocation(QStandardPaths.AppConfigLocation)
+            if app_config:
+                cfg_dir = Path(app_config) / "image_viewer"
+                os.makedirs(cfg_dir, exist_ok=True)
+                # Use project path normalization (OS-native absolute path)
+                self._settings_path = abs_path_str(cfg_dir / "settings.json")
+            else:
+                self._settings_path = abs_path_str(_BASE_DIR / "settings.json")
+        except Exception:
+            self._settings_path = abs_path_str(_BASE_DIR / "settings.json")
+
+        self._settings_manager = SettingsManager(self._settings_path)
+        self._settings: dict[str, Any] = self._settings_manager.data
+        self._bg_color = self._settings_manager.determine_startup_background()
+        _logger.debug("Settings loaded from: %s", self._settings_path)
+
+        # Apply decoding strategy preference from settings
+        try:
+            if self._settings_manager.fast_view_enabled:
+                self.decoding_strategy = self.engine.get_fast_strategy()
+            else:
+                self.decoding_strategy = self.engine.get_decoding_strategy()
+        except Exception:
+            # Keep whatever decoding strategy was previously set
+            pass
+
+    def open_view_window(self, start_path: str | None = None) -> None:
+        """Open an application-modal top-level window that hosts the QML Viewer."""
+        dlg = getattr(self, "_view_window", None)
+        if dlg is not None:
+            with contextlib.suppress(Exception):
+                dlg.raise_()
+                dlg.activateWindow()
+            return
+
+        qml_path = _BASE_DIR / "qml" / "ViewerPage.qml"
+
+        dlg, qwidget = self._create_view_dialog(qml_path)
+        self._install_view_key_filter(dlg)
+
+        # Mark as a separate top-level view so closing it does not alter
+        # the main window's saved/explorer state unexpectedly.
+        dlg._qml_widget = qwidget
+        dlg._is_separate_view = True
+        # Also keep a debug name for easier diagnostics
+        dlg._debug_name = "separate_view_dialog"
+        self._view_window = dlg
+        dlg.destroyed.connect(lambda _: setattr(self, "_view_window", None))
+
+        # Optionally set initial path
+        if start_path:
+            with contextlib.suppress(Exception):
+                self.app_controller.setCurrentPathSlot(start_path)
+
+    def _create_view_dialog(self, qml_path: Path):
+        """Create and show the view dialog and return (dialog, qml_container_widget).
+
+        NOTE: We intentionally use QQuickView + QWidget.createWindowContainer here
+        instead of QQuickWidget. QQuickWidget has proven prone to native crashes
+        (access violations) in the pytest offscreen environment on Windows when
+        created/destroyed repeatedly across tests.
+        """
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Image Viewer - View Mode")
+        dlg.setWindowModality(Qt.WindowModality.WindowModal)
+
+        quick_view = QQuickView()
+
+        # Ensure we wire the controller via a root property once QML is ready.
+        def _on_view_status_changed(status) -> None:
+            if status != QQuickView.Status.Ready:
+                return
+            root = quick_view.rootObject()
+            if root is None:
+                return
+            with contextlib.suppress(Exception):
+                root.setProperty("appController", self.app_controller)
+
+        # NOTE: Do NOT share a single provider instance across multiple engines.
+        # Keep a strong Python ref tied to the dialog lifetime.
+        dlg._qml_image_provider = EngineImageProvider(self.engine)  # type: ignore[attr-defined]
+        quick_view.engine().addImageProvider("engine", dlg._qml_image_provider)  # type: ignore[attr-defined]
+        with contextlib.suppress(Exception):
+            quick_view.statusChanged.connect(_on_view_status_changed)
+            dlg._qml_status_handler = _on_view_status_changed  # type: ignore[attr-defined]
+        quick_view.setSource(QUrl.fromLocalFile(str(qml_path)))
+
+        container = QWidget.createWindowContainer(quick_view, dlg)
+        container.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        container.setMinimumSize(1, 1)
+
+        layout = QVBoxLayout(dlg)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(container)
+        dlg.setLayout(layout)
+
+        # Show non-blocking but application-modal
+        dlg.show()
+        container.setFocus()
+
+        # Keep references for teardown
+        dlg._quick_view = quick_view  # type: ignore[attr-defined]
+
+        # Ensure root QML item receives focus (and controller wiring) as well
+        with contextlib.suppress(Exception):
+            root = quick_view.rootObject()
+            if root is not None and hasattr(root, "setProperty"):
+                root.setProperty("appController", self.app_controller)
+                root.setProperty("focus", True)
+
+        return dlg, container
+
+    def _install_view_key_filter(self, dlg) -> None:
+        """Attach an event filter to close the dialog on Enter/Escape.
+
+        The filter closes the dialog directly (deferred) instead of invoking
+        `ImageViewer.close_view_window()` so the main window's state is never
+        toggled as a side-effect of handling the key event.
+        """
+
+        # Capture the ImageViewer instance for use inside the filter
+        _viewer_self = self
+
+        class ViewWindowKeyFilter(QObject):
+            def __init__(self, qdialog):
+                super().__init__(qdialog)
+                self._dlg = qdialog
+                self._close_scheduled = False
+
+            def eventFilter(self, watched, event):
+                if event.type() != QEvent.Type.KeyPress:
+                    return False
+                if event.key() not in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Escape):
+                    return False
+
+                # Immediately hide the dialog for instant user feedback and
+                # schedule cleanup asynchronously so teardown work doesn't
+                # impact perceived responsiveness.
+                with contextlib.suppress(Exception):
+                    self._dlg.hide()
+
+                from PySide6.QtCore import QTimer  # noqa: PLC0415
+
+                def _cleanup_later() -> None:
+                    # Perform GUI-thread cleanup later; this keeps the UI
+                    # responsive while resources are released.
+                    with contextlib.suppress(Exception):
+                        _viewer_self._teardown_qwidget(self._dlg)
+                    with contextlib.suppress(Exception):
+                        self._dlg.close()
+                    with contextlib.suppress(Exception):
+                        self._dlg.deleteLater()
+                    # Clear reference on the viewer if it still points to this dlg
+                    with contextlib.suppress(Exception):
+                        if getattr(_viewer_self, "_view_window", None) is self._dlg:
+                            _viewer_self._view_window = None
+
+                # Schedule the cleanup on the event loop (background to the user)
+                QTimer.singleShot(0, _cleanup_later)
+
+                return True
+
+        with contextlib.suppress(Exception):
+            key_filter = ViewWindowKeyFilter(dlg)
+            dlg.installEventFilter(key_filter)
+            dlg._key_filter = key_filter
+            # Also install on the QML container so keys pressed while QML has
+            # focus still trigger close behavior.
+            try:
+                qcont = getattr(dlg, "_qml_widget", None)
+                if qcont is not None:
+                    qcont.installEventFilter(key_filter)
+            except Exception:
+                pass
+
+    def _install_qml_key_filter(self) -> None:
+        """Forward key events from the embedded QML widget to viewer actions.
+
+        In offscreen/headless test runs, QML Keys handlers are not always
+        reliable. This keeps keyboard navigation functional (and testable)
+        without requiring QML focus semantics to work perfectly.
+        """
+
+        container = getattr(self, "qml_container", None)
+        if container is None:
+            return
+
+        class _QmlKeyForwarder(QObject):
+            def __init__(self, viewer):
+                super().__init__(viewer)
+                self._viewer = viewer
+
+            def eventFilter(self, watched, event):
+                if event.type() != QEvent.Type.KeyPress:
+                    return False
+
+                action_map = {
+                    Qt.Key.Key_Right: self._viewer.next_image,
+                    Qt.Key.Key_Left: self._viewer.prev_image,
+                    Qt.Key.Key_End: self._viewer.last_image,
+                    Qt.Key.Key_Home: self._viewer.first_image,
+                    Qt.Key.Key_F11: self._viewer.toggle_fullscreen,
+                }
+                action = action_map.get(event.key())
+                if action is None:
+                    return False
+                action()
+                return True
+
+        with contextlib.suppress(Exception):
+            self._qml_key_filter = _QmlKeyForwarder(self)
+            container.installEventFilter(self._qml_key_filter)
+
+    def close_view_window(self) -> None:
+        """Close the view window if it exists and cleanup.
+
+        If the view window is a separate top-level dialog (created via
+        `open_view_window`), we intentionally *do not* call
+        `_restore_after_view_closed()` because that method mutates the
+        main window's saved geometry/state and can unexpectedly resize
+        the main window when a transient top-level view dialog is closed.
+        """
+        dlg = getattr(self, "_view_window", None)
+        if dlg is None:
+            return
+
+        is_separate = getattr(dlg, "_is_separate_view", False)
+
+        self._teardown_qwidget(dlg)
+        self._close_and_cleanup(dlg)
+        self._view_window = None
+
+        # Only restore main-window view state when the closed view is not a
+        # transient separate dialog. This preserves the main window geometry
+        # when users open a top-level view window and then close it.
+        if not is_separate:
+            self._restore_after_view_closed()
+
+    def _teardown_qwidget(self, dlg) -> None:
+        """Attempt to clear QQuickWidget source to free resources."""
+        with contextlib.suppress(Exception):
+            quick_view = getattr(dlg, "_quick_view", None)
+            if quick_view is not None and hasattr(quick_view, "setSource"):
+                quick_view.setSource(QUrl())
+            if quick_view is not None and hasattr(quick_view, "deleteLater"):
+                quick_view.deleteLater()
+
+    def _close_and_cleanup(self, dlg) -> None:
+        """Close and schedule deletion of the dialog."""
+        with contextlib.suppress(Exception):
+            dlg.close()
+            dlg.deleteLater()
+
+    def _restore_after_view_closed(self) -> None:
+        """Restore viewer state after the view window has been closed."""
         # Hover drawer menu for View mode
         # Parent the hover menu to the canvas viewport so the menu is above the image
         # and we can receive mouse move events from the viewport.
@@ -135,14 +502,11 @@ class ImageViewer(QMainWindow):
             self.canvas.viewport().installEventFilter(self)
         except Exception:
             pass
-        # Don't hide initially - let _update_ui_for_mode handle visibility
 
         # Use per-user application config directory for settings by default.
         # This avoids writing to protected installation directories like
         # Program Files and follows platform conventions (AppData on Windows).
         try:
-            from PySide6.QtCore import QStandardPaths  # noqa: PLC0415
-
             app_config = QStandardPaths.writableLocation(QStandardPaths.AppConfigLocation)
             if app_config:
                 cfg_dir = Path(app_config) / "image_viewer"
@@ -169,7 +533,6 @@ class ImageViewer(QMainWindow):
         if self._settings_manager.fast_view_enabled:
             self.decoding_strategy = self.engine.get_fast_strategy()
         else:
-            # Use engine's strategy instance to avoid duplicate FullStrategy initialization
             self.decoding_strategy = self.engine.get_decoding_strategy()
 
         build_menus(self)
@@ -355,7 +718,12 @@ class ImageViewer(QMainWindow):
             self.setWindowTitle(f"Image Viewer - {os.path.basename(image_path)}")
             logger.debug("display_image: idx=%s path=%s", self.current_index, image_path)
 
+            # Update QML POC path BEFORE engine request to let QML decide if it needs cached version
+            if hasattr(self, "app_controller"):
+                self.app_controller.setCurrentPathSlot(image_path)
+
             # Calculate target size for FastView strategy
+
             target_size = None
             if isinstance(self.decoding_strategy, FastViewStrategy):
                 screen = self.windowHandle().screen() if self.windowHandle() else QApplication.primaryScreen()
@@ -466,7 +834,7 @@ class ImageViewer(QMainWindow):
             if path == self.image_files[self.current_index]:
                 self.update_pixmap(pixmap)
 
-    def _on_engine_folder_changed(self, path: str, files: list[str]) -> None:  # noqa: PLR0912
+    def _on_engine_folder_changed(self, path: str, files: list[str]) -> None:  # noqa: PLR0912, PLR0915
         """Handle folder changed signal from ImageEngine.
 
         Args:
@@ -531,7 +899,11 @@ class ImageViewer(QMainWindow):
             # If we initiated a folder open in View mode, auto-display once the
             # async file list arrives. Note: the engine emits an immediate empty
             # list first; ignore that until we get real files.
-            if self._pending_open_folder and path == self._pending_open_folder:
+            pending_open = getattr(self, "_pending_open_folder", None)
+            if pending_open and path == pending_open:
+                # Use safe accessors in case the attribute initialization hasn't
+                # completed yet (race during startup or when signals arrive early).
+                pending_saw_empty = getattr(self, "_pending_open_saw_empty", False)
                 if files and self.current_index == -1:
                     self.current_index = 0
                     with contextlib.suppress(Exception):
@@ -543,19 +915,27 @@ class ImageViewer(QMainWindow):
                         if getattr(self.explorer_state, "view_mode", True):
                             self.enter_fullscreen()
 
-                    self._pending_open_folder = None
-                    self._pending_open_saw_empty = False
+                    # Clear pending state
+                    try:
+                        self._pending_open_folder = None
+                        self._pending_open_saw_empty = False
+                    except Exception:
+                        pass
                 elif not files:
                     # The engine emits an immediate empty list first. Treat the
                     # second empty (after the directory worker completes) as
                     # "no images" and clear the pending state.
-                    if not self._pending_open_saw_empty:
-                        self._pending_open_saw_empty = True
+                    if not pending_saw_empty:
+                        with contextlib.suppress(Exception):
+                            self._pending_open_saw_empty = True
                     else:
                         self.setWindowTitle("Image Viewer")
                         self._update_status("No images found.")
-                        self._pending_open_folder = None
-                        self._pending_open_saw_empty = False
+                        try:
+                            self._pending_open_folder = None
+                            self._pending_open_saw_empty = False
+                        except Exception:
+                            pass
         except Exception as e:
             logger.debug("_on_engine_folder_changed failed: %s", e)
 
@@ -810,9 +1190,13 @@ class ImageViewer(QMainWindow):
 
     def zoom_by(self, factor: float):
         self.canvas.zoom_by(factor)
+        if hasattr(self, "app_controller"):
+            self.app_controller._set_zoom(self.canvas._zoom)
 
     def reset_zoom(self):
         self.canvas.reset_zoom()
+        if hasattr(self, "app_controller"):
+            self.app_controller._set_zoom(1.0)
 
     def choose_fit(self):
         self.canvas._preset_mode = "fit"
@@ -821,6 +1205,8 @@ class ImageViewer(QMainWindow):
         if hasattr(self, "actual_action"):
             self.actual_action.setChecked(False)
         self.canvas.apply_current_view()
+        if hasattr(self, "app_controller"):
+            self.app_controller._set_fit_mode(True)
 
     def choose_actual(self):
         self.canvas._preset_mode = "actual"
@@ -830,6 +1216,9 @@ class ImageViewer(QMainWindow):
         if hasattr(self, "actual_action"):
             self.actual_action.setChecked(True)
         self.canvas.apply_current_view()
+        if hasattr(self, "app_controller"):
+            self.app_controller._set_fit_mode(False)
+            self.app_controller._set_zoom(1.0)
 
     def toggle_hq_downscale(self):
         if hasattr(self, "hq_downscale_action"):
@@ -1099,7 +1488,7 @@ class ImageViewer(QMainWindow):
             logger.error("failed to apply theme: %s", e)
 
 
-def run(argv: list[str] | None = None) -> int:  # noqa: PLR0915
+def run(argv: list[str] | None = None) -> int:
     """Application entrypoint (packaging-friendly)."""
     import argparse  # noqa: PLC0415
     from multiprocessing import freeze_support  # noqa: PLC0415
@@ -1124,54 +1513,57 @@ def run(argv: list[str] | None = None) -> int:  # noqa: PLR0915
     if start_path:
         _logger.debug("Start path provided: %s", start_path)
 
+    # QML-first application shell:
+    # - QML owns the UI and navigation.
+    # - Python owns AppController + ImageEngine and exposes state/commands.
     app = QApplication(argv)
-    viewer = ImageViewer()
-    _logger.debug("ImageViewer created")
 
-    # Apply theme from settings (default: dark)
-    theme = viewer._settings_manager.get("theme", "dark")
-    font_size = int(viewer._settings_manager.get("font_size", 10))
+    # Apply theme from settings (default: dark). Keep this QWidget-side so QML
+    # inherits palette + base font.
+    from image_viewer.path_utils import abs_path_str  # noqa: PLC0415
+    from image_viewer.settings_manager import SettingsManager  # noqa: PLC0415
     from image_viewer.styles import apply_theme  # noqa: PLC0415
 
+    settings_path = abs_path_str(_BASE_DIR / "settings.json")
+    settings = SettingsManager(settings_path)
+    theme = settings.get("theme", "dark")
+    font_size = int(settings.get("font_size", 10))
     apply_theme(app, theme, font_size)
     _logger.debug("Theme applied: %s, font_size=%d", theme, font_size)
-    viewer._current_app = app  # Store app reference for theme switching
 
-    # Case 1: started with an image file → open its folder and show that image in View mode, fullscreen.
-    if start_path and start_path.is_file():
-        folder = start_path.parent
-        try:
-            viewer.open_folder_at(str(folder))
-            target = str(start_path)
-            if target in viewer.image_files:
-                viewer.current_index = viewer.image_files.index(target)
-                viewer.display_image()
-        except Exception:
-            # Fall back to just showing the window if something goes wrong.
-            pass
-        viewer.show()
-        with contextlib.suppress(Exception):
-            viewer.enter_fullscreen()
+    from PySide6.QtCore import QUrl  # noqa: PLC0415
+    from PySide6.QtQml import QQmlApplicationEngine  # noqa: PLC0415
 
-    # Case 2: started with a folder path → open it and start in Explorer mode.
-    elif start_path and start_path.is_dir():
-        with contextlib.suppress(Exception):
-            viewer.open_folder_at(str(start_path))
-        try:
-            viewer.explorer_state.view_mode = False
-            viewer._update_ui_for_mode()
-        except Exception:
-            pass
-        viewer.showMaximized()
+    from image_viewer.image_engine.engine import ImageEngine  # noqa: PLC0415
+    from image_viewer.qml_bridge import AppController  # noqa: PLC0415
 
-    # Case 3: no path → normal launch: Explorer mode, maximized window.
-    else:
-        try:
-            viewer.explorer_state.view_mode = False
-            viewer._update_ui_for_mode()
-        except Exception:
-            pass
-        viewer.showMaximized()
+    engine = ImageEngine()
+    controller = AppController(engine)
+
+    qml_engine = QQmlApplicationEngine()
+    qml_engine.addImageProvider("engine", controller.image_provider)
+    qml_engine.addImageProvider("thumb", controller.thumb_provider)
+
+    qml_url = QUrl.fromLocalFile(str(_BASE_DIR / "qml" / "App.qml"))
+    qml_engine.load(qml_url)
+    if not qml_engine.rootObjects():
+        _logger.error("Failed to load QML root: %s", qml_url.toString())
+        return 1
+
+    root = qml_engine.rootObjects()[0]
+    root.setProperty("appController", controller)
+
+    # Startup path behavior:
+    # - file: open its folder, select it, enter Viewer page
+    # - folder: open it, stay in Explorer page
+    if start_path and start_path.exists():
+        if start_path.is_file():
+            controller._pending_select_path = abs_path_str(start_path)
+            controller.openFolder(str(start_path.parent))
+            controller._set_view_mode(True)
+        elif start_path.is_dir():
+            controller.openFolder(str(start_path))
+            controller._set_view_mode(False)
 
     return app.exec()
 
