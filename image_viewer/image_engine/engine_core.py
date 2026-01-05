@@ -54,7 +54,6 @@ _IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".bmp", ".gif", ".webp", ".tif", ".tiff"
 _THUMB_DB_BASENAME = "swiftview_thumbs.db"
 _RGB_DIMS = 3
 _RGB_CHANNELS = 3
-_BYTES_PER_CHANNEL = 1
 
 
 @dataclass(frozen=True)
