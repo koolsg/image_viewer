@@ -24,6 +24,26 @@ ApplicationWindow {
         }
     }
 
+    function _openFolderDialogAtLastParent() {
+        // Start the FolderDialog at the parent directory of the last opened folder.
+        // QtQuick.Dialogs expects a file:/// URL.
+        var base = (root.main && root.main.currentFolder) ? ("" + root.main.currentFolder) : ""
+        if (!base) {
+            folderDialog.open()
+            return
+        }
+
+        var p = base.replace(/\\/g, "/")
+        // trim trailing slashes
+        while (p.length > 3 && p.endsWith("/")) p = p.slice(0, -1)
+        var lastSlash = p.lastIndexOf("/")
+        var parent = (lastSlash > 0) ? p.slice(0, lastSlash) : p
+        if (parent.endsWith(":")) parent = parent + "/"
+
+        folderDialog.currentFolder = "file:///" + parent
+        folderDialog.open()
+    }
+
 
     Window {
         id: viewWindow
@@ -94,7 +114,7 @@ ApplicationWindow {
             title: "&File"
             MenuItem {
                 text: "Open Folder..."
-                onTriggered: if (root.main) root.main.openFolder()
+                onTriggered: root._openFolderDialogAtLastParent()
             }
             MenuSeparator {}
             MenuItem {
@@ -232,7 +252,7 @@ ApplicationWindow {
 
             ToolButton {
                 text: "Open Folder"
-                onClicked: folderDialog.open()
+                onClicked: root._openFolderDialogAtLastParent()
             }
 
             Item { Layout.fillWidth: true }
