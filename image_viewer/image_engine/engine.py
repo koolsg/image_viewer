@@ -407,13 +407,13 @@ class ImageEngine(QObject):
         """
         return self._decoding_strategy
 
-        def get_full_strategy(self) -> DecodingStrategy:
-            """Get the full decoding strategy instance."""
-            return self._full_strategy
+    def get_full_strategy(self) -> DecodingStrategy:
+        """Get the full decoding strategy instance."""
+        return self._full_strategy
 
-        def get_fast_strategy(self) -> DecodingStrategy:
-            """Get the fast decoding strategy instance."""
-            return self._fast_strategy
+    def get_fast_strategy(self) -> DecodingStrategy:
+        """Get the fast decoding strategy instance."""
+        return self._fast_strategy
 
     def set_cache_size(self, size: int) -> None:
         """Set pixmap cache size.

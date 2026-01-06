@@ -1,21 +1,21 @@
-"""Explorer mode operations: folder/image selection, UI setup, file operations."""
+"""Explorer mode operations (legacy QWidget shell).
+
+This module contains the QWidget-based Explorer/View mode switching and selection
+logic that was used by the legacy `ImageViewer(QMainWindow)` shell.
+
+Reusable clipboard/paste/delete helpers were moved to `explorer_file_ops.py` so
+they can be used from both the legacy QWidget Explorer and the QML shell.
+"""
 
 import contextlib
 import os
-from pathlib import Path
 
-from PySide6.QtCore import QMimeData, Qt, QUrl
-from PySide6.QtGui import QGuiApplication, QPixmap
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import QStackedWidget
 
-from .file_operations import (
-    copy_file,
-    move_file,
-    send_to_recycle_bin,
-    show_delete_confirmation,
-)
 from .logger import get_logger
-from .path_utils import abs_dir, abs_dir_str, abs_path, abs_path_str
+from .path_utils import abs_dir_str, abs_path_str
 
 _logger = get_logger("explorer_mode")
 
@@ -407,131 +407,3 @@ def open_folder_at(viewer, folder_path: str) -> None:
         _logger.debug("folder open started (async): %s", folder_path)
     except Exception as e:
         _logger.error("failed to open_folder_at: %s, error=%s", folder_path, e)
-
-
-# ============= Explorer Mode File Operations =============
-
-
-def _set_files_to_clipboard(paths: list[str], operation: str) -> None:
-    """Set file paths to system clipboard (internal helper).
-
-    Args:
-        paths: List of file paths
-        operation: "copy" or "cut" (for logging)
-    """
-    try:
-        mime = QMimeData()
-        urls = [abs_path(p).as_uri() for p in paths]
-        mime.setUrls([QUrl(u) for u in urls])
-        QGuiApplication.clipboard().setMimeData(mime)
-        _logger.debug("%s %d files to clipboard", operation, len(paths))
-    except Exception as exc:
-        _logger.error("failed to %s to clipboard: %s", operation, exc)
-
-
-def copy_files_to_clipboard(paths: list[str]) -> None:
-    """Copy file paths to system clipboard.
-
-    Args:
-        paths: List of file paths to copy
-    """
-    _set_files_to_clipboard(paths, "copy")
-
-
-def cut_files_to_clipboard(paths: list[str]) -> None:
-    """Cut file paths to system clipboard.
-
-    Args:
-        paths: List of file paths to cut
-    """
-    _set_files_to_clipboard(paths, "cut")
-
-
-def paste_files(dest_folder: str, clipboard_paths: list[str], mode: str) -> tuple[int, list[str]]:
-    """Paste files from clipboard to destination folder.
-
-    Args:
-        dest_folder: Destination folder path
-        clipboard_paths: List of source file paths
-        mode: "copy" or "cut"
-
-    Returns:
-        Tuple of (success_count, failed_paths)
-    """
-    dest_dir = abs_dir(dest_folder)
-    if not dest_dir.is_dir():
-        _logger.warning("destination is not a directory: %s", dest_folder)
-        return 0, clipboard_paths
-
-    success_count = 0
-    failed_paths = []
-
-    for src in clipboard_paths:
-        try:
-            src_path = abs_path(src)
-            if not src_path.exists():
-                failed_paths.append(src)
-                continue
-
-            if mode == "cut":
-                move_file(str(src_path), str(dest_dir))
-            else:
-                copy_file(str(src_path), str(dest_dir))
-
-            success_count += 1
-        except Exception as exc:
-            _logger.warning("paste failed for %s: %s", src, exc)
-            failed_paths.append(src)
-
-    _logger.debug(
-        "paste complete: %d success, %d failed, mode=%s",
-        success_count,
-        len(failed_paths),
-        mode,
-    )
-    return success_count, failed_paths
-
-
-def delete_files_to_recycle_bin(paths: list[str], parent_widget=None) -> tuple[int, list[str]]:
-    """Delete files to recycle bin with confirmation.
-
-    Args:
-        paths: List of file paths to delete
-        parent_widget: Parent widget for confirmation dialog (optional)
-
-    Returns:
-        Tuple of (success_count, failed_paths)
-    """
-    if not paths:
-        return 0, []
-
-    # Confirmation dialog
-    if parent_widget:
-        if len(paths) == 1:
-            # For single selections, show the filename for clarity (match View Mode)
-            fname = str(Path(paths[0]).name)
-            title = "Delete File"
-            text = "Delete this file?"
-            info = f"{fname}\n\nIt will be moved to Recycle Bin."
-        else:
-            title = "Delete Files"
-            text = f"Delete {len(paths)} item(s)?"
-            info = "They will be moved to Recycle Bin when possible."
-
-        if not show_delete_confirmation(parent_widget, title, text, info):
-            _logger.debug("delete cancelled by user")
-            return 0, paths
-
-    success_count = 0
-    failed_paths = []
-
-    for path in paths:
-        try:
-            send_to_recycle_bin(path)
-            success_count += 1
-        except Exception as exc:
-            _logger.warning("delete failed for %s: %s", path, exc)
-            failed_paths.append(path)
-
-    _logger.debug("delete complete: %d success, %d failed", success_count, len(failed_paths))
-    return success_count, failed_paths

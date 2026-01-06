@@ -37,9 +37,9 @@ Example Scenarios (thumbnail debugging)
   - `uv run python -m image_viewer --log-level debug --log-cats main,ui_canvas`
 
 Output Redirection (Optional)
-- Logs are always written to both stderr (console) and `image-view_session.log`.
-  - The log file content matches the console output (same format and category filtering).
-  - Existing `image-view_session.log` is overwritten on each app start.
+- Logs are written to standard error (stderr) only by default.
+  - A previous iteration wrote a session log file, but the current `image_viewer/logger.py` intentionally avoids creating a session log on disk.
+  - If you want a file capture, redirect stderr (or use the VS Code task below).
 
 - You can still redirect stderr if you want an additional capture:
   - Save to file: `uv run python -m image_viewer --log-level debug 2> debug.log`
@@ -74,3 +74,7 @@ Suppress noisy Qt/pybind warnings
   - This suppression is enabled by default; suppressed lines are appended to `debug.log.filtered` in the current working directory for later inspection.
   - To opt out and see the original lines on stderr, set `IMAGE_VIEWER_FILTER_QT_FIXME=0` (or `false`) before launching the app.
   - The feature is controlled via the `IMAGE_VIEWER_FILTER_QT_FIXME` environment variable (unset = enabled, `0`/`false` = disabled).
+
+VS Code task note
+- The workspace task "Run Image Viewer with Debug Logging" truncates `debug.log` at each start and writes logs to `debug.log` using a relative path.
+  (In VS Code this is typically the workspace root, but it depends on the task working directory.)
