@@ -521,8 +521,12 @@ class Main(QObject):
         self.currentFolderChanged.emit(folder)
 
         # Persist immediately.
+        # - last_open_dir: the folder we actually opened
+        # - last_parent_dir: used as the starting location for the next FolderDialog
         with contextlib.suppress(Exception):
-            self.settings.set("last_parent_dir", folder)
+            self.settings.set("last_open_dir", folder)
+            parent_dir = abs_dir_str(str(Path(folder).parent))
+            self.settings.set("last_parent_dir", parent_dir)
 
         # If a file was passed, remember and select once list arrives.
         if folder != p:
@@ -658,8 +662,8 @@ class Main(QObject):
 
         self._set_background_color(str(payload))
 
-    @Slot("QVariant")
-    def copyFiles(self, payload) -> None:
+    @Slot(object)
+    def copyFiles(self, payload: object) -> None:
         """Copy one or more file paths.
 
         Accepts QML arrays or single strings. Handles QVariantList or Python lists.
@@ -673,8 +677,8 @@ class Main(QObject):
         self._clipboard_mode = "copy"
         self.clipboardChanged.emit()
 
-    @Slot("QVariant")
-    def cutFiles(self, payload) -> None:
+    @Slot(object)
+    def cutFiles(self, payload: object) -> None:
         """Cut one or more file paths.
 
         Accepts QML arrays or single strings.
@@ -1123,9 +1127,10 @@ def run(argv: list[str] | None = None) -> int:
     root = qml_engine.rootObjects()[0]
     root.setProperty("main", main)
 
-    # Startup restore: open last folder when it exists.
+    # Startup restore: prefer reopening the last opened folder when it exists.
+    # Fall back to last_parent_dir for backward compatibility.
     with contextlib.suppress(Exception):
-        last_dir = settings.last_parent_dir
+        last_dir = getattr(settings, "last_open_dir", None) or settings.last_parent_dir
         if last_dir and os.path.isdir(last_dir):
             main.openFolder(last_dir)
 
