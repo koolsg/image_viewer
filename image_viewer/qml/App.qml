@@ -599,8 +599,18 @@ ApplicationWindow {
                 id: grid
                 anchors.fill: parent
                 anchors.margins: 12
-                cellWidth: 220
-                cellHeight: 270
+                // Visual thumbnail (image) width inside each cell
+                property int thumbVisualWidth: root.main ? (root.main.thumbnailWidth ? root.main.thumbnailWidth : 220) : 220
+                // Minimum horizontal spacing between thumbnails
+                property int minHSpacing: 6
+                // Compute number of columns that fit the base thumbnail width
+                property int computedCols: Math.max(1, Math.floor(width / (thumbVisualWidth + minHSpacing)))
+                // Horizontal spacing computed to evenly distribute thumbnails across the width
+                property int hSpacing: Math.max(minHSpacing, Math.floor((width - (computedCols * thumbVisualWidth)) / Math.max(1, computedCols)))
+                // The GridView cellWidth is base thumbnail width plus the computed spacing
+                cellWidth: thumbVisualWidth + hSpacing
+                // Keep cellHeight proportional to thumb visuals (allow some vertical spacing)
+                cellHeight: Math.round((thumbVisualWidth + hSpacing) * 1.2)
                 clip: true
                 model: root.main ? root.main.imageModel : null
                 currentIndex: root.main ? root.main.currentIndex : -1
@@ -667,8 +677,13 @@ ApplicationWindow {
 
                     Rectangle {
                         id: card
-                        anchors.fill: parent
-                        anchors.margins: 6
+                        // Make the inner card the visual thumbnail width and center it inside the cell
+                        width: grid.thumbVisualWidth
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        anchors.top: parent.top
+                        anchors.topMargin: 6
+                        anchors.bottomMargin: 6
+                        height: parent.height - 12
                         radius: 8
                         color: (delegateRoot.index === grid.currentIndex) ? "#2a3b52" : "#1a1a1a"
                         border.color: (delegateRoot.index === grid.currentIndex) ? "#6aa9ff" : "#2a2a2a"
@@ -706,6 +721,9 @@ ApplicationWindow {
                                     smooth: true
                                     mipmap: true
                                     source: delegateRoot.thumbUrl
+                                    // Prefer the thumb provider image to be displayed at the visual thumb size
+                                    width: parent.width - 12
+                                    height: parent.height - 12
                                 }
                             }
 
