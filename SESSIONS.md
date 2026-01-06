@@ -4,10 +4,16 @@
 **Files:** image_viewer/explorer_mode_operations.py
 **What:** When selecting an image in Explorer and switching to View mode, the QML view could briefly display the previously shown image before the newly-selected image finished loading. I added an early call to `viewer.app_controller.setCurrentPathSlot(normalized_path)` before switching the UI so the QML controller clears any previous image and starts loading the new one immediately, preventing the transient flash. The change is defensive (wrapped in try/except) to remain compatible with setups that do not use QML.
 **Checks:** Ruff: pass; Pyright: pass; Tests: 65 passed
-### Cleanup: remove leftover commented sizing lines
-**Files:** image_viewer/main.py, image_viewer/file_operations.py
-**What:** Removed obsolete commented-out UI sizing lines (`# self.resize(1024, 768)`, `# self.setMinimumWidth(500)`) that were left behind from earlier debugging. These were purely cosmetic/commented traces; no behavior change.
-**Checks:** Ruff: pass; Pyright: pass; Tests: 76 passed
+### QML Viewer: Mouse interaction support (press-to-zoom, right-drag pan, middle-click fit) (T-QLM-03)
+**Files:** image_viewer/qml/ViewerPage.qml, tests/test_qml_mouse_interactions.py
+**What:** Added mouse-driven interactions to the QML Viewer:
+- Left-click (press): temporary press-to-zoom; release restores zoom
+- Right-click + drag: manual panning via Flickable contentX/contentY
+- Middle-click: snap to fit (fit mode)
+- Ctrl+Wheel: zoom; Wheel alone navigates prev/next image
+
+Also added `tests/test_qml_mouse_interactions.py` to validate press-to-zoom and middle-click fit behavior.
+**Checks:** Ruff: pass; Pyright: pass; Tests: 78 passed
 ## 2026-01-05
 
 ### QML Explorer plan update + QML grid model cleanup

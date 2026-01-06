@@ -82,7 +82,7 @@ class _ThumbnailListView(QListView):
     def mouseMoveEvent(self, event):
         """Show tooltip at cursor position when hovering over items."""
         super().mouseMoveEvent(event)
-        try:
+        with contextlib.suppress(Exception):
             self._current_mouse_pos = event.globalPosition().toPoint()
             index = self.indexAt(event.pos())
 
@@ -106,27 +106,21 @@ class _ThumbnailListView(QListView):
                 self._last_tooltip_text = ""
                 self._tooltip_timer.stop()
                 QToolTip.hideText()
-        except Exception:
-            pass
 
     def _show_pending_tooltip(self):
         """Show the pending tooltip after timer expires."""
-        try:
+        with contextlib.suppress(Exception):
             if self._pending_tooltip_text:
                 QToolTip.showText(self._pending_tooltip_pos, self._pending_tooltip_text, self)
-        except Exception:
-            pass
 
     def leaveEvent(self, event):
         """Hide tooltip when mouse leaves the widget."""
         super().leaveEvent(event)
-        try:
+        with contextlib.suppress(Exception):
             self._tooltip_timer.stop()
             QToolTip.hideText()
             self._last_tooltip_index = QModelIndex()
             self._last_tooltip_text = ""
-        except Exception:
-            pass
 
 
 # --------------------------- Main Widget -------------------------------------

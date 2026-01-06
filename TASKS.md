@@ -59,6 +59,23 @@
   - 문서: `dev-docs/QML/QML_migration_for_view.md` 작성 및 업데이트.
 
 
+### QML Viewer — Missing implementations / follow-ups (T-QLM-07)
+- [ ] Implement cursor-centered press-to-zoom alignment in QML
+  - 설명: `ImageCanvas._align_cursor_after_zoom`와 동일한 동작을 QML로 재현하여, press-to-zoom 후에도 '마우스 포인터 아래의 같은 픽셀이' 동일한 화면 위치에 유지되도록 조정.
+  - 수용 기준: QML에서 left-press → 임시 확대 시, 마우스 포인터 위치가 줌 전/후에 동일한 이미지 픽셀을 가리킴을 자동 테스트로 검증.
+  - 파일: `image_viewer/qml/ViewerPage.qml`, `image_viewer/qml_bridge.py`, `tests/test_qml_mouse_interactions.py`
+
+- [ ] Expose and integrate HQ downscale option to the QML viewer (fit-mode prescale)
+  - 설명: HQ prescale 디코드(고품질 리샘플링)를 QML 경로에서도 사용 가능하도록 AppController/engine API로 노출하고, fit 모드에서 선택 시 HQ 출력이 사용되게 함.
+  - 수용 기준: QML에서 HQ 토글 후 decode 경로가 HQ로 전환되고, 뷰포트 정렬(스크롤/오프셋)이 유지되며 테스트로 검증됨. 사이즈/성능/동작 회귀 없음.
+  - 파일: `image_viewer/qml/App.qml`, `image_viewer/qml/ViewerPage.qml`, `image_viewer/qml_bridge.py`, `image_viewer/image_engine/decoder.py`, `image_viewer/image_engine/strategy.py`
+
+- [ ] Add automated test for right-drag pan in QML viewer
+  - 설명: QML `MouseArea`의 right-drag 동작(패닝)이 Flickable의 contentX/Y를 적절히 변경하는지 검증하는 단위 테스트 추가.
+  - 수용 기준: `qtbot` 기반 테스트에서 우클릭 드래그로 contentX/Y 변화가 발생하고, 팬 동작이 재현됨.
+  - 파일: `tests/test_qml_mouse_interactions.py`
+
+
 ## 📋 Medium Priority (곧 할 것)
 
 ### Explorer Mode 초기 상태 개선
@@ -180,96 +197,23 @@
 
 ---
 
-# ✅What have done = Recently Completed (최근 1주일)
+## ✅ Recently Completed (간소화)
 
-### 2025-12-17
-- [x] Cleanup: remove unused compatibility shims and re-exports
-  - Removed `image_viewer/image_viewer.py` compatibility shim
-  - Removed `image_viewer/image_engine/migrations.py` and `image_viewer/image_engine/db_operator.py` re-export shims
-  - Deleted unused `image_viewer/image_engine/fs_db_iface.py` (IDBLoader)
-  - Updated `scripts/migrate_thumb_db.py` to import directly from `image_viewer.image_engine.db.migrations`
-  - Updated `image_viewer/image_engine/fs_db_worker.py` imports to use `image_viewer.image_engine.db.db_operator`
-  - Updated `AGENTS.md` to reflect FSModel refactor and added Development policies
-- [x] View Mode 개선 - Hover 서랍 메뉴 implemented
-  - Implemented left-edge hover drawer with Crop menu and smooth animation (QPropertyAnimation)
-  - Files: `ui_hover_menu.py` / `ui_canvas.py` (canvas integration)
+- 2025-12-17: Cleanup & Viewer improvements
+  - Removed legacy compatibility shims and updated migration/imports.
+  - Implemented hover drawer menu (Crop) and integrated with the canvas.
 
-- [x] Engine-thread Explorer model (drop QFileSystemModel)
-  - 목표: Explorer Mode에서 `QFileSystemModel.setRootPath()` 기반 스캔 제거 (UI freeze 원인)
-  - 구현: EngineCore(QThread)에서 폴더 스캔 + Thumb DB 프리로드 + missing 썸네일 생성(바이트)
-  - UI: QAbstractTableModel 기반 ExplorerTableModel로 bytes→QIcon 변환 (UI thread만)
-  - 파일: image_viewer/image_engine/engine_core.py, image_viewer/image_engine/explorer_model.py,
-          image_viewer/image_engine/engine.py, image_viewer/ui_explorer_grid.py, image_viewer/explorer_mode_operations.py
+- Early December: Engine & UI work
+  - Reworked Explorer to use engine-thread scanning with ThumbDB-backed thumbnail cache.
+  - Added WebP conversion worker, rename dialog sizing, busy cursor, and file operation refactors.
 
-### 2025-12-07
-- [x] 코드 리뷰 및 린트 수정
-  - mousePressEvent, delete_current_file, start_trim_workflow 함수 분리
-  - Magic numbers 상수화 (RGB_CHANNELS, ROTATION_MAX 등)
-  - pyright 0 errors, ruff 67→45 issues
+- 2025-12-14: Migration framework & metrics
+  - Added ThumbDB migrations, metrics collector and instrumentation, with tests and docs.
 
-### 2025-12-05
-- [x] WebP 변환 멀티프로세싱
-  - ProcessPoolExecutor로 변경, 모든 CPU 코어 활용
-  - 4코어: 최대 4배, 8코어: 최대 8배 속도 향상
-- [x] Rename 다이얼로그 동적 너비 조정
-  - 파일명 길이에 맞춰 300~600px 자동 조정
-- [x] 삭제 확인 다이얼로그 가시성 개선
-  - 큰 버튼, 명확한 색상, 포커스 표시
-
-### 2025-12-04
-- [x] Explorer 파일 작업 리팩토링 (Phase 2)
-  - file_operations.py로 분리 (172줄 감소)
-  - copy/cut/paste/delete/rename 함수화
-- [x] Busy Cursor 구현
-  - 폴더 로드, 이미지 전환, 썸네일 로딩 시 표시
-
-### 2025-12-03
-- [x] SQLite 썸네일 캐시 (thumbs.db)
-  - Windows Thumbs.db 방식, 단일 파일 캐시
-- [x] Theme System (Dark/Light)
-- [x] Enter key toggle View↔Explorer
-- [x] Window state restoration
-
-### 2025-11-29
-- [x] Explorer grid QFileSystemModel 전환
-  - Windows-like 파일 작업 지원
-
-### 2025-11-23
-- [x] WebP 변환 도구
-
-### 2025-12-12
-- [x] ThumbnailCache → ThumbDB 통합
-  - image_viewer/image_engine/thumb_db.py: DB wrapper 추가 및 schema fallback
-  - image_viewer/image_engine/fs_db_worker.py: DB background loader (Chunked emit)
-  - image_viewer/image_engine/thumbnail_cache.py: set/get/write flows use ThumbDB when available
-  - tests/test_thumb_db_wrapper.py: Unit tests for get/probe/upsert
-  - tests/test_thumbnail_cache_thumbdb_integration.py: Integration test (requires PySide6 to run locally)
+Notes:
+- Tests and linters run locally (unit tests passing; pyright clean). QML Viewer POC and interaction tests were added.
 
 ---
-
-### 2025-12-14
-- [x] Phase 5 — Migration framework, CLI, and tests
-
-  ## ⚙️ Phase 6 — Metrics & Finalization (In Progress)
-  - [x] Add metrics/tracing to `DbOperator`, `ThumbDB`, and `migrations`
-    - 목표: retry counts, task durations, migration durations
-    - 파일: `image_viewer/image_engine/metrics.py`, `db_operator.py`, `thumb_db.py`, `migrations.py`
-    - 테스트: `tests/test_metrics.py` 추가
-    - 체크: ruff/pyright & unit tests
-
-  ### Phase 6 progress
-  - [x] Add metrics collector and integrate into `DbOperator`, `ThumbDB`, `migrations`
-  - [ ] Add CI checks to exercise migrations and metrics (integration)
-  - [ ] Remove legacy fallback code paths for pre-v1 DB (if safe)
-  - [x] Add metrics collector and integrate into `DbOperator`, `ThumbDB`, `migrations`
-    - tests: `tests/test_metrics.py` added and passing
-    - docs: `dev-docs/metrics.md` added; README references metrics
-    - tests: `uv run pytest` → 44 passed
-
-
-  - 구현: `image_viewer/image_engine/migrations.py`, `scripts/migrate_thumb_db.py`, `tests/test_thumb_db_migration.py`
-  - 주요 효과: legacy thumbnail DB 업그레이드 지원, schema `user_version` 관리, migration CLI로 수동 업그레이드 가능
-  - 체크: ruff/pyright 통과, 41 tests passed
 
 
 ## 📝 작업 시작 전 체크리스트

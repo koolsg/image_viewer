@@ -128,7 +128,7 @@ class SelectionRectItem(QGraphicsRectItem):
                 return
             p = parent_item.mapFromScene(scene_pos)
             if getattr(self._selection, "_VERBOSE_DRAG_LOG", False):
-                try:
+                with contextlib.suppress(Exception):
                     scene_x = float(scene_pos.x())
                     scene_y = float(scene_pos.y())
                     parent_x = float(p.x())
@@ -153,9 +153,6 @@ class SelectionRectItem(QGraphicsRectItem):
                         elif not debug_requested:
                             _logger.debug("Handle mouseMove: %s", msg)
                         # else: debug was requested and overlay missing -> prefer silent (overlay-only mode)
-
-                except Exception:
-                    pass
 
             start_rect = getattr(self, "_start_parent_rect", QRectF(self._selection.rect()))
             self._selection.resize_handle_to(self._index, p.x(), p.y(), start_rect)

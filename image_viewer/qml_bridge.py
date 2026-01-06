@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import contextlib
-import inspect
 from typing import TYPE_CHECKING, Any
 
 from PySide6.QtCore import Property, QObject, Signal, Slot
@@ -102,11 +101,20 @@ class AppController(QObject):
     currentIndexChanged = Signal(int)
     viewModeChanged = Signal(bool)
     currentFolderChanged = Signal(str)
+    # Emitted when QML requests a folder open; ImageViewer is responsible
+    # for performing the actual open, saving settings, and updating UI.
+    openFolderRequested = Signal(str)
     imageModelChanged = Signal()
+    # Signals emitted when QML requests that the owner perform work with the engine.
+    requestPreviewRequested = Signal(str, int)
+    requestCachedCheckRequested = Signal(str)
 
     def __init__(self, engine: Any | None = None, parent: QObject | None = None) -> None:
+        """Note: `engine` parameter is accepted for backward compatibility but
+        AppController is a thin bridge and does NOT call engine methods.
+        ImageViewer / run() should wire engine callbacks and set provider
+        engine references after constructing the controller."""
         super().__init__(parent)
-        self._engine = engine
         self._current_folder: str = ""
         self._image_files: list[str] = []
         self._current_index: int = -1
@@ -118,28 +126,15 @@ class AppController(QObject):
         self._fit_mode: bool = True
         self._generation: int = 0
         self._image_url: str = ""
-        self.image_provider = EngineImageProvider(engine)
+        # EngineImageProvider is created without an engine reference; the
+        # owner (ImageViewer or run()) will set `image_provider._engine` when
+        # available so AppController itself has no reason to call engine APIs.
+        self.image_provider = EngineImageProvider(None)
 
         # Explorer/QML model + thumbnail bytes
         self._image_model = QmlImageGridModel(self)
         self._thumb_bytes_by_key: dict[str, bytes] = {}
         self.thumb_provider = ThumbImageProvider(self._thumb_bytes_by_key)
-
-        # Wire engine signals if available.
-        if self._engine is not None:
-            # Keep controller usable in unit tests (mock engines may not expose signals).
-            with contextlib.suppress(Exception):
-                self._engine.image_ready.connect(self.on_engine_image_ready)
-            with contextlib.suppress(Exception):
-                self._engine.file_list_updated.connect(self._on_engine_file_list_updated)
-
-            # Explorer snapshots (metadata + thumbnail DB feeds)
-            with contextlib.suppress(Exception):
-                self._engine.explorer_entries_changed.connect(self._on_engine_explorer_entries_changed)
-            with contextlib.suppress(Exception):
-                self._engine.explorer_thumb_rows.connect(self._on_engine_explorer_thumb_rows)
-            with contextlib.suppress(Exception):
-                self._engine.explorer_thumb_generated.connect(self._on_engine_explorer_thumb_generated)
 
     def _get_image_model(self) -> QObject:
         return self._image_model
@@ -195,11 +190,9 @@ class AppController(QObject):
         """Open a folder from QML.
 
         QML dialogs provide URLs (e.g. file:///C:/Images). Normalize those to
-        an absolute OS-native directory path before calling ImageEngine.
+        an absolute OS-native directory path and emit a request for the owner to
+        perform the open via `openFolderRequested`.
         """
-        if self._engine is None:
-            return
-
         from PySide6.QtCore import QUrl  # noqa: PLC0415
 
         from image_viewer.path_utils import abs_dir_str  # noqa: PLC0415
@@ -221,7 +214,10 @@ class AppController(QObject):
         else:
             self._pending_select_path = None
 
-        self._engine.open_folder(folder)
+        # Do not talk to engine directly — AppController is a thin QML bridge.
+        # Emit a request signal and let the ImageViewer (main) perform the
+        # actual open, saving, and UI updates.
+        self.openFolderRequested.emit(folder)
 
     def _apply_file_list(self, files: list[str]) -> None:
         self._image_files = list(files)
@@ -307,22 +303,14 @@ class AppController(QObject):
             self.imageUrlChanged.emit("")
             self.currentPathChanged.emit(norm_path)
 
-            # Check if the requested image (norm_path) is already in the engine cache
-            if self._engine:
-                try:
-                    get_cached = getattr(self._engine, "get_cached_pixmap", None)
-                    cached = get_cached(norm_path) if callable(get_cached) else None
-                except Exception:
-                    cached = None
-
-                if isinstance(cached, QPixmap) and not cached.isNull():
-                    # ONLY show if the CACHED image is exactly the one we just requested
-                    self._image_url = f"image://engine/{self._generation}/{norm_path}"
-                    self.imageUrlChanged.emit(self._image_url)
-                    return
-
-            # If not cached, trigger a new decode request for the correct path
-            self.requestPreview(path, 2048)
+            # Defer cache checks and decode requests to the application owner
+            # (ImageViewer/run()). Emit a cache-check request so the owner can
+            # set `imageUrl` immediately if a cached pixmap exists. Then emit a
+            # preview request so the engine can decode a high-resolution preview.
+            with contextlib.suppress(Exception):
+                self.requestCachedCheckRequested.emit(norm_path)
+            with contextlib.suppress(Exception):
+                self.requestPreviewRequested.emit(str(path), 2048)
 
     currentPath = Property(str, _get_current_path, _set_current_path, notify=currentPathChanged)  # type: ignore[arg-type]
 
@@ -361,31 +349,23 @@ class AppController(QObject):
 
     @Slot(str, int)
     def requestPreview(self, path: str, size: int) -> None:
-        """Ask the engine to decode a square preview for `path`."""
-        if not self._engine:
-            return
+        """Emit a request for the owning application to decode a preview.
 
-        target = (int(size), int(size))
-
-        # NOTE: Some unit tests monkeypatch engine.request_decode using MethodType
-        # but provide a function that does not accept `self`. To be resilient,
-        # inspect the underlying function signature.
-        meth = getattr(self._engine, "request_decode", None)
-        if meth is None:
-            return
-
-        func = getattr(meth, "__func__", None)
-        if func is not None:
-            try:
-                params = list(inspect.signature(func).parameters)
-            except Exception:
-                params = []
-            if params and params[0] != "self":
-                func(str(path), target)  # type: ignore[misc]
-                return
-
-        # Normal (bound) instance method path
-        meth(str(path), target)
+        ImageViewer or the standalone `run()` should connect to
+        `requestPreviewRequested` and perform the call to the engine.
+        """
+        target_size = int(size)
+        # Emit request and rely on the owner to call engine.request_decode.
+        with contextlib.suppress(Exception):
+            self.requestPreviewRequested.emit(str(path), target_size)
+        # Backwards-compat: if someone manually attached an `_engine` attribute
+        # on the controller (tests), try to call it directly as a fallback.
+        engine_obj = getattr(self, "_engine", None)
+        if engine_obj is not None:
+            with contextlib.suppress(Exception):
+                meth = getattr(engine_obj, "request_decode", None)
+                if callable(meth):
+                    meth(str(path), (target_size, target_size))
 
     # --- QML control slots (QML-first navigation) ---
 

@@ -99,15 +99,12 @@ def setup_logger(level: int = logging.INFO, name: str = "image_viewer") -> loggi
                     self._filtered_by_image_viewer = True
 
                 def write(self, s: str) -> None:  # pragma: no cover - thin wrapper
-                    try:
+                    with contextlib.suppress(Exception):
                         if isinstance(s, str) and "FIXME qt_isinstance" in s:
                             # Persist the suppressed line for later inspection
                             with contextlib.suppress(Exception), open(self._out_path, "a", encoding="utf-8") as f:
                                 f.write(s)
                             return
-                    except Exception:
-                        pass
-                    with contextlib.suppress(Exception):
                         self._orig.write(s)
 
                 def flush(self) -> None:  # pragma: no cover - thin wrapper

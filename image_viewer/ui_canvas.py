@@ -46,14 +46,12 @@ class ImageCanvas(QGraphicsView):
         self.setScene(self._scene)
         self._pix_item = QGraphicsPixmapItem()
         self._scene.addItem(self._pix_item)
-        try:
+        with contextlib.suppress(Exception):
             self.setFrameShape(QFrame.NoFrame)
             self.setFrameShadow(QFrame.Plain)
             self.setLineWidth(0)
             self.setViewportMargins(0, 0, 0, 0)
             self.setStyleSheet("QGraphicsView { border: none; }")
-        except Exception:
-            pass
         self._zoom = 1.0
         self._preset_mode = "fit"
         self._hq_downscale = False
@@ -87,12 +85,11 @@ class ImageCanvas(QGraphicsView):
         return min(sx, sy)
 
     def get_current_scale_factor(self) -> float:
-        try:
+        with contextlib.suppress(Exception):
             if self._preset_mode == "fit":
                 return float(self.get_fit_scale())
             return float(self._zoom)
-        except Exception:
-            return 1.0
+        return 1.0
 
     def set_pixmap(self, pixmap: QPixmap) -> None:
         self._pix_item.setPixmap(pixmap)

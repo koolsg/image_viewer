@@ -4,6 +4,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import QtQuick.Dialogs
+import "."
 
 ApplicationWindow {
     id: root
@@ -12,8 +13,8 @@ ApplicationWindow {
     visible: true
     title: "Image Viewer (QML)"
 
-    // Set from Python via rootObject().setProperty("appController", ...)
-    property var appController: null
+    // Set from Python via rootObject().setProperty("main", ...)
+    property var main: null
 
     header: ToolBar {
         RowLayout {
@@ -29,20 +30,20 @@ ApplicationWindow {
 
             Label {
                 text: {
-                    if (!root.appController) return ""
-                    var total = root.appController.imageFiles ? root.appController.imageFiles.length : 0
-                    var idx = root.appController.currentIndex
+                    if (!root.main) return ""
+                    var total = root.main.imageFiles ? root.main.imageFiles.length : 0
+                    var idx = root.main.currentIndex
                     if (total <= 0) return "No folder"
                     return (idx + 1) + " / " + total
                 }
             }
 
             ToolButton {
-                text: root.appController && root.appController.viewMode ? "Back" : "View"
-                enabled: root.appController && (root.appController.imageFiles && root.appController.imageFiles.length > 0)
+                text: root.main && root.main.viewMode ? "Back" : "View"
+                enabled: root.main && (root.main.imageFiles && root.main.imageFiles.length > 0)
                 onClicked: {
-                    if (!root.appController) return
-                    root.appController.viewMode = !root.appController.viewMode
+                    if (!root.main) return
+                    root.main.viewMode = !root.main.viewMode
                 }
             }
         }
@@ -52,9 +53,9 @@ ApplicationWindow {
         id: folderDialog
         title: "Choose a folder"
         onAccepted: {
-            if (!root.appController) return
+            if (!root.main) return
             // Pass URL string; Python normalizes file:// URLs to local paths.
-            root.appController.openFolder(folderDialog.selectedFolder.toString())
+            root.main.openFolder(folderDialog.selectedFolder.toString())
         }
     }
 
@@ -68,45 +69,45 @@ ApplicationWindow {
         sequence: "Escape"
         context: Qt.ApplicationShortcut
         onActivated: {
-            if (!root.appController) return
-            if (root.appController.viewMode) {
-                root.appController.closeViewWindow()
+            if (!root.main) return
+            if (root.main.viewMode) {
+                root.main.closeView()
             }
         }
     }
     Shortcut {
         sequence: "Left"
         context: Qt.ApplicationShortcut
-        onActivated: if (root.appController && root.appController.viewMode) root.appController.prevImage()
+        onActivated: if (root.main && root.main.viewMode) root.main.prevImage()
     }
     Shortcut {
         sequence: "Right"
         context: Qt.ApplicationShortcut
-        onActivated: if (root.appController && root.appController.viewMode) root.appController.nextImage()
+        onActivated: if (root.main && root.main.viewMode) root.main.nextImage()
     }
     Shortcut {
         sequence: "Home"
         context: Qt.ApplicationShortcut
-        onActivated: if (root.appController && root.appController.viewMode) root.appController.firstImage()
+        onActivated: if (root.main && root.main.viewMode) root.main.firstImage()
     }
     Shortcut {
         sequence: "End"
         context: Qt.ApplicationShortcut
-        onActivated: if (root.appController && root.appController.viewMode) root.appController.lastImage()
+        onActivated: if (root.main && root.main.viewMode) root.main.lastImage()
     }
     Shortcut {
         sequences: [ StandardKey.Copy ]
         context: Qt.ApplicationShortcut
         onActivated: {
-            if (!root.appController) return
-            if (root.appController.currentPath) root.appController.copyText(root.appController.currentPath)
+            if (!root.main) return
+            if (root.main.currentPath) root.main.copyText(root.main.currentPath)
         }
     }
 
     StackLayout {
         id: stack
         anchors.fill: parent
-        currentIndex: (root.appController && root.appController.viewMode) ? 1 : 0
+        currentIndex: (root.main && root.main.viewMode) ? 1 : 0
 
         // Explorer (Grid)
         Item {
@@ -125,8 +126,8 @@ ApplicationWindow {
                     cellWidth: 220
                     cellHeight: 270
                     clip: true
-                    model: root.appController ? root.appController.imageModel : null
-                    currentIndex: root.appController ? root.appController.currentIndex : -1
+                    model: root.main ? root.main.imageModel : null
+                    currentIndex: root.main ? root.main.currentIndex : -1
 
                     delegate: Item {
                         id: delegateRoot
@@ -203,18 +204,18 @@ ApplicationWindow {
                                 MenuItem {
                                     text: "Open"
                                     onTriggered: {
-                                        if (!root.appController) return
-                                        root.appController.currentIndex = delegateRoot.index
-                                        root.appController.viewMode = true
+                                        if (!root.main) return
+                                        root.main.currentIndex = delegateRoot.index
+                                        root.main.viewMode = true
                                     }
                                 }
                                 MenuItem {
                                     text: "Copy path"
-                                    onTriggered: if (root.appController) root.appController.copyText(delegateRoot.path)
+                                    onTriggered: if (root.main) root.main.copyText(delegateRoot.path)
                                 }
                                 MenuItem {
                                     text: "Reveal in Explorer"
-                                    onTriggered: if (root.appController) root.appController.revealInExplorer(delegateRoot.path)
+                                    onTriggered: if (root.main) root.main.revealInExplorer(delegateRoot.path)
                                 }
                             }
 
@@ -222,9 +223,9 @@ ApplicationWindow {
                                 anchors.fill: parent
                                 acceptedButtons: Qt.LeftButton | Qt.RightButton
                                 onClicked: function(mouse) {
-                                    if (!root.appController) return
+                                    if (!root.main) return
                                     grid.currentIndex = delegateRoot.index
-                                    root.appController.currentIndex = delegateRoot.index
+                                    root.main.currentIndex = delegateRoot.index
                                     if (mouse.button === Qt.RightButton) {
                                         ctxMenu.popup()
                                     } else {
@@ -232,9 +233,9 @@ ApplicationWindow {
                                     }
                                 }
                                 onDoubleClicked: {
-                                    if (!root.appController) return
-                                    root.appController.currentIndex = delegateRoot.index
-                                    root.appController.viewMode = true
+                                    if (!root.main) return
+                                    root.main.currentIndex = delegateRoot.index
+                                    root.main.viewMode = true
                                 }
                             }
                         }
@@ -248,7 +249,7 @@ ApplicationWindow {
             id: viewerPage
             Layout.fillWidth: true
             Layout.fillHeight: true
-            appController: root.appController
+            main: root.main
         }
     }
 }
