@@ -661,6 +661,13 @@ ApplicationWindow {
                         }
                         event.accepted = true
                     }
+                            }
+                            if (paths.length > 0) {
+                                root.main.copyFiles(paths)
+                            }
+                        }
+                        event.accepted = true
+                    }
 
                     // Ctrl+X - Cut selected files
                     if (event.key === Qt.Key_X && (event.modifiers & Qt.ControlModifier)) {
@@ -671,6 +678,13 @@ ApplicationWindow {
                                 if (idx >= 0 && idx < root.main.imageFiles.length) {
                                     paths.push(root.main.imageFiles[idx])
                                 }
+                            }
+                            if (paths.length > 0) {
+                                root.main.cutFiles(paths)
+                            }
+                        }
+                        event.accepted = true
+                    }
                             }
                             if (paths.length > 0) {
                                 root.main.cutFiles(paths)

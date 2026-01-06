@@ -10,12 +10,13 @@ from PySide6.QtCore import Property, QObject, Qt, QUrl, Signal, Slot
 from PySide6.QtGui import QColor, QDesktopServices, QGuiApplication, QPixmap
 from PySide6.QtQml import QQmlApplicationEngine
 from PySide6.QtQuick import QQuickImageProvider
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QMessageBox
 
 from image_viewer.explorer_file_ops import (
     copy_files_to_clipboard,
     cut_files_to_clipboard,
     delete_files_to_recycle_bin,
+    get_files_from_clipboard,
     paste_files,
     rename_file,
 )
@@ -56,6 +57,20 @@ def _apply_cli_logging_options(argv: list[str]) -> list[str]:
         return argv
 
 
+@contextlib.contextmanager
+def _suppress_expected(*exceptions: type[BaseException]):
+    """Context manager that suppresses expected exception types and logs unexpected ones.
+
+    Usage: with _suppress_expected(TypeError, ValueError, OSError):
+    """
+    try:
+        yield
+    except exceptions:
+        return
+    except Exception as e:  # pragma: no cover - defensive logging
+        _logger.exception("Unexpected error in suppressed block: %s", e)
+
+
 class EngineImageProvider(QQuickImageProvider):
     """QML image provider that fetches pixmaps from ImageEngine cache."""
 
@@ -73,7 +88,7 @@ class EngineImageProvider(QQuickImageProvider):
             return pix
 
         # Handle percent-encoded paths.
-        with contextlib.suppress(Exception):
+        with _suppress_expected(TypeError, ValueError, OSError):
             path_dec = QUrl.fromPercentEncoding(path.encode("utf-8"))
             pix = self._engine.get_cached_pixmap(path_dec)
             if pix and not pix.isNull():
@@ -96,7 +111,7 @@ class ThumbImageProvider(QQuickImageProvider):
         # QML may percent-encode the id part of an image:// URL.
         data = self._thumb_bytes_by_key.get(key)
         if not data:
-            with contextlib.suppress(Exception):
+            with _suppress_expected(TypeError, ValueError, OSError):
                 key_dec = QUrl.fromPercentEncoding(str(key).encode("utf-8"))
                 data = self._thumb_bytes_by_key.get(str(key_dec))
         if not data:
@@ -199,32 +214,28 @@ class Main(QObject):
         self._init_webp_converter()
 
         # Apply initial decoding strategy.
-        try:
-            if self._fast_view_enabled:
-                self.engine.set_decoding_strategy(self.engine.get_fast_strategy())
-            else:
-                self.engine.set_decoding_strategy(self.engine.get_full_strategy())
-        except Exception:
-            # Let the app continue; strategy affects quality/perf only.
-            pass
+        self._apply_initial_decoding_strategy()
 
         # Explorer clipboard state (copy/cut -> paste).
         # QML triggers operations via slots; we keep the clipboard state in Python
         # so we can implement cut semantics (move on paste).
         self._clipboard_paths: list[str] = []
         self._clipboard_mode: str | None = None  # "copy" | "cut"
+        # Cached external clipboard file list (populated from system clipboard)
+        self._clipboard_cached_external_paths: list[str] | None = None
+
+        # Subscribe to clipboard changes to avoid polling on property reads.
+        try:
+            cb = QGuiApplication.clipboard()
+            cb.dataChanged.connect(self._on_clipboard_changed)
+            # Populate initial cache
+            self._on_clipboard_changed()
+        except Exception:
+            # Non-fatal: if clipboard isn't available, we fall back to on-demand checks.
+            self._clipboard_cached_external_paths = None
 
         # ---- Engine -> Main wiring ----
-        with contextlib.suppress(Exception):
-            self.engine.image_ready.connect(self._on_engine_image_ready)
-        with contextlib.suppress(Exception):
-            self.engine.file_list_updated.connect(self._on_engine_file_list_updated)
-        with contextlib.suppress(Exception):
-            self.engine.explorer_entries_changed.connect(self._on_engine_explorer_entries_changed)
-        with contextlib.suppress(Exception):
-            self.engine.explorer_thumb_rows.connect(self._on_engine_explorer_thumb_rows)
-        with contextlib.suppress(Exception):
-            self.engine.explorer_thumb_generated.connect(self._on_engine_explorer_thumb_generated)
+        self._setup_engine_signals()
 
     def _init_webp_converter(self) -> None:
         self._webp_controller = ConvertController()
@@ -237,6 +248,41 @@ class Main(QObject):
         self._webp_controller.finished.connect(self._on_webp_finished)
         self._webp_controller.canceled.connect(self._on_webp_canceled)
         self._webp_controller.error.connect(self._on_webp_error)
+
+    def _apply_initial_decoding_strategy(self) -> None:
+        """Apply the initial decoding strategy and fail fast on misconfiguration."""
+        try:
+            if self._fast_view_enabled:
+                self.engine.set_decoding_strategy(self.engine.get_fast_strategy())
+            else:
+                self.engine.set_decoding_strategy(self.engine.get_full_strategy())
+        except AttributeError as e:
+            # Fail fast: show an error to the user and exit so misconfiguration is noticed immediately.
+            _logger.critical("Failed to set initial decoding strategy: %s", e, exc_info=True)
+            try:
+                # QApplication already exists when Main is constructed in run(); show modal dialog.
+                QMessageBox.critical(None, "Startup Error", f"Failed to initialize decoding strategy:\n{e}")
+            except Exception:
+                # Fallback to stderr if Qt widgets aren't functional for some reason.
+                print(f"Critical: Failed to initialize decoding strategy: {e}", file=sys.stderr, flush=True)
+            sys.exit(1)
+
+    def _setup_engine_signals(self) -> None:
+        """Connect engine signals to Main slots; fail fast if the engine is missing expected signals."""
+        try:
+            self.engine.image_ready.connect(self._on_engine_image_ready)
+            self.engine.file_list_updated.connect(self._on_engine_file_list_updated)
+            self.engine.explorer_entries_changed.connect(self._on_engine_explorer_entries_changed)
+            self.engine.explorer_thumb_rows.connect(self._on_engine_explorer_thumb_rows)
+            self.engine.explorer_thumb_generated.connect(self._on_engine_explorer_thumb_generated)
+        except AttributeError as e:
+            # Fail fast: missing engine signals indicates misconfiguration — stop startup.
+            _logger.critical("Failed to connect engine signals: %s", e, exc_info=True)
+            try:
+                QMessageBox.critical(None, "Startup Error", f"Engine initialization failed:\n{e}")
+            except Exception:
+                print(f"Critical: Failed to connect engine signals: {e}", file=sys.stderr, flush=True)
+            sys.exit(1)
 
     # ---- QML properties ----
     def _get_current_folder(self) -> str:
@@ -370,7 +416,13 @@ class Main(QObject):
     imageModel = Property(QObject, _get_image_model, notify=imageModelChanged)  # type: ignore[arg-type]
 
     def _get_clipboard_has_files(self) -> bool:
-        return bool(self._clipboard_paths)
+        if self._clipboard_paths:
+            return True
+        if self._clipboard_cached_external_paths:
+            return len(self._clipboard_cached_external_paths) > 0
+        # Fallback to on-demand check if cache isn't available
+        external_paths = get_files_from_clipboard()
+        return external_paths is not None and len(external_paths) > 0
 
     clipboardHasFiles = Property(bool, _get_clipboard_has_files, notify=clipboardChanged)  # type: ignore[arg-type]
 
@@ -385,18 +437,25 @@ class Main(QObject):
         self._fast_view_enabled = new_val
         self.fastViewEnabledChanged.emit(new_val)
 
-        with contextlib.suppress(Exception):
+        try:
             self.settings.set("fast_view_enabled", new_val)
+        except Exception as e:
+            _logger.error("Failed to persist fast_view_enabled: %s", e)
 
         # Switch engine decoding strategy.
-        if new_val:
-            self.engine.set_decoding_strategy(self.engine.get_fast_strategy())
-        else:
-            self.engine.set_decoding_strategy(self.engine.get_full_strategy())
+        try:
+            if new_val:
+                self.engine.set_decoding_strategy(self.engine.get_fast_strategy())
+            else:
+                self.engine.set_decoding_strategy(self.engine.get_full_strategy())
+        except AttributeError as e:
+            _logger.error("Failed to switch decoding strategy: %s", e)
 
         # Force refresh of current image so the visual result matches the strategy.
-        with contextlib.suppress(Exception):
+        try:
             self.refreshCurrentImage()
+        except Exception as e:
+            _logger.error("Failed to refresh current image: %s", e)
 
     fastViewEnabled = Property(bool, _get_fast_view_enabled, _set_fast_view_enabled, notify=fastViewEnabledChanged)  # type: ignore[arg-type]
 
@@ -599,11 +658,12 @@ class Main(QObject):
         self._set_background_color(str(payload))
 
     @Slot(object)
-    def copyFiles(self, payload: object) -> None:
+    def copyFiles(self, payload) -> None:
         """Copy one or more file paths.
 
-        `payload` may be a single path string or a list of path strings.
+        Accepts QML arrays or single strings. Handles QVariantList or Python lists.
         """
+        _logger.debug("copyFiles called with payload type=%s payload=%r", type(payload), payload)
         paths: list[str] = _coerce_paths(payload)
         if not paths:
             return
@@ -613,8 +673,12 @@ class Main(QObject):
         self.clipboardChanged.emit()
 
     @Slot(object)
-    def cutFiles(self, payload: object) -> None:
-        """Cut one or more file paths (move on paste)."""
+    def cutFiles(self, payload) -> None:
+        """Cut one or more file paths.
+
+        Accepts QML arrays or single strings.
+        """
+        _logger.debug("cutFiles called with payload type=%s payload=%r", type(payload), payload)
         paths: list[str] = _coerce_paths(payload)
         if not paths:
             return
@@ -628,20 +692,26 @@ class Main(QObject):
         """Paste clipboard files into the currently opened folder."""
         if not self._current_folder:
             return
-        if not self._clipboard_paths:
-            return
 
+        clipboard_paths = self._clipboard_paths
         mode = self._clipboard_mode or "copy"
-        success_count, failed = paste_files(self._current_folder, self._clipboard_paths, mode)
+
+        if not clipboard_paths:
+            external_paths = get_files_from_clipboard()
+            if external_paths:
+                clipboard_paths = external_paths
+                mode = "copy"
+            else:
+                return
+
+        success_count, failed = paste_files(self._current_folder, clipboard_paths, mode)
         _logger.debug("pasteFiles: %d success, %d failed, mode=%s", success_count, len(failed), mode)
 
         if mode == "cut" and success_count > 0:
-            # Clear internal clipboard state after a successful move.
             self._clipboard_paths = []
             self._clipboard_mode = None
             self.clipboardChanged.emit()
 
-        # Refresh folder listing so UI updates.
         with contextlib.suppress(Exception):
             self.engine.open_folder(self._current_folder)
 
@@ -874,6 +944,29 @@ class Main(QObject):
         self._status_overlay_text = new_text
         self.statusOverlayChanged.emit(new_text)
 
+    def _on_clipboard_changed(self) -> None:
+        """Update cached external clipboard file list and emit change only when it differs."""
+        try:
+            external = get_files_from_clipboard()
+        except Exception:
+            external = None
+
+        # Normalize to list or empty list.
+        new_list: list[str] = list(external) if external else []
+
+        if self._clipboard_cached_external_paths is None:
+            changed = bool(new_list)
+        else:
+            changed = new_list != self._clipboard_cached_external_paths
+
+        if changed:
+            self._clipboard_cached_external_paths = new_list
+            with contextlib.suppress(Exception):
+                self.clipboardChanged.emit()
+        else:
+            # Update cache even if not changed (first-time populate)
+            self._clipboard_cached_external_paths = new_list
+
     @Slot(object)
     def performDelete(self, payload: object) -> None:
         """Perform deletion requested by QML dialog.
@@ -905,14 +998,23 @@ class Main(QObject):
 
 
 def _coerce_paths(payload: object) -> list[str]:
-    """Coerce a QML-provided payload into a list of filesystem paths."""
+    """Coerce a QML-provided payload into a list of filesystem paths.
+
+    Accepts:
+    - Python list/tuple/set of strings
+    - Single string
+    """
     if payload is None:
         return []
-
-    if isinstance(payload, str):
-        return [str(payload)]
+    # Prefer native sequence types coming from QML (QVariantList) or Python.
     if isinstance(payload, (list, tuple, set)):
         return [str(p) for p in payload if p is not None]
+
+    # Treat strings as single-path values.
+    if isinstance(payload, str):
+        return [payload]
+
+    # Fallback: coerce any other object to string.
     return [str(payload)]
 
 
