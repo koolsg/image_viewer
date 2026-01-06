@@ -450,6 +450,9 @@ ApplicationWindow {
                         // prepare selection behavior: clear unless ctrl/shift held
                         if (!(mouse.modifiers & Qt.ControlModifier) && !(mouse.modifiers & Qt.ShiftModifier)) {
                             grid.selectedIndices = []
+                        } else {
+                            // suppress sync during multi-select drag
+                            grid.selectionSyncEnabled = false
                         }
                     }
 
@@ -565,6 +568,7 @@ ApplicationWindow {
 
                         grid.forceActiveFocus()
                         grid.selectionRectVisible = false
+                        grid.selectionSyncEnabled = true
                     }
                 }
 
@@ -575,8 +579,8 @@ ApplicationWindow {
                     opacity: 0.25
                     border.color: "#4a8ad4"
                     border.width: 1
-                    x: grid.selectionRectX - grid.contentX
-                    y: grid.selectionRectY - grid.contentY
+                    x: Math.min(grid.selectionRectX, grid.selectionRectX + grid.selectionRectW) - grid.contentX
+                    y: Math.min(grid.selectionRectY, grid.selectionRectY + grid.selectionRectH) - grid.contentY
                     width: Math.abs(grid.selectionRectW)
                     height: Math.abs(grid.selectionRectH)
                     z: 100
@@ -640,6 +644,48 @@ ApplicationWindow {
                         }
                         event.accepted = true
                     }
+
+                    // Ctrl+C - Copy selected files
+                    if (event.key === Qt.Key_C && (event.modifiers & Qt.ControlModifier)) {
+                        if (grid.selectedIndices.length > 0 && root.main && root.main.imageFiles) {
+                            var paths = []
+                            for (var i = 0; i < grid.selectedIndices.length; ++i) {
+                                var idx = grid.selectedIndices[i]
+                                if (idx >= 0 && idx < root.main.imageFiles.length) {
+                                    paths.push(root.main.imageFiles[idx])
+                                }
+                            }
+                            if (paths.length > 0) {
+                                root.main.copyFiles(paths)
+                            }
+                        }
+                        event.accepted = true
+                    }
+
+                    // Ctrl+X - Cut selected files
+                    if (event.key === Qt.Key_X && (event.modifiers & Qt.ControlModifier)) {
+                        if (grid.selectedIndices.length > 0 && root.main && root.main.imageFiles) {
+                            var paths = []
+                            for (var i = 0; i < grid.selectedIndices.length; ++i) {
+                                var idx = grid.selectedIndices[i]
+                                if (idx >= 0 && idx < root.main.imageFiles.length) {
+                                    paths.push(root.main.imageFiles[idx])
+                                }
+                            }
+                            if (paths.length > 0) {
+                                root.main.cutFiles(paths)
+                            }
+                        }
+                        event.accepted = true
+                    }
+
+                    // Ctrl+V - Paste files
+                    if (event.key === Qt.Key_V && (event.modifiers & Qt.ControlModifier)) {
+                        if (root.main && root.main.clipboardHasFiles) {
+                            root.main.pasteFiles()
+                        }
+                        event.accepted = true
+                    }
                 }
 
 
@@ -670,6 +716,17 @@ ApplicationWindow {
                         color: (grid.selectedIndices.indexOf(delegateRoot.index) !== -1) ? "#2a3b52" : "#1a1a1a"
                         border.color: (grid.selectedIndices.indexOf(delegateRoot.index) !== -1) ? "#6aa9ff" : "#2a2a2a"
                         border.width: 1
+
+                        MouseArea {
+                            anchors.fill: parent
+                            acceptedButtons: Qt.RightButton
+                            onClicked: function(mouse) {
+                                if (mouse.button === Qt.RightButton) {
+                                    grid.setSelectionTo(delegateRoot.index)
+                                    ctxMenu.popup(mouse.x, mouse.y)
+                                }
+                            }
+                        }
 
                         ToolTip.visible: false
                         ToolTip.delay: 300
@@ -737,12 +794,40 @@ ApplicationWindow {
                             }
                             MenuSeparator {}
                             MenuItem {
-                                text: "Copy"
-                                onTriggered: if (root.main) root.main.copyFiles(delegateRoot.path)
+                                text: grid.selectedIndices.length > 1 ? "Copy " + grid.selectedIndices.length + " files" : "Copy"
+                                onTriggered: {
+                                    if (!root.main) return
+                                    if (grid.selectedIndices.length > 0 && root.main.imageFiles) {
+                                        var paths = []
+                                        for (var i = 0; i < grid.selectedIndices.length; ++i) {
+                                            var idx = grid.selectedIndices[i]
+                                            if (idx >= 0 && idx < root.main.imageFiles.length) {
+                                                paths.push(root.main.imageFiles[idx])
+                                            }
+                                        }
+                                        if (paths.length > 0) {
+                                            root.main.copyFiles(paths)
+                                        }
+                                    }
+                                }
                             }
                             MenuItem {
-                                text: "Cut"
-                                onTriggered: if (root.main) root.main.cutFiles(delegateRoot.path)
+                                text: grid.selectedIndices.length > 1 ? "Cut " + grid.selectedIndices.length + " files" : "Cut"
+                                onTriggered: {
+                                    if (!root.main) return
+                                    if (grid.selectedIndices.length > 0 && root.main.imageFiles) {
+                                        var paths = []
+                                        for (var i = 0; i < grid.selectedIndices.length; ++i) {
+                                            var idx = grid.selectedIndices[i]
+                                            if (idx >= 0 && idx < root.main.imageFiles.length) {
+                                                paths.push(root.main.imageFiles[idx])
+                                            }
+                                        }
+                                        if (paths.length > 0) {
+                                            root.main.cutFiles(paths)
+                                        }
+                                    }
+                                }
                             }
                             MenuItem {
                                 text: "Paste"
