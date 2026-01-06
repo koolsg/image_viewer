@@ -647,48 +647,32 @@ ApplicationWindow {
 
                     // Ctrl+C - Copy selected files
                     if (event.key === Qt.Key_C && (event.modifiers & Qt.ControlModifier)) {
-                        if (grid.selectedIndices.length > 0 && root.main && root.main.imageFiles) {
+                        var sel = grid.selectedIndices || []
+                        if (sel.length > 0 && root.main && root.main.imageFiles) {
                             var paths = []
-                            for (var i = 0; i < grid.selectedIndices.length; ++i) {
-                                var idx = grid.selectedIndices[i]
-                                if (idx >= 0 && idx < root.main.imageFiles.length) {
-                                    paths.push(root.main.imageFiles[idx])
+                            for (var i = 0; i < sel.length; ++i) {
+                                var id = sel[i]
+                                if (id >= 0 && id < root.main.imageFiles.length) {
+                                    paths.push(root.main.imageFiles[id])
                                 }
                             }
-                            if (paths.length > 0) {
-                                root.main.copyFiles(paths)
-                            }
-                        }
-                        event.accepted = true
-                    }
-                            }
-                            if (paths.length > 0) {
-                                root.main.copyFiles(paths)
-                            }
+                            if (paths.length > 0) root.main.copyFiles(paths)
                         }
                         event.accepted = true
                     }
 
                     // Ctrl+X - Cut selected files
                     if (event.key === Qt.Key_X && (event.modifiers & Qt.ControlModifier)) {
-                        if (grid.selectedIndices.length > 0 && root.main && root.main.imageFiles) {
+                        var sel = grid.selectedIndices || []
+                        if (sel.length > 0 && root.main && root.main.imageFiles) {
                             var paths = []
-                            for (var i = 0; i < grid.selectedIndices.length; ++i) {
-                                var idx = grid.selectedIndices[i]
-                                if (idx >= 0 && idx < root.main.imageFiles.length) {
-                                    paths.push(root.main.imageFiles[idx])
+                            for (var i = 0; i < sel.length; ++i) {
+                                var id = sel[i]
+                                if (id >= 0 && id < root.main.imageFiles.length) {
+                                    paths.push(root.main.imageFiles[id])
                                 }
                             }
-                            if (paths.length > 0) {
-                                root.main.cutFiles(paths)
-                            }
-                        }
-                        event.accepted = true
-                    }
-                            }
-                            if (paths.length > 0) {
-                                root.main.cutFiles(paths)
-                            }
+                            if (paths.length > 0) root.main.cutFiles(paths)
                         }
                         event.accepted = true
                     }
