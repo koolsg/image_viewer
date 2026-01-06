@@ -148,6 +148,9 @@ class Main(QObject):
     webpConvertCanceled = Signal()
     webpConvertError = Signal(str)
 
+    # UI-only thumbnail width (pixels) persisted in settings; does NOT trigger engine regen
+    thumbnailWidthChanged = Signal(int)
+
     def __init__(
         self,
         engine: ImageEngine | None = None,
@@ -188,6 +191,9 @@ class Main(QObject):
         self._fast_view_enabled: bool = bool(self.settings.fast_view_enabled)
         self._background_color: str = str(self.settings.get("background_color", "#000000"))
         self._press_zoom_multiplier: float = float(self.settings.get("press_zoom_multiplier", 3.0))
+
+        # UI-only thumbnail width (pixels). Persisted but does NOT trigger engine regen.
+        self._thumbnail_width: int = int(self.settings.get("thumbnail_width", 220))
 
         # WebP conversion controller (QML Tools -> Convert to WebP...)
         self._init_webp_converter()
@@ -335,6 +341,21 @@ class Main(QObject):
         self.pressZoomMultiplierChanged.emit(new_val)
         with contextlib.suppress(Exception):
             self.settings.set("press_zoom_multiplier", new_val)
+
+    # ---- Thumbnail UI size (UI-only) ----
+    def _get_thumbnail_width(self) -> int:
+        return int(self._thumbnail_width)
+
+    def _set_thumbnail_width(self, w: int) -> None:
+        new_w = int(max(64, min(1024, int(w))))
+        if new_w == self._thumbnail_width:
+            return
+        self._thumbnail_width = new_w
+        with contextlib.suppress(Exception):
+            self.settings.set("thumbnail_width", new_w)
+        self.thumbnailWidthChanged.emit(new_w)
+
+    thumbnailWidth = Property(int, _get_thumbnail_width, _set_thumbnail_width, notify=thumbnailWidthChanged)  # type: ignore[arg-type]
 
     pressZoomMultiplier = Property(
         float,

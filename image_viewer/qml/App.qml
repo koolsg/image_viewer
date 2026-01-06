@@ -617,6 +617,22 @@ ApplicationWindow {
                 focus: true
                 activeFocusOnTab: true
 
+                WheelHandler {
+                    id: gridWheel
+                    onWheel: function(wheel) {
+                        if (!root.main) return
+                        if (!(wheel.modifiers & Qt.ControlModifier)) return
+                        var cur = root.main.thumbnailWidth || 220
+                        var step = Math.max(8, Math.round(cur * 0.1))
+                        if (wheel.angleDelta && wheel.angleDelta.y > 0) {
+                            root.main.thumbnailWidth = Math.min(1024, cur + step)
+                        } else if (wheel.angleDelta && wheel.angleDelta.y < 0) {
+                            root.main.thumbnailWidth = Math.max(64, cur - step)
+                        }
+                        wheel.accepted = true
+                    }
+                }
+
                 Keys.onPressed: function(event) {
                     if (!root.main) return
                     if (root.main.viewMode) return
@@ -707,7 +723,9 @@ ApplicationWindow {
 
                             Rectangle {
                                 Layout.fillWidth: true
-                                Layout.preferredHeight: 160
+                                // Make the image container height scale with the thumbnail visual width
+                                // Use a reasonable thumbnail aspect ratio (height/width), default ~195/256
+                                Layout.preferredHeight: Math.round(grid.thumbVisualWidth * 0.76)
                                 radius: 6
                                 color: "#0f0f0f"
 
@@ -721,24 +739,21 @@ ApplicationWindow {
                                     smooth: true
                                     mipmap: true
                                     source: delegateRoot.thumbUrl
-                                    // Prefer the thumb provider image to be displayed at the visual thumb size
-                                    width: parent.width - 12
-                                    height: parent.height - 12
                                 }
                             }
 
-                            Label {
+                            Text {
                                 Layout.fillWidth: true
                                 color: "white"
                                 text: delegateRoot.name
-                                elide: Text.ElideRight
+                                wrapMode: Text.Wrap
+                                font.pixelSize: 13
                             }
-                            Label {
+                            Text {
                                 Layout.fillWidth: true
                                 color: "#b0b0b0"
                                 font.pixelSize: 11
-                                text: [delegateRoot.resolutionText, delegateRoot.sizeText].filter(Boolean).join(" | ")
-                                elide: Text.ElideRight
+                                text: [ (delegateRoot.name && delegateRoot.name.indexOf('.') !== -1) ? delegateRoot.name.split('.').pop().toUpperCase() : null, delegateRoot.resolutionText, delegateRoot.sizeText ].filter(Boolean).join(" | ")
                             }
                             Label {
                                 Layout.fillWidth: true
