@@ -77,14 +77,12 @@ Dialog {
                 objectName: "button-yes"
                 text: qsTr("Yes")
                 onClicked: { dlg.acceptedWithPayload(dlg.payload); dlg.close(); }
-                // Make Yes default so Enter activates it
+
                 focus: true
             }
         }
 
-        // Shortcuts at dialog level (Y/N)
-        Shortcut { sequences: ["Y"] ; onActivated: yesButton.clicked() }
-        Shortcut { sequences: ["N"] ; onActivated: noButton.clicked() }
+
     }
 
     signal acceptedWithPayload(var payload)

@@ -11,17 +11,17 @@ Dialog {
     title: "Convert to WebP"
     standardButtons: Dialog.NoButton
 
-    // Injected from App.qml
+
     property var main: null
 
-    // Form state
+
     property string folderText: ""
     property bool shouldResize: true
     property int targetShortSide: 2160
     property int quality: 90
     property bool deleteOriginals: true
 
-    // UI state
+
     property string logText: ""
 
     width: 720
@@ -171,9 +171,9 @@ Dialog {
             font.family: "Consolas"
             font.pixelSize: 12
 
-            // auto-scroll to end when log updates
+
             onTextChanged: {
-                // TextArea is scrollable; keep it pinned to the bottom.
+
                 logArea.contentY = logArea.contentHeight
             }
         }
@@ -215,7 +215,7 @@ Dialog {
     }
 
     onOpened: {
-        // Default folder: current folder if available.
+
         if (dlg.main && dlg.main.currentFolder && dlg.folderText.length === 0) {
             dlg.folderText = dlg.main.currentFolder
         }

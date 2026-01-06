@@ -12,87 +12,35 @@ ApplicationWindow {
     width: 1400
     height: 900
     visible: true
-    title: "Image Viewer (QML)"
+    title: "Image Viewer"
 
-    // Set from Python via rootObject().setProperty("main", ...)
     property var main: null
-
-    // Track explorer selection for shortcuts/actions (avoid relying on GridView.currentItem typing).
     property string explorerSelectedPath: ""
-
-    // Viewer-only rendering toggle (QML equivalent of legacy "HQ downscale" checkbox).
-    // In the QML renderer this maps to mipmap sampling, not pyvips downscaling.
     property bool hqDownscaleEnabled: false
 
-    // When main window becomes active again, restore focus to grid.
     onActiveChanged: {
         if (active && !root.main?.viewMode) {
             grid.forceActiveFocus()
         }
     }
 
-    Action {
-        id: actionOpenFolder
-        text: "Open Folder..."
-        shortcut: StandardKey.Open
-        onTriggered: folderDialog.open()
-    }
 
-    Action {
-        id: actionExit
-        text: "Exit"
-        shortcut: "Alt+F4"
-        onTriggered: Qt.quit()
-    }
-
-    Action {
-        id: actionZoomIn
-        text: "Zoom In"
-        shortcut: StandardKey.ZoomIn
-        onTriggered: {
-            if (!root.main) return
-            root.main.fitMode = false
-            root.main.zoom = Math.max(0.05, Math.min(20.0, root.main.zoom * 1.25))
-        }
-    }
-
-    Action {
-        id: actionZoomOut
-        text: "Zoom Out"
-        shortcut: StandardKey.ZoomOut
-        onTriggered: {
-            if (!root.main) return
-            root.main.fitMode = false
-            root.main.zoom = Math.max(0.05, Math.min(20.0, root.main.zoom * 0.75))
-        }
-    }
-
-    Action {
-        id: actionRefreshExplorer
-        text: "Refresh Explorer"
-        shortcut: "F5"
-        onTriggered: if (root.main) root.main.refreshCurrentFolder()
-    }
-
-    // Separate fullscreen viewer window (always fullscreen when opened).
     Window {
         id: viewWindow
         title: "View"
-        // IMPORTANT: do not assign to `visibility` from handlers, or the binding will be broken
-        // and Python's closeView() (which flips main.viewMode) won't be able to hide this window.
         visibility: (!!root.main && !!root.main.viewMode) ? Window.FullScreen : Window.Hidden
         color: root.main ? root.main.backgroundColor : "#1a1a1a"
 
         onVisibleChanged: {
+            if (root.main) root.main.qmlDebug("viewWindow.onVisibleChanged: visible=" + visible)
             if (visible) {
-                // Request window activation and focus.
                 viewWindow.requestActivate()
                 Qt.callLater(function() {
                     viewFocus.forceActiveFocus()
                     viewerPage.forceActiveFocus()
                 })
             } else {
-                // When hiding view window, activate main window and restore focus to grid.
+                if (root.main) root.main.qmlDebug("viewWindow.onVisibleChanged: hiding, restoring main focus")
                 root.requestActivate()
                 root.raise()
                 Qt.callLater(function() {
@@ -105,110 +53,15 @@ ApplicationWindow {
         }
 
         onClosing: function(close) {
-            // Keep backend state as the source of truth.
+            if (root.main) root.main.qmlDebug("viewWindow.onClosing requested")
             if (root.main) root.main.closeView()
-            // Prevent double-close races; backend will flip viewMode which hides this window.
             close.accepted = false
         }
 
-        // Viewer-only shortcuts live on the viewer window so they work reliably
-        // even when the ApplicationWindow is not the active window.
-        Shortcut {
-            // Try both spellings; Qt docs and examples commonly use "Escape".
-            sequences: ["Escape", "Esc"]
-            context: Qt.WindowShortcut
-            enabled: !!root.main && !!root.main.viewMode
-            onActivated: {
-                if (!root.main) return
-                root.main.qmlDebug("viewWindow Shortcut activated: Escape")
-                root.main.closeView()
-            }
-        }
-        Shortcut {
-            sequences: ["Return", "Enter"]
-            context: Qt.WindowShortcut
-            enabled: !!root.main && !!root.main.viewMode
-            onActivated: {
-                if (!root.main) return
-                root.main.qmlDebug("viewWindow Shortcut activated: Return/Enter")
-                root.main.closeView()
-            }
-        }
-        Shortcut {
-            sequence: "Left"
-            context: Qt.WindowShortcut
-            onActivated: if (root.main) root.main.prevImage()
-        }
-        Shortcut {
-            sequence: "Right"
-            context: Qt.WindowShortcut
-            onActivated: if (root.main) root.main.nextImage()
-        }
-        Shortcut {
-            sequence: "Home"
-            context: Qt.WindowShortcut
-            onActivated: if (root.main) root.main.firstImage()
-        }
-        Shortcut {
-            sequence: "End"
-            context: Qt.WindowShortcut
-            onActivated: if (root.main) root.main.lastImage()
-        }
 
-        // Legacy parity: space snaps to global view (fit).
-        Shortcut {
-            sequence: "Space"
-            context: Qt.WindowShortcut
-            onActivated: viewerPage.snapToGlobalView()
-        }
 
-        // Legacy parity: up/down zoom.
-        Shortcut {
-            sequence: "Up"
-            context: Qt.WindowShortcut
-            onActivated: viewerPage.zoomBy(1.25)
-        }
-        Shortcut {
-            sequence: "Down"
-            context: Qt.WindowShortcut
-            onActivated: viewerPage.zoomBy(0.75)
-        }
 
-        // Also support standard zoom keys in the viewer window (Ctrl+= / Ctrl+-).
-        Shortcut {
-            sequences: [ StandardKey.ZoomIn ]
-            context: Qt.WindowShortcut
-            onActivated: viewerPage.zoomBy(1.25)
-        }
-        Shortcut {
-            sequences: [ StandardKey.ZoomOut ]
-            context: Qt.WindowShortcut
-            onActivated: viewerPage.zoomBy(0.75)
-        }
-        Shortcut {
-            sequence: "F"
-            context: Qt.WindowShortcut
-            onActivated: viewerPage.snapToGlobalView()
-        }
-        Shortcut {
-            sequence: "1"
-            context: Qt.WindowShortcut
-            onActivated: {
-                if (!root.main) return
-                root.main.fitMode = false
-                root.main.zoom = 1.0
-            }
-        }
-        Shortcut {
-            sequences: [ StandardKey.Copy ]
-            context: Qt.WindowShortcut
-            onActivated: {
-                if (!root.main) return
-                if (root.main.currentPath) root.main.copyText(root.main.currentPath)
-            }
-        }
 
-        // Delete in view mode (with confirmation).
         DeleteConfirmationDialog {
             id: viewDeleteDialog
             theme: "dark"
@@ -221,19 +74,6 @@ ApplicationWindow {
             viewDeleteDialog.open()
         }
 
-        Shortcut {
-            sequence: "Delete"
-            context: Qt.WindowShortcut
-            onActivated: {
-                if (!root.main) return
-                var p = root.main.currentPath
-                if (!p) return
-                viewWindow.showViewDeleteDialog(p)
-            }
-        }
-
-        // Fallback key handling: even if Shortcuts don't trigger (IME/focus quirks),
-        // make sure the user can always exit view mode.
         FocusScope {
             id: viewFocus
             anchors.fill: parent
@@ -252,9 +92,15 @@ ApplicationWindow {
     menuBar: MenuBar {
         Menu {
             title: "&File"
-            MenuItem { action: actionOpenFolder }
+            MenuItem {
+                text: "Open Folder..."
+                onTriggered: if (root.main) root.main.openFolder()
+            }
             MenuSeparator {}
-            MenuItem { action: actionExit }
+            MenuItem {
+                text: "Exit"
+                onTriggered: Qt.quit()
+            }
         }
 
         Menu {
@@ -321,8 +167,14 @@ ApplicationWindow {
 
             MenuSeparator {}
 
-            MenuItem { action: actionZoomIn }
-            MenuItem { action: actionZoomOut }
+            MenuItem {
+                text: "Zoom In"
+                onTriggered: if (root.main) root.main.zoom = (root.main.zoom || 1.0) * 1.25
+            }
+            MenuItem {
+                text: "Zoom Out"
+                onTriggered: if (root.main) root.main.zoom = (root.main.zoom || 1.0) / 1.25
+            }
 
             MenuSeparator {}
 
@@ -338,7 +190,7 @@ ApplicationWindow {
 
             MenuItem {
                 text: "Refresh Explorer"
-                action: actionRefreshExplorer
+                onTriggered: if (root.main) root.main.refreshCurrentFolder()
             }
         }
 
@@ -411,7 +263,7 @@ ApplicationWindow {
         title: "Choose a folder"
         onAccepted: {
             if (!root.main) return
-            // Pass URL string; Python normalizes file:// URLs to local paths.
+
             root.main.openFolder(folderDialog.selectedFolder.toString())
         }
     }
@@ -426,7 +278,7 @@ ApplicationWindow {
         title: "Choose background color"
         onAccepted: {
             if (!root.main) return
-            // QML passes a QColor; Python converts & persists.
+
             root.main.setBackgroundColor(bgColorDialog.selectedColor)
         }
     }
@@ -437,7 +289,7 @@ ApplicationWindow {
         text: ""
     }
 
-    // Delete confirmation dialog implemented in QML (replacement for DeleteConfirmationDialog)
+
     DeleteConfirmationDialog {
         id: deleteDialog
         theme: "dark"
@@ -483,7 +335,7 @@ ApplicationWindow {
         }
     }
 
-    // Forward dialog acceptance to Python Main which will perform deletion
+
     Component.onCompleted: {
         deleteDialog.acceptedWithPayload.connect(function(p) {
             if (root.main && typeof root.main.performDelete === 'function') {
@@ -497,7 +349,7 @@ ApplicationWindow {
             }
         })
 
-        // Start the main window maximized so the app always opens in full window.
+
         Qt.callLater(function() {
             try {
                 root.showMaximized()
@@ -509,83 +361,9 @@ ApplicationWindow {
         })
     }
 
-    // --- Global shortcuts ---
-    Shortcut {
-        sequences: [ StandardKey.Open ]
-        context: Qt.ApplicationShortcut
-        onActivated: folderDialog.open()
-    }
 
-    Shortcut {
-        sequence: "Ctrl+,"
-        context: Qt.ApplicationShortcut
-        onActivated: {
-            infoDialog.title = "Preferences"
-            infoDialog.text = "Preferences UI is not migrated to QML yet."
-            infoDialog.open()
-        }
-    }
-    Shortcut {
-        sequences: [ StandardKey.Copy ]
-        context: Qt.ApplicationShortcut
-        onActivated: {
-            if (!root.main) return
-            // Explorer-only: viewer copy is handled by the view window.
-            if (root.main.viewMode) return
-            var p = root.explorerSelectedPath
-            if (p) root.main.copyFiles(p)
-        }
-    }
 
-    Shortcut {
-        sequences: [ StandardKey.Cut ]
-        context: Qt.ApplicationShortcut
-        onActivated: {
-            if (!root.main) return
-            if (root.main.viewMode) return
-            var p = root.explorerSelectedPath
-            if (p) root.main.cutFiles(p)
-        }
-    }
 
-    Shortcut {
-        sequences: [ StandardKey.Paste ]
-        context: Qt.ApplicationShortcut
-        onActivated: {
-            if (!root.main) return
-            if (root.main.viewMode) return
-            root.main.pasteFiles()
-        }
-    }
-
-    Shortcut {
-        sequence: "Delete"
-        context: Qt.ApplicationShortcut
-        onActivated: {
-            if (!root.main) return
-            if (root.main.viewMode) return
-            var p = root.explorerSelectedPath
-            if (!p) return
-            root.showDeleteDialog("Delete File", "Delete this file?", p + "\n\nIt will be moved to Recycle Bin.", p)
-        }
-    }
-
-    Shortcut {
-        sequence: "F2"
-        context: Qt.ApplicationShortcut
-        onActivated: {
-            if (!root.main) return
-            if (root.main.viewMode) return
-            var p = root.explorerSelectedPath
-            if (!p) return
-            renameDialog.oldPath = p
-            // Prefill with current basename
-            renameField.text = p.replace(/^.*[\\/]/, "")
-            renameDialog.open()
-        }
-    }
-
-    // Explorer (Grid) is always shown in the main window.
     FocusScope {
         id: explorerPage
         anchors.fill: parent
@@ -599,17 +377,11 @@ ApplicationWindow {
                 id: grid
                 anchors.fill: parent
                 anchors.margins: 12
-                // Visual thumbnail (image) width inside each cell
                 property int thumbVisualWidth: root.main ? (root.main.thumbnailWidth ? root.main.thumbnailWidth : 220) : 220
-                // Minimum horizontal spacing between thumbnails
                 property int minHSpacing: 6
-                // Compute number of columns that fit the base thumbnail width
                 property int computedCols: Math.max(1, Math.floor(width / (thumbVisualWidth + minHSpacing)))
-                // Horizontal spacing computed to evenly distribute thumbnails across the width
                 property int hSpacing: Math.max(minHSpacing, Math.floor((width - (computedCols * thumbVisualWidth)) / Math.max(1, computedCols)))
-                // The GridView cellWidth is base thumbnail width plus the computed spacing
                 cellWidth: thumbVisualWidth + hSpacing
-                // Keep cellHeight proportional to thumb visuals (allow some vertical spacing)
                 cellHeight: Math.round((thumbVisualWidth + hSpacing) * 1.2)
                 clip: true
                 model: root.main ? root.main.imageModel : null
@@ -617,66 +389,260 @@ ApplicationWindow {
                 focus: true
                 activeFocusOnTab: true
 
-                WheelHandler {
-                    id: gridWheel
-                    onWheel: function(wheel) {
-                        if (!root.main) return
-                        if (!(wheel.modifiers & Qt.ControlModifier)) return
-                        var cur = root.main.thumbnailWidth || 220
-                        var step = Math.max(8, Math.round(cur * 0.1))
-                        if (wheel.angleDelta && wheel.angleDelta.y > 0) {
-                            root.main.thumbnailWidth = Math.min(1024, cur + step)
-                        } else if (wheel.angleDelta && wheel.angleDelta.y < 0) {
-                            root.main.thumbnailWidth = Math.max(64, cur - step)
-                        }
-                        wheel.accepted = true
+                // Selection state (QML-only)
+                property var selectedIndices: []
+                property int lastClickedIndex: -1
+                property bool selectionRectVisible: false
+                property real selectionRectX: 0
+                property real selectionRectY: 0
+                property real selectionRectW: 0
+                property real selectionRectH: 0
+                property bool dragSelecting: false
+                property real pressX: 0
+                property real pressY: 0
+                property bool selectionSyncEnabled: true
+
+                function setSelectionTo(idx) {
+                    grid.selectedIndices = (idx >= 0) ? [idx] : []
+                    grid.lastClickedIndex = idx
+                    root.main.currentIndex = idx
+                    if (idx >= 0 && root.main && root.main.imageFiles && idx < root.main.imageFiles.length) {
+                        root.explorerSelectedPath = root.main.imageFiles[idx]
                     }
+                }
+
+                function setCurrentIndexOnly(idx) {
+                    root.main.currentIndex = idx
+                    if (idx >= 0 && root.main && root.main.imageFiles && idx < root.main.imageFiles.length) {
+                        root.explorerSelectedPath = root.main.imageFiles[idx]
+                    }
+                }
+
+                onCurrentIndexChanged: {
+                    if (grid.dragSelecting || !grid.selectionSyncEnabled) return
+                    if (root.main && root.main.currentIndex >= 0) {
+                        grid.selectedIndices = [root.main.currentIndex]
+                        grid.lastClickedIndex = root.main.currentIndex
+                    }
+                }
+
+                // Overlay mouse area: any drag starts selection and disables scrolling
+                MouseArea {
+                    id: selectionMouse
+                    anchors.fill: parent
+                    acceptedButtons: Qt.LeftButton
+                    hoverEnabled: true
+
+                    onPressed: function(mouse) {
+                        // capture start (content coordinates)
+                        grid.dragSelecting = false
+                        grid.selectionRectVisible = true
+                        grid.pressX = mouse.x
+                        grid.pressY = mouse.y
+                        grid.selectionRectX = mouse.x + grid.contentX
+                        grid.selectionRectY = mouse.y + grid.contentY
+                        grid.selectionRectW = 0
+                        grid.selectionRectH = 0
+
+                        // block GridView scrolling while dragging selection
+                        grid.interactive = false
+
+                        // prepare selection behavior: clear unless ctrl/shift held
+                        if (!(mouse.modifiers & Qt.ControlModifier) && !(mouse.modifiers & Qt.ShiftModifier)) {
+                            grid.selectedIndices = []
+                        }
+                    }
+
+                    onPositionChanged: function(mouse) {
+                        var dx = mouse.x - grid.pressX
+                        var dy = mouse.y - grid.pressY
+                        // small movement -> not a dragSelect yet
+                        if (!grid.dragSelecting && Math.abs(dx) + Math.abs(dy) > 6) {
+                            grid.dragSelecting = true
+                        }
+
+                        if (grid.dragSelecting) {
+                            var cx = mouse.x + grid.contentX
+                            var cy = mouse.y + grid.contentY
+                            grid.selectionRectW = cx - grid.selectionRectX
+                            grid.selectionRectH = cy - grid.selectionRectY
+                        }
+                    }
+
+                    onReleased: function(mouse) {
+                        grid.interactive = true
+                        var dx = mouse.x - grid.pressX
+                        var dy = mouse.y - grid.pressY
+
+                        if (grid.dragSelecting) {
+                            // finalize rectangular selection (content coordinates)
+                            grid.selectionRectVisible = false
+                            grid.dragSelecting = false
+
+                            var x1 = Math.min(grid.selectionRectX, grid.selectionRectX + grid.selectionRectW)
+                            var y1 = Math.min(grid.selectionRectY, grid.selectionRectY + grid.selectionRectH)
+                            var x2 = Math.max(grid.selectionRectX, grid.selectionRectX + grid.selectionRectW)
+                            var y2 = Math.max(grid.selectionRectY, grid.selectionRectY + grid.selectionRectH)
+
+                            // use cell math for reliable hit detection
+                            var total = root.main ? (root.main.imageFiles ? root.main.imageFiles.length : 0) : 0
+                            var cols = grid.computedCols || 1
+                            var newSel = grid.selectedIndices.slice()
+                            for (var i = 0; i < total; ++i) {
+                                var col = i % cols
+                                var row = Math.floor(i / cols)
+                                var ix = col * grid.cellWidth
+                                var iy = row * grid.cellHeight
+                                var iw = grid.cellWidth
+                                var ih = grid.cellHeight
+
+                                // check overlap
+                                if (!(ix > x2 || (ix + iw) < x1 || iy > y2 || (iy + ih) < y1)) {
+                                    if (newSel.indexOf(i) === -1) newSel.push(i)
+                                }
+                            }
+                            grid.selectedIndices = newSel
+
+                            // set currentIndex to last selected
+                            if (grid.selectedIndices.length > 0) {
+                                var last = grid.selectedIndices[grid.selectedIndices.length - 1]
+                                grid.selectionSyncEnabled = false
+                                grid.setCurrentIndexOnly(last)
+                                grid.lastClickedIndex = last
+                                Qt.callLater(function() { grid.selectionSyncEnabled = true })
+                            }
+
+                        } else {
+                            // treat as click (no significant drag)
+                            var cx = mouse.x + grid.contentX
+                            var cy = mouse.y + grid.contentY
+                            var cols = grid.computedCols || 1
+                            var col = Math.floor(cx / grid.cellWidth)
+                            var row = Math.floor(cy / grid.cellHeight)
+                            if (col < 0 || row < 0) {
+                                // click on empty area -> clear selection unless modifiers held
+                                if (!(mouse.modifiers & Qt.ControlModifier) && !(mouse.modifiers & Qt.ShiftModifier)) {
+                                    grid.selectedIndices = []
+                                    root.main.currentIndex = -1
+                                    root.explorerSelectedPath = ""
+                                }
+                            } else {
+                                var idx = row * cols + col
+                                var total = root.main ? (root.main.imageFiles ? root.main.imageFiles.length : 0) : 0
+                                if (idx >= 0 && idx < total) {
+                                    if (mouse.modifiers & Qt.ShiftModifier && grid.lastClickedIndex >= 0) {
+                                        var a = Math.min(grid.lastClickedIndex, idx)
+                                        var b = Math.max(grid.lastClickedIndex, idx)
+                                        var newSel = grid.selectedIndices.slice()
+                                        for (var i = a; i <= b; ++i) {
+                                            if (newSel.indexOf(i) === -1) newSel.push(i)
+                                        }
+                                        grid.selectedIndices = newSel
+                                        grid.lastClickedIndex = idx
+                                        grid.selectionSyncEnabled = false
+                                        grid.setCurrentIndexOnly(idx)
+                                        Qt.callLater(function() { grid.selectionSyncEnabled = true })
+                                        grid.positionViewAtIndex(idx, GridView.Visible)
+                                    } else if (mouse.modifiers & Qt.ControlModifier) {
+                                        var newSel = grid.selectedIndices.slice()
+                                        var p = newSel.indexOf(idx)
+                                        if (p === -1) newSel.push(idx)
+                                        else newSel.splice(p, 1)
+                                        grid.selectedIndices = newSel
+                                        grid.lastClickedIndex = idx
+                                        grid.selectionSyncEnabled = false
+                                        grid.setCurrentIndexOnly(idx)
+                                        Qt.callLater(function() { grid.selectionSyncEnabled = true })
+                                        grid.positionViewAtIndex(idx, GridView.Visible)
+                                    } else {
+                                        grid.setSelectionTo(idx)
+                                        grid.selectionRectVisible = false
+                                        return
+                                    }
+                                }
+                            }
+                        }
+
+                        grid.forceActiveFocus()
+                        grid.selectionRectVisible = false
+                    }
+                }
+
+                // visual selection rect (content coords -> view coords)
+                Rectangle {
+                    visible: grid.selectionRectVisible
+                    color: "#4a8ad4"
+                    opacity: 0.25
+                    border.color: "#4a8ad4"
+                    border.width: 1
+                    x: grid.selectionRectX - grid.contentX
+                    y: grid.selectionRectY - grid.contentY
+                    width: Math.abs(grid.selectionRectW)
+                    height: Math.abs(grid.selectionRectH)
+                    z: 100
                 }
 
                 Keys.onPressed: function(event) {
                     if (!root.main) return
-                    if (root.main.viewMode) return
 
-                    function updateSelection(newIdx) {
-                        if (newIdx < 0 || newIdx === root.main.currentIndex) return
-                        // Only update main.currentIndex; grid.currentIndex follows via binding.
-                        root.main.currentIndex = newIdx
-                        if (root.main.imageFiles && newIdx >= 0 && newIdx < root.main.imageFiles.length) {
-                            root.explorerSelectedPath = root.main.imageFiles[newIdx]
+                    var total = root.main.imageFiles ? root.main.imageFiles.length : 0
+                    var idx = (root.main.currentIndex >= 0) ? root.main.currentIndex : 0
+                    var cols = grid.computedCols || 1
+
+                    // Arrow key navigation within the grid
+                    if (event.key === Qt.Key_Left) {
+                        if (idx > 0) {
+                            idx = Math.max(0, idx - 1)
+                            grid.setSelectionTo(idx)
+                            grid.positionViewAtIndex(idx, GridView.Visible)
                         }
+                        event.accepted = true
+                        return
                     }
 
-                    var cols = Math.floor((grid.width || grid.contentWidth || grid.implicitWidth || grid.cellWidth) / grid.cellWidth)
-                    if (!cols || cols < 1) cols = 1
-                    var total = (root.main.imageFiles && root.main.imageFiles.length) ? root.main.imageFiles.length : (grid.count || 0)
                     if (event.key === Qt.Key_Right) {
-                        updateSelection(Math.min(total - 1, root.main.currentIndex + 1))
+                        if (idx < total - 1) {
+                            idx = Math.min(total - 1, idx + 1)
+                            grid.setSelectionTo(idx)
+                            grid.positionViewAtIndex(idx, GridView.Visible)
+                        }
                         event.accepted = true
-                    } else if (event.key === Qt.Key_Left) {
-                        updateSelection(Math.max(0, root.main.currentIndex - 1))
+                        return
+                    }
+
+                    if (event.key === Qt.Key_Up) {
+                        if (idx > 0) {
+                            idx = Math.max(0, idx - cols)
+                            grid.setSelectionTo(idx)
+                            grid.positionViewAtIndex(idx, GridView.Visible)
+                        }
                         event.accepted = true
-                    } else if (event.key === Qt.Key_Down) {
-                        updateSelection(Math.min(total - 1, root.main.currentIndex + cols))
+                        return
+                    }
+
+                    if (event.key === Qt.Key_Down) {
+                        if (idx < total - 1) {
+                            idx = Math.min(total - 1, idx + cols)
+                            grid.setSelectionTo(idx)
+                            grid.positionViewAtIndex(idx, GridView.Visible)
+                        }
                         event.accepted = true
-                    } else if (event.key === Qt.Key_Up) {
-                        updateSelection(Math.max(0, root.main.currentIndex - cols))
-                        event.accepted = true
-                    } else if (event.key === Qt.Key_Home) {
-                        updateSelection(0)
-                        event.accepted = true
-                    } else if (event.key === Qt.Key_End) {
-                        updateSelection(Math.max(0, total - 1))
-                        event.accepted = true
-                    } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+                        return
+                    }
+
+                    // Enter opens viewer for the current selection
+                    if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
                         if (root.main.currentIndex >= 0) {
                             root.explorerSelectedPath = (root.main.imageFiles && root.main.currentIndex < root.main.imageFiles.length)
                                 ? root.main.imageFiles[root.main.currentIndex]
                                 : root.explorerSelectedPath
                             root.main.viewMode = true
-                            event.accepted = true
                         }
+                        event.accepted = true
                     }
                 }
+
+
 
                 delegate: Item {
                     id: delegateRoot
@@ -693,7 +659,7 @@ ApplicationWindow {
 
                     Rectangle {
                         id: card
-                        // Make the inner card the visual thumbnail width and center it inside the cell
+
                         width: grid.thumbVisualWidth
                         anchors.horizontalCenter: parent.horizontalCenter
                         anchors.top: parent.top
@@ -701,20 +667,13 @@ ApplicationWindow {
                         anchors.bottomMargin: 6
                         height: parent.height - 12
                         radius: 8
-                        color: (delegateRoot.index === grid.currentIndex) ? "#2a3b52" : "#1a1a1a"
-                        border.color: (delegateRoot.index === grid.currentIndex) ? "#6aa9ff" : "#2a2a2a"
+                        color: (grid.selectedIndices.indexOf(delegateRoot.index) !== -1) ? "#2a3b52" : "#1a1a1a"
+                        border.color: (grid.selectedIndices.indexOf(delegateRoot.index) !== -1) ? "#6aa9ff" : "#2a2a2a"
                         border.width: 1
 
-                        HoverHandler {
-                            id: hover
-                        }
-
-                        ToolTip.visible: hover.hovered
+                        ToolTip.visible: false
                         ToolTip.delay: 300
-                        ToolTip.text: [
-                            delegateRoot.name,
-                            [delegateRoot.resolutionText, delegateRoot.sizeText].filter(Boolean).join(" | ")
-                        ].filter(Boolean).join("\n")
+                        ToolTip.text: [delegateRoot.name, [delegateRoot.resolutionText, delegateRoot.sizeText].filter(Boolean).join(" | ")].filter(Boolean).join("\n")
 
                         ColumnLayout {
                             anchors.fill: parent
@@ -723,8 +682,8 @@ ApplicationWindow {
 
                             Rectangle {
                                 Layout.fillWidth: true
-                                // Make the image container height scale with the thumbnail visual width
-                                // Use a reasonable thumbnail aspect ratio (height/width), default ~195/256
+
+
                                 Layout.preferredHeight: Math.round(grid.thumbVisualWidth * 0.76)
                                 radius: 6
                                 color: "#0f0f0f"
@@ -820,26 +779,7 @@ ApplicationWindow {
                             }
                         }
 
-                        MouseArea {
-                            anchors.fill: parent
-                            acceptedButtons: Qt.LeftButton | Qt.RightButton
-                            onClicked: function(mouse) {
-                                if (!root.main) return
-                                root.main.currentIndex = delegateRoot.index
-                                root.explorerSelectedPath = delegateRoot.path
-                                if (mouse.button === Qt.RightButton) {
-                                    ctxMenu.popup()
-                                } else {
-                                    // Single click selects; double click opens.
-                                }
-                            }
-                            onDoubleClicked: {
-                                if (!root.main) return
-                                root.main.currentIndex = delegateRoot.index
-                                root.explorerSelectedPath = delegateRoot.path
-                                root.main.viewMode = true
-                            }
-                        }
+
                     }
                 }
             }
