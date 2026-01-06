@@ -71,7 +71,7 @@ class SettingsManager:
         return key in self._settings
 
     def set(self, key: str, value: Any) -> None:
-        if key == "last_parent_dir" and isinstance(value, str):
+        if key in {"last_parent_dir", "last_open_dir"} and isinstance(value, str):
             value = abs_dir_str(value)
         self._settings[key] = value
         self.save()
@@ -91,6 +91,11 @@ class SettingsManager:
     @property
     def last_parent_dir(self) -> str | None:
         val = self.get("last_parent_dir")
+        return val if isinstance(val, str) and os.path.isdir(val) else None
+
+    @property
+    def last_open_dir(self) -> str | None:
+        val = self.get("last_open_dir")
         return val if isinstance(val, str) and os.path.isdir(val) else None
 
     def determine_startup_background(self) -> QColor:
