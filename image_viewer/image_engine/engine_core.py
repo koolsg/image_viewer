@@ -228,11 +228,18 @@ class EngineCore(QObject):
         signature (excluding thumbnail DB artifacts) actually changes.
         """
         entries, image_paths, dir_sig = self._scan_folder(p)
+        _logger.debug(
+            "_scan_emit_and_prefetch: found %d files, %d images (force=%s)",
+            len(entries),
+            len(image_paths),
+            force,
+        )
 
         if not force and self._last_dir_sig == dir_sig:
-            _logger.debug("watcher: no meaningful dir changes; skip refresh")
+            _logger.debug("_scan_emit_and_prefetch: no meaningful dir changes; skip refresh")
             return
 
+        _logger.debug("_scan_emit_and_prefetch: directory signature changed or force=True")
         self._last_dir_sig = dir_sig
 
         self.folder_scanned.emit(
@@ -339,51 +346,63 @@ class EngineCore(QObject):
     def _on_directory_changed(self, path: str) -> None:
         # Debounce refresh storms.
         if time.monotonic() < self._suppress_watch_until:
+            _logger.debug("watcher: directoryChanged %s (suppressed by rate limit)", path)
             return
-        _logger.debug("watcher: directoryChanged %s", path)
+        _logger.debug("watcher: directoryChanged %s - scheduling refresh", path)
         self._schedule_refresh()
 
     def _on_file_changed(self, path: str) -> None:
         # We do not add per-file watches (too expensive); keep for completeness.
         if time.monotonic() < self._suppress_watch_until:
+            _logger.debug("watcher: fileChanged %s (suppressed by rate limit)", path)
             return
         _logger.debug("watcher: fileChanged %s", path)
         self._schedule_refresh()
 
     def _schedule_refresh(self) -> None:
         if self._refresh_timer is None:
+            _logger.debug("_schedule_refresh: refresh_timer is None")
             return
         # Ignore watcher activity caused by our own DB writes.
         if time.monotonic() < self._suppress_watch_until:
+            _logger.debug("_schedule_refresh: suppressed by rate limit")
             return
+        _logger.debug("_schedule_refresh: starting refresh timer (interval=%d ms)", self._refresh_timer.interval())
         self._refresh_timer.start()
 
     def _refresh_current_folder(self) -> None:
         folder = self._current_folder
         if not folder:
+            _logger.debug("_refresh_current_folder: no current folder")
             return
         try:
             p = abs_dir(folder)
         except Exception as exc:
+            _logger.error("_refresh_current_folder: invalid folder %s: %s", folder, exc)
             self.error.emit("watch_refresh", f"invalid folder: {folder} ({exc})")
             return
         if not p.is_dir():
             # Folder deleted/moved.
+            _logger.error("_refresh_current_folder: folder missing: %s", folder)
             self.error.emit("watch_refresh", f"folder missing: {folder}")
             return
 
         # Rescan + restart DB preload only if something meaningful changed.
+        _logger.debug("_refresh_current_folder: starting rescan for %s", folder)
         self._scan_emit_and_prefetch(p, abs_dir_str(p), force=False)
 
     def request_thumbnail(self, path: str) -> None:
         """Request a thumbnail decode+store for a single path."""
         if not path:
+            _logger.debug("request_thumbnail: empty path")
             return
         if self._thumb_loader is None:
+            _logger.debug("request_thumbnail: thumb_loader is None")
             return
 
         key = db_key(path)
         if key in self._thumb_pending:
+            _logger.debug("request_thumbnail: %s already pending", path)
             return
 
         # If we've already generated a thumbnail for this file at the current
@@ -400,11 +419,13 @@ class EngineCore(QObject):
 
             tw, th = self._thumb_size
             if (mtime_ms, size, tw, th) == done:
+                _logger.debug("request_thumbnail: %s cache HIT (size/mtime unchanged)", path)
                 return
 
         self._thumb_pending.add(key)
 
         tw, th = self._thumb_size
+        _logger.debug("request_thumbnail: queuing decode for %s", path)
         self._thumb_loader.request_load(path, tw, th, "both")
 
     # ---- DB preload ------------------------------------------------
@@ -534,6 +555,7 @@ class EngineCore(QObject):
             sample = []
         _logger.debug("db preload missing_paths: count=%d sample=%s", len(paths), sample)
 
+        queued = 0
         # Queue and throttle so we can eventually generate all thumbs.
         for path in paths:
             try:
@@ -541,32 +563,53 @@ class EngineCore(QObject):
                 # Convert to a local filesystem path before handing off to the decoder.
                 p = str(Path(path))
                 if Path(p).suffix.lower() not in _IMAGE_EXTS:
+                    _logger.debug("_on_db_missing_paths: skipping non-image %s", p)
                     continue
                 key = db_key(p)
                 if key in self._missing_thumb_seen:
+                    _logger.debug("_on_db_missing_paths: already queued %s", p)
                     continue
                 self._missing_thumb_seen.add(key)
                 self._missing_thumb_queue.append(p)
-            except Exception:
+                queued += 1
+            except Exception as e:
+                _logger.debug("_on_db_missing_paths: error processing %s: %s", path, e)
                 continue
+
+        _logger.debug(
+            "_on_db_missing_paths: queued %d new thumbnails (queue size=%d)",
+            queued,
+            len(self._missing_thumb_queue),
+        )
 
         with contextlib.suppress(Exception):
             if self._missing_thumb_timer is not None and not self._missing_thumb_timer.isActive():
+                _logger.debug("_on_db_missing_paths: starting missing_thumb_timer")
                 self._missing_thumb_timer.start()
+            else:
+                _logger.debug("_on_db_missing_paths: timer already active or None")
 
     def _pump_missing_thumb_queue(self) -> None:
         """Drain missing thumbnail queue in small batches."""
         # Keep this conservative; the Loader has its own concurrency, but the queue
         # can be huge and we don't want to enqueue everything immediately.
         batch = 8
+        processed = 0
         for _ in range(batch):
             try:
                 p = self._missing_thumb_queue.popleft()
             except IndexError:
                 break
             with contextlib.suppress(Exception):
+                _logger.debug("_pump_missing_thumb_queue: requesting thumbnail for %s", p)
                 self.request_thumbnail(p)
+                processed += 1
 
+        _logger.debug(
+            "_pump_missing_thumb_queue: processed %d items (queue remaining=%d)",
+            processed,
+            len(self._missing_thumb_queue),
+        )
         with contextlib.suppress(Exception):
             if self._missing_thumb_queue and self._missing_thumb_timer is not None:
                 self._missing_thumb_timer.start()
@@ -577,6 +620,12 @@ class EngineCore(QObject):
         try:
             key = db_key(path)
             if error or image_data is None:
+                _logger.error(
+                    "_on_thumb_decoded: decode failed for %s: error=%s image_data=%s",
+                    path,
+                    error,
+                    "None" if image_data is None else f"type={type(image_data)}",
+                )
                 self.error.emit("thumb_decode", f"{path}: {error}")
                 return
 
@@ -628,6 +677,7 @@ class EngineCore(QObject):
             if self._db is not None:
                 # DB updates will change the directory and can trigger watcher events.
                 self._suppress_watch_until = max(self._suppress_watch_until, time.monotonic() + 0.75)
+                _logger.debug("_on_thumb_decoded: storing thumbnail for %s", path)
                 self._db.upsert_meta(
                     path,
                     mtime_ms,
@@ -641,9 +691,12 @@ class EngineCore(QObject):
                         "created_at": time.time(),
                     },
                 )
+            else:
+                _logger.warning("_on_thumb_decoded: DB is None, cannot store thumbnail for %s", path)
 
             # Mark complete before releasing the pending gate.
             self._thumb_done[key] = (mtime_ms, size, tw, th)
+            _logger.debug("_on_thumb_decoded: completed for %s", path)
 
             self.thumb_generated.emit(
                 {

@@ -50,31 +50,56 @@ def _decode_with_pyvips_from_file(
         pyvips.cache_set_max_mem(0)
         pyvips.cache_set_max_files(0)
 
+    _logger.debug(
+        "_decode_with_pyvips_from_file: path=%s target_width=%s target_height=%s size=%s",
+        path,
+        target_width,
+        target_height,
+        size,
+    )
+
     if (target_width and target_width > 0) or (target_height and target_height > 0):
         tw = int(target_width or 0)
         th = int(target_height or 0)
         if tw > 0 and th > 0:
+            _logger.debug("_decode_with_pyvips_from_file: using thumbnail(tw=%d, th=%d, size=%s)", tw, th, size)
             image = pyvips.Image.thumbnail(path, tw, height=th, size=size)
         elif tw > 0:
+            _logger.debug("_decode_with_pyvips_from_file: using thumbnail(tw=%d, size=%s)", tw, size)
             image = pyvips.Image.thumbnail(path, tw, size=size)
         else:
+            _logger.debug("_decode_with_pyvips_from_file: using new_from_file (no target height)")
             image = pyvips.Image.new_from_file(path, access="sequential")
     else:
+        _logger.debug("_decode_with_pyvips_from_file: using new_from_file (no target size)")
         image = pyvips.Image.new_from_file(path, access="sequential")
+
+    _logger.debug(
+        "_decode_with_pyvips_from_file: image loaded bands=%d format=%s height=%d width=%d",
+        image.bands,
+        image.format,
+        image.height,
+        image.width,
+    )
 
     with contextlib.suppress(Exception):
         image = image.copy_memory()
     with contextlib.suppress(Exception):
         image = image.colourspace("srgb")
     if image.hasalpha():
+        _logger.debug("_decode_with_pyvips_from_file: flattening alpha channel")
         image = image.flatten(background=[0, 0, 0])
     if image.bands > RGB_CHANNELS:
+        _logger.debug("_decode_with_pyvips_from_file: extracting RGB from %d bands", image.bands)
         image = image.extract_band(0, RGB_CHANNELS)
     elif image.bands < RGB_CHANNELS:
+        _logger.debug("_decode_with_pyvips_from_file: bandjoin to create RGB from %d bands", image.bands)
         image = pyvips.Image.bandjoin([image] * RGB_CHANNELS)
     if image.format != "uchar":
+        _logger.debug("_decode_with_pyvips_from_file: casting from %s to uchar", image.format)
         image = image.cast("uchar")
 
+    _logger.debug("_decode_with_pyvips_from_file: writing to memory, final bands=%d", image.bands)
     mem = image.write_to_memory()
     array = np.frombuffer(mem, dtype=np.uint8).reshape(image.height, image.width, image.bands)
     array = array.copy()
@@ -82,6 +107,7 @@ def _decode_with_pyvips_from_file(
         del image
     if array.shape[2] != RGB_CHANNELS:
         raise RuntimeError(f"Unsupported band count after conversion: {array.shape[2]}")
+    _logger.debug("_decode_with_pyvips_from_file: decoded successfully shape=%s", array.shape)
     return array
 
 
@@ -121,10 +147,22 @@ def decode_image(
     Returns (path, array|None, error|None).
     """
     try:
+        _logger.debug(
+            "decode_image: starting for %s (target=%sx%s size=%s)",
+            file_path,
+            target_width,
+            target_height,
+            size,
+        )
         array = _decode_with_pyvips_from_file(file_path, target_width, target_height, size)
+        _logger.debug(
+            "decode_image: success for %s shape=%s",
+            file_path,
+            array.shape if array is not None else None,
+        )
         return file_path, array, None
     except Exception as e:
-        _logger.debug("decode failed: %s", e)
+        _logger.error("decode_image: failed for %s: %s", file_path, e, exc_info=True)
         return file_path, None, str(e)
 
 
