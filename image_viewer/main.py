@@ -549,6 +549,9 @@ class Main(QObject):
         the Python logger is filtered or when we need visibility very early.
         """
         msg = str(message)
+        # Integrate QML-originated diagnostics with the Python logging pipeline.
+        # Also print directly to stderr to ensure visibility even when log filters are active.
+        _logger.debug("[QML] %s", msg)
         print(f"[QML] {msg}", file=sys.stderr, flush=True)
 
     @Slot()
