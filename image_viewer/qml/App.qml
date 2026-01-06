@@ -656,7 +656,7 @@ ApplicationWindow {
                                     paths.push(root.main.imageFiles[id])
                                 }
                             }
-                            if (paths.length > 0) root.main.copyFiles(paths)
+                            if (paths.length > 0) root.main.copyFiles(JSON.stringify(paths))
                         }
                         event.accepted = true
                     }
@@ -803,9 +803,10 @@ ApplicationWindow {
                                                 paths.push(root.main.imageFiles[idx])
                                             }
                                         }
-                                        if (paths.length > 0) {
-                                            root.main.copyFiles(paths)
-                                        }
+                            console.log("copy hotkey: typeof=" + typeof paths + " isArray=" + Array.isArray(paths) + " len=" + (paths.length || 0) + " paths=" + JSON.stringify(paths))
+                            if (paths.length > 0) {
+                                root.main.copyFiles(paths)
+                            }
                                     }
                                 }
                             }

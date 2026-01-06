@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import contextlib
+import json
 import os
 import sys
 from pathlib import Path
@@ -657,7 +658,7 @@ class Main(QObject):
 
         self._set_background_color(str(payload))
 
-    @Slot(object)
+    @Slot("QVariant")
     def copyFiles(self, payload) -> None:
         """Copy one or more file paths.
 
@@ -672,7 +673,7 @@ class Main(QObject):
         self._clipboard_mode = "copy"
         self.clipboardChanged.emit()
 
-    @Slot(object)
+    @Slot("QVariant")
     def cutFiles(self, payload) -> None:
         """Cut one or more file paths.
 
@@ -682,6 +683,10 @@ class Main(QObject):
         paths: list[str] = _coerce_paths(payload)
         if not paths:
             return
+
+        # On Windows, setting clipboard for cut/move requires the shell to see the drop-effect
+        # We still use the same helper which sets URLs to the clipboard; Windows will interpret
+        # these as files and the subsequent paste handler will move them if mode == 'cut'.
         cut_files_to_clipboard(paths)
         self._clipboard_paths = list(paths)
         self._clipboard_mode = "cut"
@@ -1003,18 +1008,35 @@ def _coerce_paths(payload: object) -> list[str]:
     Accepts:
     - Python list/tuple/set of strings
     - Single string
+    - JSON-encoded list from QML (string)
+    - QVariantList (PySide wrapper)
     """
     if payload is None:
         return []
-    # Prefer native sequence types coming from QML (QVariantList) or Python.
+
+    # QVariantList may arrive as a PySide-specific type that acts like a list
+    try:
+        if hasattr(payload, "toList"):
+            lst = payload.toList()
+            return [str(p) for p in lst if p is not None]
+    except Exception:
+        pass
+
+    # Handle JSON-encoded lists passed from QML
+    if isinstance(payload, str):
+        s = str(payload)
+        try:
+            # Attempt to parse JSON-encoded list from QML
+            v = json.loads(s)
+            if isinstance(v, (list, tuple)):
+                return [str(p) for p in v if p is not None]
+        except Exception:
+            # Not JSON - treat as single path string
+            return [s]
+
     if isinstance(payload, (list, tuple, set)):
         return [str(p) for p in payload if p is not None]
 
-    # Treat strings as single-path values.
-    if isinstance(payload, str):
-        return [payload]
-
-    # Fallback: coerce any other object to string.
     return [str(payload)]
 
 

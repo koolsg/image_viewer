@@ -18,7 +18,7 @@ Code is organized into the `image_viewer/` package for application logic and UI
 - Python: 3.11+
 - Package/dependency management: `uv` with `pyproject.toml` and `uv.lock`.
 - Core runtime deps (from `pyproject.toml`): `pyside6`, `pyvips[binary]`, `numpy`, `send2trash`.
-- Dev tools: `ruff`, `pyright`, `pytest`, `pytest-qt`, `pyside6-stubs`.
+- Dev tools: `ruff`, `pyright`, `pytest`, `pytest-qt`, `pyside6-stubs`. `pyside6-qmllint`
 - Windows-specific note: if pyvips DLLs are not discoverable on `PATH`, follow the README guidance (e.g. install `pyvips[binary]` or configure `LIBVIPS_BIN` via a `.env` file next to the app).
 
 ## Common commands
