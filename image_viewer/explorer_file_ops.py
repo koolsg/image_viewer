@@ -99,6 +99,35 @@ def paste_files(dest_folder: str, clipboard_paths: list[str], mode: str) -> tupl
     return success_count, failed_paths
 
 
+def get_files_from_clipboard() -> list[str] | None:
+    """Get file paths from the system clipboard.
+
+    Returns:
+        List of file paths from clipboard, or None if clipboard doesn't contain files.
+    """
+    cb = QGuiApplication.clipboard()
+    if cb is None:
+        return None
+
+    mime = cb.mimeData()
+    if mime is None:
+        return None
+
+    if not mime.hasUrls():
+        return None
+
+    urls = mime.urls()
+    if not urls:
+        return None
+
+    paths: list[str] = []
+    for url in urls:
+        if url.isLocalFile():
+            paths.append(url.toLocalFile())
+
+    return paths if paths else None
+
+
 def rename_file(path: str, new_name: str) -> str:
     """Rename a file within the same directory.
 
