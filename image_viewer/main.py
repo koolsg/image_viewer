@@ -1002,41 +1002,82 @@ class Main(QObject):
             _logger.error("performDelete failed: %s", e)
 
 
-def _coerce_paths(payload: object) -> list[str]:
+def _handle_qjs_value(payload: object) -> list[str] | None:
+    """Try to handle QJSValue from QML."""
+    try:
+        if payload.__class__.__name__ != "QJSValue":
+            return None
+        js_value = payload  # type: ignore[assignment]
+        if hasattr(js_value, "isArray") and js_value.isArray():  # type: ignore[attr-defined]
+            result = []
+            length_prop = js_value.property("length")  # type: ignore[attr-defined]
+            length = length_prop.toInt()  # type: ignore[attr-defined]
+            for i in range(length):
+                elem = js_value.property(i)  # type: ignore[attr-defined]
+                if elem.isString():  # type: ignore[attr-defined]
+                    result.append(elem.toString())  # type: ignore[attr-defined]
+                elif not elem.isNull() and not elem.isUndefined():  # type: ignore[attr-defined]
+                    result.append(str(elem.toVariant()))  # type: ignore[attr-defined]
+            _logger.debug("_coerce_paths: handled QJSValue array with %d items", len(result))
+            return result
+        if js_value.isString():  # type: ignore[attr-defined]
+            s = js_value.toString()  # type: ignore[attr-defined]
+            _logger.debug("_coerce_paths: handled QJSValue string: %r", s)
+            return [s]
+        variant = js_value.toVariant()  # type: ignore[attr-defined]
+        return [str(variant)]
+    except Exception as e:
+        _logger.debug("_coerce_paths: QJSValue handling failed: %s", e)
+        return None
+
+
+def _coerce_paths(payload: object) -> list[str]:  # noqa: PLR0911
     """Coerce a QML-provided payload into a list of filesystem paths.
 
-    Accepts:
-    - Python list/tuple/set of strings
-    - Single string
-    - JSON-encoded list from QML (string)
-    - QVariantList (PySide wrapper)
+    Accepts QJSValue arrays (most common), native Python lists, QVariantList,
+    single strings, and JSON-encoded lists.
     """
+    result: list[str] | None = None
     if payload is None:
         return []
 
-    # QVariantList may arrive as a PySide-specific type that acts like a list
-    try:
-        if hasattr(payload, "toList"):
-            lst = payload.toList()
-            return [str(p) for p in lst if p is not None]
-    except Exception:
-        pass
+    # Try QJSValue first (most common case from QML)
+    result = _handle_qjs_value(payload)
+    if result is not None:
+        return result
 
-    # Handle JSON-encoded lists passed from QML
+    # Native Python collections
+    if isinstance(payload, (list, tuple, set)):
+        result = [str(p) for p in payload if p is not None]
+        _logger.debug("_coerce_paths: handled as list/tuple/set with %d items", len(result))
+        return result
+
+    # QVariantList
+    if hasattr(payload, "toList"):
+        try:
+            lst = payload.toList()  # type: ignore[attr-defined]
+            result = [str(p) for p in lst if p is not None]
+            _logger.debug("_coerce_paths: handled as QVariantList with %d items", len(result))
+            return result
+        except Exception as e:
+            _logger.debug("_coerce_paths: toList() failed: %s", e)
+
+    # JSON-encoded string
     if isinstance(payload, str):
         s = str(payload)
         try:
-            # Attempt to parse JSON-encoded list from QML
             v = json.loads(s)
             if isinstance(v, (list, tuple)):
-                return [str(p) for p in v if p is not None]
+                result = [str(p) for p in v if p is not None]
+                _logger.debug("_coerce_paths: parsed JSON string with %d items", len(result))
+                return result
         except Exception:
-            # Not JSON - treat as single path string
-            return [s]
+            pass
+        _logger.debug("_coerce_paths: treated string as single path")
+        return [s]
 
-    if isinstance(payload, (list, tuple, set)):
-        return [str(p) for p in payload if p is not None]
-
+    # Fallback
+    _logger.debug("_coerce_paths: converted to string fallback")
     return [str(payload)]
 
 

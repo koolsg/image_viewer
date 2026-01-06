@@ -656,7 +656,7 @@ ApplicationWindow {
                                     paths.push(root.main.imageFiles[id])
                                 }
                             }
-                            if (paths.length > 0) root.main.copyFiles(JSON.stringify(paths))
+                            if (paths.length > 0) root.main.copyFiles(paths)
                         }
                         event.accepted = true
                     }
@@ -803,7 +803,6 @@ ApplicationWindow {
                                                 paths.push(root.main.imageFiles[idx])
                                             }
                                         }
-                            console.log("copy hotkey: typeof=" + typeof paths + " isArray=" + Array.isArray(paths) + " len=" + (paths.length || 0) + " paths=" + JSON.stringify(paths))
                             if (paths.length > 0) {
                                 root.main.copyFiles(paths)
                             }
