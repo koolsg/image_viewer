@@ -496,6 +496,17 @@ ApplicationWindow {
                 root.main.performDelete(p)
             }
         })
+
+        // Start the main window maximized so the app always opens in full window.
+        Qt.callLater(function() {
+            try {
+                root.showMaximized()
+                root.requestActivate()
+                root.raise()
+            } catch (e) {
+                console.log("Failed to maximize on startup: " + e)
+            }
+        })
     }
 
     // --- Global shortcuts ---
@@ -609,15 +620,17 @@ ApplicationWindow {
                         }
                     }
 
-                    var cols = Math.max(1, Math.floor(grid.width / grid.cellWidth))
+                    var cols = Math.floor((grid.width || grid.contentWidth || grid.implicitWidth || grid.cellWidth) / grid.cellWidth)
+                    if (!cols || cols < 1) cols = 1
+                    var total = (root.main.imageFiles && root.main.imageFiles.length) ? root.main.imageFiles.length : (grid.count || 0)
                     if (event.key === Qt.Key_Right) {
-                        updateSelection(Math.min(grid.count - 1, root.main.currentIndex + 1))
+                        updateSelection(Math.min(total - 1, root.main.currentIndex + 1))
                         event.accepted = true
                     } else if (event.key === Qt.Key_Left) {
                         updateSelection(Math.max(0, root.main.currentIndex - 1))
                         event.accepted = true
                     } else if (event.key === Qt.Key_Down) {
-                        updateSelection(Math.min(grid.count - 1, root.main.currentIndex + cols))
+                        updateSelection(Math.min(total - 1, root.main.currentIndex + cols))
                         event.accepted = true
                     } else if (event.key === Qt.Key_Up) {
                         updateSelection(Math.max(0, root.main.currentIndex - cols))
@@ -626,7 +639,7 @@ ApplicationWindow {
                         updateSelection(0)
                         event.accepted = true
                     } else if (event.key === Qt.Key_End) {
-                        updateSelection(Math.max(0, grid.count - 1))
+                        updateSelection(Math.max(0, total - 1))
                         event.accepted = true
                     } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
                         if (root.main.currentIndex >= 0) {
@@ -660,6 +673,17 @@ ApplicationWindow {
                         color: (delegateRoot.index === grid.currentIndex) ? "#2a3b52" : "#1a1a1a"
                         border.color: (delegateRoot.index === grid.currentIndex) ? "#6aa9ff" : "#2a2a2a"
                         border.width: 1
+
+                        HoverHandler {
+                            id: hover
+                        }
+
+                        ToolTip.visible: hover.hovered
+                        ToolTip.delay: 300
+                        ToolTip.text: [
+                            delegateRoot.name,
+                            [delegateRoot.resolutionText, delegateRoot.sizeText].filter(Boolean).join(" | ")
+                        ].filter(Boolean).join("\n")
 
                         ColumnLayout {
                             anchors.fill: parent
