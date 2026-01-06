@@ -53,11 +53,8 @@ class DbOperator:
         # interpreter-exit races where C extensions are unloaded while the
         # thread is still running.
         self._thread = threading.Thread(target=self._worker, daemon=False, name="DbOperatorWorker")
-        self._thread_lock = threading.Lock()
         self._stop_event = threading.Event()
         self._busy_timeout_ms = int(busy_timeout_ms)
-        # Idle timeout (seconds) after which the worker will exit if no tasks.
-        self._idle_timeout_sec = 5
         # Sentinel object used to wake the queue when shutting down
         self._sentinel = object()
         self._thread.start()
@@ -75,23 +72,11 @@ class DbOperator:
             _logger.debug("PRAGMA busy_timeout failed", exc_info=True)
         return conn
 
-    def _ensure_worker_running(self) -> None:
-        with self._thread_lock:
-            if not self._thread.is_alive():
-                _logger.debug("DbOperator: restarting worker thread")
-                self._thread = threading.Thread(target=self._worker, daemon=False, name="DbOperatorWorker")
-                self._thread.start()
-
     def schedule_write(self, fn: Callable[[sqlite3.Connection, Any], Any], *args, retries: int = 3, **kwargs) -> Future:
         fut: Future = Future()
         task = _DbTask(fn=fn, args=args, kwargs=kwargs, future=fut, retries=retries)
         self._queue.put(task)
         metrics.inc("db_operator.write_queued")
-        # Ensure worker running to service this task
-        try:
-            self._ensure_worker_running()
-        except Exception:
-            _logger.debug("failed to ensure worker running", exc_info=True)
         return fut
 
     def schedule_write_batch(
@@ -129,22 +114,8 @@ class DbOperator:
                 try:
                     item = self._queue.get(timeout=0.1)
                 except queue.Empty:
-                    # Check idle timeout: exit worker if nothing to do for a while
                     if self._stop_event.is_set():
                         break
-                    if getattr(self, "_idle_timeout_sec", None):
-                        # Wait a bit more to accumulate tasks
-                        idle_start = time.time()
-                        while time.time() - idle_start < self._idle_timeout_sec:
-                            try:
-                                item = self._queue.get(timeout=0.1)
-                                break
-                            except queue.Empty:
-                                if self._stop_event.is_set():
-                                    break
-                        else:
-                            _logger.debug("DbOperator worker idle timeout; exiting")
-                            break
                     continue
 
                 # Recognize sentinel to allow immediate wake-up during shutdown
