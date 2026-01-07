@@ -52,10 +52,27 @@ def setup_logger(level: int = logging.INFO, name: str = "image_viewer") -> loggi
 
     # Formatter (idempotent)
     # Do not include the full logger name in messages to keep output concise
-    fmt = logging.Formatter(
-        fmt="[%(asctime)s] %(levelname)s: %(message)s",
-        datefmt="%H:%M:%S",
-    )
+    class _HighlightFormatter(logging.Formatter):
+        """Formatter that highlights QML-origin messages for terminal visibility.
+
+        If a record's message contains the marker "✨ [QML]" we wrap the whole
+        formatted line with a magenta ANSI escape sequence so it stands out in
+        terminal output. The ANSI wrappers are harmless in log files (they appear
+        as escape sequences) but greatly improve visibility in interactive runs.
+        """
+
+        def format(self, record: logging.LogRecord) -> str:  # pragma: no cover - trivial formatting
+            base = super().format(record)
+            try:
+                m = record.getMessage()
+                if isinstance(m, str) and "[QML]" in m:
+                    # Magenta, bright
+                    return f"\033[95m{base}\033[0m"
+            except Exception:
+                pass
+            return base
+
+    fmt = _HighlightFormatter(fmt="[%(asctime)s] %(levelname)s: %(message)s", datefmt="%H:%M:%S")
     stream_handler.setFormatter(fmt)
 
     # Update category filter from env
