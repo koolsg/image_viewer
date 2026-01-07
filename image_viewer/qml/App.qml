@@ -412,6 +412,9 @@ ApplicationWindow {
                 // Selection state (QML-only)
                 property var selectedIndices: []
                 property int lastClickedIndex: -1
+                property int _lastClickIndex: -1
+                property real _lastClickAtMs: 0
+                property int _doubleClickIntervalMs: 350
                 property bool selectionRectVisible: false
                 property real selectionRectX: 0
                 property real selectionRectY: 0
@@ -534,9 +537,11 @@ ApplicationWindow {
                                 grid.lastClickedIndex = last
                                 Qt.callLater(function() { grid.selectionSyncEnabled = true })
                             }
+                            mouse.accepted = true
 
                         } else {
                             // treat as click (no significant drag)
+                            // Do grid selection based on click position
                             var cx = mouse.x + grid.contentX
                             var cy = mouse.y + grid.contentY
                             var cols = grid.computedCols || 1
@@ -549,10 +554,18 @@ ApplicationWindow {
                                     root.main.currentIndex = -1
                                     root.explorerSelectedPath = ""
                                 }
+                                grid._lastClickIndex = -1
+                                grid._lastClickAtMs = 0
                             } else {
                                 var idx = row * cols + col
                                 var total = root.main ? (root.main.imageFiles ? root.main.imageFiles.length : 0) : 0
                                 if (idx >= 0 && idx < total) {
+                                    var nowMs = Date.now()
+                                    var isDouble = (idx === grid._lastClickIndex) && ((nowMs - grid._lastClickAtMs) <= grid._doubleClickIntervalMs)
+                                    // Update click tracking even if modifiers are held.
+                                    grid._lastClickIndex = idx
+                                    grid._lastClickAtMs = nowMs
+
                                     if (mouse.modifiers & Qt.ShiftModifier && grid.lastClickedIndex >= 0) {
                                         var a = Math.min(grid.lastClickedIndex, idx)
                                         var b = Math.max(grid.lastClickedIndex, idx)
@@ -580,10 +593,20 @@ ApplicationWindow {
                                     } else {
                                         grid.setSelectionTo(idx)
                                         grid.selectionRectVisible = false
-                                        return
+                                    }
+
+                                    // Reliable double-click handling lives here because this overlay
+                                    // receives the left clicks (delegate MouseArea does not).
+                                    if (isDouble && root.main) {
+                                        root.main.qmlDebug("[THUMB] DOUBLE-CLICK idx=" + idx)
+                                        // Ensure currentIndex is set before switching view.
+                                        root.main.currentIndex = idx
+                                        root.main.viewMode = true
                                     }
                                 }
                             }
+                            // Consume left click; this overlay owns selection/click behavior.
+                            mouse.accepted = true
                         }
 
                         grid.forceActiveFocus()
@@ -738,6 +761,7 @@ ApplicationWindow {
                         MouseArea {
                             anchors.fill: parent
                             acceptedButtons: Qt.RightButton
+
                             onClicked: function(mouse) {
                                 if (mouse.button === Qt.RightButton) {
                                     grid.setSelectionTo(delegateRoot.index)
