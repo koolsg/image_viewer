@@ -13,13 +13,13 @@ from PySide6.QtQml import QQmlApplicationEngine
 from PySide6.QtQuick import QQuickImageProvider
 from PySide6.QtWidgets import QApplication, QMessageBox
 
-from image_viewer.explorer_file_ops import (
+from image_viewer.file_operations import (
+    rename_file,
     copy_files_to_clipboard,
     cut_files_to_clipboard,
-    delete_files_to_recycle_bin,
     get_files_from_clipboard,
     paste_files,
-    rename_file,
+    delete_files_to_recycle_bin,
 )
 from image_viewer.image_engine.engine import ImageEngine
 from image_viewer.logger import get_logger, setup_logger
