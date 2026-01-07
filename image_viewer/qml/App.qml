@@ -336,12 +336,16 @@ ApplicationWindow {
         x: Math.round(((parent ? parent.width : root.width) - width) / 2)
         y: Math.round(((parent ? parent.height : root.height) - height) / 2)
 
+        //implicitHeight: 170
+
         contentItem: ColumnLayout {
             anchors.fill: parent
             anchors.margins: 16
             spacing: 10
 
-            Label { text: "New name:"; color: "white" }
+            // Top spacer ensures content sits below title bar regardless of platform
+            //Item { Layout.preferredHeight: 20 }
+
             TextField {
                 id: renameField
                 Layout.fillWidth: true
@@ -367,6 +371,12 @@ ApplicationWindow {
                     border.color: "#555555"
                     border.width: 1
                     implicitHeight: 36
+                }
+
+                Keys.onReturnPressed: function(event) {
+                    // Pressing Enter confirms the rename (same as clicking OK)
+                    renameDialog.accept()
+                    event.accepted = true
                 }
             }
         }
