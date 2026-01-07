@@ -1,3 +1,75 @@
+## 2026-01-07
+
+### Fix: Rename dialog UX polish and fixes (T-UI-06)
+**Files:** image_viewer/qml/App.qml, dev-docs/UI/shortcuts_and_input_map.md
+**What / 문제:** The rename dialog (triggered by F2 in Explorer) sometimes opened with missing or invisible filename text, appeared in the top-left instead of centered, the selection/cursor wasn't visible on dark theme, and pressing Enter did not confirm the dialog. The label also could overlap the dialog title on some platforms.
+**Fix / 해결방법:**
+- Restricted the F2 handler to Explorer only and require exactly one selected item before opening the rename dialog.
+- Populate `renameDialog.initialName` from the selected path and ensure the `TextField` is refreshed on `onOpened`.
+- Force focus to the dialog and `TextField` on open and call `selectAll()` to select the full filename (extension included).
+- Parent the dialog to `root.contentItem` and compute `x/y` from the parent size; add implicit size and a top spacer so the title does not overlap content.
+- Improve `TextField` styling for dark theme (text color, selection colors, cursor delegate, padding, preferred height) so filename and cursor are visible.
+- Add `Keys.onReturnPressed` to the `TextField` so Enter accepts the dialog and triggers rename.
+**Checks:** Manual verification: F2 opens dialog centered; filename is visible and selected; typing and Enter confirm rename and filesystem rename occurs.
+
+### Fix Rename Dialog Filename Population (T-UI-05)
+**Files:** image_viewer/qml/App.qml
+**What:** Fixed issue where rename dialog (F2) was not populating the filename correctly or was showing stale data.
+- Updated regex to handle both backslashes and forward slashes when extracting filename from path.
+- Updated `renameDialog.onOpened` to unconditionally refresh the text field from `initialName`, fixing stale/empty text issues caused by broken bindings on reused dialogs.
+**Checks:** pyside6-qmllint: pass
+
+### QML→Python logging + reliable thumbnail double-click (T-UX-04)
+**Files:** image_viewer/qml/App.qml, image_viewer/main.py
+**What:** Integrated QML debug logging into the Python logging pipeline by routing QML messages through the existing `Main.qmlDebug()` slot. `qmlDebug()` now logs at DEBUG via the Python logger and prints to stderr for early visibility. Removed an earlier `qmlLogger` context property to avoid ambiguous access patterns. Fixed unreliable thumbnail double-click behavior by moving detection to the overlay `selectionMouse` (350ms interval) which reliably receives left-clicks; on double-click it sets `Main.currentIndex` and flips `Main.viewMode` and emits an explicit `[QML] [THUMB] DOUBLE-CLICK idx=...` message via `qmlDebug()`. Simplified delegate `MouseArea` to handle right-click context menu only and consolidated event ownership in the overlay.
+**Checks:** Ruff: pass; Pyright: pass; Manual runtime verification: pending (please trigger a double-click and paste the debug output)
+
+### Improve QML logging reliability & visibility (T-LOG-01)
+**Files:** image_viewer/qml/App.qml, image_viewer/main.py, image_viewer/logger.py
+**What / 문제:**
+- QML-origin debug messages were sometimes missing from runtime logs (no `[QML]` lines in `debug.log`), and in one case a `TypeError` occurred when QML passed a single JS string payload containing special characters to `Main.performDelete` (error converting argument 0 to PySide::PyObjectWrapper).
+- QML-side early lifecycle messages fired before the `main` object was attached to the root, causing messages to be lost.
+
+**해결방법 / Fix:**
+- In `App.qml`: added `qmlDebugSafe(msg)` which queues messages until `root.main` is available and flushes them once bound; replaced direct `root.main.qmlDebug(...)` calls in startup and lifecycle handlers with `qmlDebugSafe(...)` to make reporting reliable.
+- In `App.qml`: ensure `Delete` confirmation handlers pass an array when invoking `performDelete` (`root.main.performDelete(Array.isArray(p) ? p : [p])`) to avoid conversion errors for single strings with exotic characters.
+- In `main.py`: added a `@Slot(str)` overload to `performDelete` and added debug logging that prints the incoming payload's Python class name and a repr for diagnosis.
+- Added an immediate startup call (`main.qmlDebug("[STARTUP] main property set on QML root")`) after setting `root.main` to validate the binding and verify message flow.
+- In `logger.py`: added a lightweight highlight formatter that detects the `[QML]` marker and highlights those lines (ANSI magenta) in terminal output for visibility.
+- Replaced an emoji marker with plain `[QML]` prefix and made stderr prints use ANSI coloring for terminal visibility. Also added a toggle-ready design (can add env var option later if needed).
+
+**Checks / 검증:**
+- Ruff: pass; Pyright: pass
+- Manual runtime verification:
+  - Startup debug message appears: `[QML] [STARTUP] main property set on QML root` (also printed to stderr)
+  - QML-origin messages are present in `debug.log` (prefixed by `[QML]`) and stand out in terminal due to magenta highlighting
+  - `performDelete` logs payload type and repr; sample deletes (including filenames with special characters) succeeded and printed: `performDelete called with payload type=str payload='...path...'`
+
+**Next steps:**
+- Optionally add an environment toggle to disable ANSI coloring (for environments that do not support it), or route `[QML]` messages to a separate file `debug.qml.log` if the team prefers separation of concerns.
+
+### Feature: Explorer Delete shortcut (T-EX-02)
+**Files:** image_viewer/qml/App.qml, image_viewer/main.py, image_viewer/file_operations.py
+**What / 기능:** Implemented Explorer-mode deletion triggered by the **Del** key. When one or more items are selected in the thumbnail grid and Del is pressed, the app shows the Delete confirmation dialog; accepting moves the selected files to the Recycle Bin and refreshes the folder listing.
+
+**해결방법 / 구현 세부:**
+- In `App.qml`: added a `Keys.onPressed` branch for `Qt.Key_Delete` that gathers `grid.selectedIndices`, maps them to paths, then calls `root.showDeleteDialog(title, "", info, paths)` where `paths` is always an array (even for single-item deletes).
+- In `App.qml`: ensured QML delete dialog handlers call `root.main.performDelete(Array.isArray(p) ? p : [p])` so Python receives an array and avoids PySide conversion errors for exotic filenames.
+- In `main.py`: added a `@Slot(str)` overload to `performDelete` and diagnostic logging (payload class + repr); `performDelete` coalesces the payload via `_coerce_paths` and calls `delete_files_to_recycle_bin(paths)`.
+- Reused `file_operations.delete_files_to_recycle_bin()` which uses `send2trash` for cross-platform Recycle Bin support and logs success/failure per file.
+
+**Checks / 검증:**
+- Ruff: pass; Pyright: pass
+- Manual runtime verification: pressing Del with single and multiple selections shows confirmation dialog; accepting deletes files (including paths with special characters) and `debug.log` shows `performDelete called with payload type=str ...` and `delete complete` entries; folder listing refreshes.
+
+
+
+### Fix: Thumbnail DB worker emission & idle/awake bug (T-DB-01)
+**Files:** image_viewer/image_engine/fs_db_worker.py, image_viewer/image_engine/engine_core.py, image_viewer/image_engine/db/thumbdb_core.py
+**What / 원인:** FSDB worker occasionally suppressed or delayed emission of missing/outdated thumbnail paths due to an "idle/awake" optimization and coarse chunking logic; thumbnails were not queued reliably and Explorer's grid appeared sparsely populated.
+**해결방법:** Removed the idle/awake suppression and changed the worker to emit missing/outdated thumbnail paths in deterministic, small chunks. `EngineCore` now queues thumbnail decode requests using a short throttle timer to avoid decode storms while ensuring eventual completion. Added defensive checks and unit tests to validate chunked emission and throttled decode behavior.
+**Checks:** Ruff: pass; Pyright: pass; Tests: updated & manual verification recommended
+
 ## 2026-01-06
 
 ### Fix: Avoid previous image flash when switching from Explorer → View (T-UI-03)
@@ -174,4 +246,3 @@ Also added `tests/test_qml_mouse_interactions.py` to validate press-to-zoom and 
 - Replaced `try/except: pass` with `contextlib.suppress(Exception)` and cleaned imports.
 **Checks:** Ruff: pass; Pyright: pass; Tests: crop-related UI tests passed (12/12), fullscreen checks passed.
 **Notes:** Ran ruff fixes and `pyright` after changes; added a short maximize fallback delay to let the window manager honor maximize when possible.
-

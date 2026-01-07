@@ -65,6 +65,16 @@ Configured in `pyproject.toml`:
 - Pyright type checking (targets `image_viewer`, with relaxed rules for stub-heavy libs like PySide6/pyvips):
   - `uv run python -m pyright`
 
+- QML linting with `pyside6-qmllint` (recommended when editing QML):
+  - Purpose: checks QML syntax, property bindings and common QML-specific issues before running the app or opening a PR.
+  - Run it against a single file:
+    - `uv run pyside6-qmllint image_viewer/qml/App.qml`
+  - Run it against many files (shells differ):
+    - POSIX shells with glob support: `uv run pyside6-qmllint "image_viewer/qml/**/*.qml"`
+    - Windows PowerShell (explicit recursion): `Get-ChildItem -Recurse -Filter *.qml | ForEach-Object { uv run pyside6-qmllint $_.FullName }`
+  - CI guidance: include a step that runs `uv run pyside6-qmllint` for changed QML files or performs a full pass; the tool exits non-zero and prints diagnostics when it finds issues.
+  - Note: `pyside6-qmllint` may print nothing on success; if it prints errors, fix them and re-run.
+
 ## High-level architecture
 
 **Responsibility boundary:** UI components (widgets, dialogs) act only as command-issuers and result-displayers. All filesystem mutations (file operations) and thumbnail DB writes/reads are performed by `image_viewer/image_engine` and its `ImageFileSystemModel`/`ThumbnailCache`/`ThumbDB` helpers. This ensures the UI remains light, testable, and that file/DB logic is centralized in the engine.
@@ -75,14 +85,21 @@ Configured in `pyproject.toml`:
   - Defines `main()` which calls `image_viewer.main.run()`. This is the console entrypoint when the package is executed as a module.
 - `image_viewer/main.py`
   - Applies CLI logging options (`--log-level`, `--log-cats`) before Qt sees `sys.argv`, by setting `IMAGE_VIEWER_LOG_LEVEL` / `IMAGE_VIEWER_LOG_CATS`.
-  - Defines `ImageViewer(QMainWindow)`, the main window coordinating all subsystems:
-    - Maintains `ViewState`, `TrimState`, and `ExplorerState` (mode and explorer widgets).
-    - Holds `image_files` and `current_index` and owns the central `ImageCanvas` widget for display.
-    - Uses a single `ImageEngine` instance for decoding, thumbnail loading, and pixmap caching (the engine owns loaders and cache).
-    - Wires up menus, status overlay builder, and explorer/view-mode bindings.
-  - `run(argv=None)`: full application bootstrap.
-    - Creates `QApplication`, installs theme, constructs `ImageViewer`.
-    - Interprets optional `start_path` (file vs folder vs none) to choose between fullscreen View mode or Explorer mode.
+  - Exposes a single `Main(QObject)` instance to QML via `root.setProperty("main", main)` and provides several QML-callable slots (e.g., `qmlDebug(message)`, `openFolder(path)`, `closeView()`) used by the QML shell.
+  - For QML-originated diagnostics, prefer calling `root.main.qmlDebug("message")`; this routes messages into the Python logging pipeline (DEBUG) and to stderr for early visibility.
+  - UI is implemented in QML (no QWidget/QMainWindow required): the shell is provided by `image_viewer/qml/App.qml` (an `ApplicationWindow`), and the Python backend exposes a single `Main(QObject)` instance to QML via `root.setProperty("main", main)`.
+    - `Main` provides QML-callable slots and properties (e.g., `qmlDebug`, `openFolder`, `closeView`, `currentIndex`, `viewMode`) that QML uses to drive app behavior and receive events.
+    - The `run(argv=None)` bootstrap constructs `QApplication`, applies theme, instantiates `ImageEngine` and `Main`, registers QQuick image providers, optionally registers context properties (e.g., image providers), loads `App.qml` via `QQmlApplicationEngine`, and sets `root.main = main`.
+    - Use the QML shell for windowing and UI state transitions (Explorer ↔ View); keep Python focused on file/DB/decoding and short-running control slots.
+
+
+### QML integration notes
+- The QML shell (`image_viewer/qml/App.qml`) uses a GridView-based Explorer and `Window`-based Viewer; `Main` is injected as `root.main`.
+- Event handling nuance: an overlay `MouseArea` (the selection area) receives left-button press/release events before delegates. For reliable interactions:
+  - Perform selection and double-click detection in the overlay (left-click behaviour), and keep delegate MouseAreas focused on secondary interactions (e.g., right-click context menus).
+  - Use `root.main.qmlDebug()` to forward diagnostic messages from QML to Python logging rather than adding ad-hoc `qmlLogger` context objects.
+
+
 
 ### Decoding pipeline and async loading
 
@@ -150,7 +167,7 @@ Configured in `pyproject.toml`:
       - Reset transforms and set rotation around the pixmap center.
       - For "fit" mode: either `fitInView` or a high-quality downscale path using `pyvips` plus `numpy`.
       - For "actual" mode: apply a scale transform based on `_zoom`.
-    - Re-runs the viewer’s status overlay update after applying view changes.
+    - Re-runs the viewer's status overlay update after applying view changes.
   - `drawForeground` renders the top-left overlay box:
     - Reads `_overlay_title` and `_overlay_info` from the window (the `ImageViewer`).
     - Chooses text color based on background luminance.
@@ -184,6 +201,7 @@ Configured in `pyproject.toml`:
   - `ImageFileSystemModel` (lightweight `QAbstractTableModel`):
     - The model no longer directly wraps `QFileSystemModel` or perform inline SQLite scans.
     - Folder scanning and DB reads are performed by the engine-core thread (`EngineCore`) using `FSDBLoadWorker`, which queries the thumbnail DB via `ThumbDB` or `ThumbDBOperatorAdapter` and emits `chunk_loaded` payloads that populate the model.
+    - Implementation note: the FSDB worker now emits missing/outdated thumbnail paths in deterministic, small chunks (no 'idle/awake' suppression) and `EngineCore` queues decode requests with a short throttle timer to avoid decode storms while ensuring eventual completion. See `image_viewer/image_engine/fs_db_worker.py` and `image_viewer/image_engine/engine_core.py` for details; update tests when modifying emission or batching logic.
     - The model exposes columns such as `Resolution` and other cached file metadata and keeps an in-memory thumbnail cache (`_thumb_cache`) for fast display. It requests thumbnails from the engine loader when missing, and otherwise reads bytes via `ThumbDBBytesAdapter` when available.
     - Design goal: keep UI fast and thread-safe by avoiding direct DB connections and heavy IO on the GUI thread.
   - The associated thumbnail grid widget (see remaining parts of `ui_explorer_grid.py`) manages view mode (thumbnail vs detail), context menus, keyboard shortcuts, and uses `ThumbnailCache`/`ThumbDBBytesAdapter` for on-disk caching when appropriate.
@@ -246,6 +264,7 @@ Configured in `pyproject.toml`:
   - Centralized logging setup.
   - `setup_logger` respects environment variables for log level and category filters, ensures a single `StreamHandler` on the base logger, and configures a consistent formatter.
   - `get_logger(name)` returns child loggers (e.g. `image_viewer.main`, `image_viewer.loader`).
+  - QML logging: prefer calling `root.main.qmlDebug(message)` from QML to forward structured/diagnostic messages into the Python logging system (this routes to the project logger at DEBUG and prints to stderr for early visibility). Avoid ad-hoc `qmlLogger` context objects unless you need a separate logging bridge.
 
 - `image_viewer/busy_cursor.py`
   - `busy_cursor()` is a small context manager that switches the global cursor to `WaitCursor` during long operations and restores it afterwards; used around decode, delete, and other potentially slow actions.

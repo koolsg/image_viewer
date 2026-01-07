@@ -24,7 +24,7 @@
   - Application-level (Explorer 전용, `Qt.ApplicationShortcut`, 작동 조건: `!root.main.viewMode`):
     - Open (StdOpen) → 폴더 열기
     - Copy / Cut / Paste → 파일 복사/이동
-    - F2 → Rename
+    - F2 → Rename (Explorer only; requires exactly one selected item)
     - Delete → 파일 삭제(확인 다이얼로그)
   - View (Window-level): **No window-level fallback shortcuts.** Escape/Return **must** be handled by `ViewerPage.qml` via `Keys` (use `Keys.priority = Keys.BeforeItem` and `onShortcutOverride` to ensure the viewer consumes these keys). Window `Shortcut` fallbacks are disallowed unless explicitly documented and approved.
   - GridView (delegate) 동작:
@@ -74,7 +74,7 @@
   - `StandardKey.Cut` → Cut selected files (Application-level)
   - `StandardKey.Paste` → Paste files (Application-level)
   - `"Delete"` → Show delete confirmation for selected file (Application-level)
-  - `"F2"` → Rename selected file
+  - `"F2"` → Rename selected file (Explorer only, single selection required)
 
 - `image_viewer/qml/App.qml` (viewWindow)
   - No window-level Escape/Return fallbacks; `ViewerPage.qml` handles viewer close actions via `Keys` when focused. Avoid adding window-level shortcuts in viewMode to prevent routing conflicts.
