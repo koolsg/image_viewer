@@ -62,6 +62,51 @@ Internal Operation
 - When main.py starts, it pre-parses `--log-level`, `--log-cats` to reflect in environment variables and removes them from argv so they are not passed to Qt.
 - The logger reads `IMAGE_VIEWER_LOG_LEVEL` and `IMAGE_VIEWER_LOG_CATS` to apply level/category filters.
 
+QML → Python logging integration (recommended)
+- Use the `Main.qmlDebug(message: string)` QML-callable slot to route QML-originated diagnostics into the Python logging system and also print them to stderr for guaranteed visibility.
+
+  Why this is recommended:
+  - `qmlDebug()` is part of the application's `Main(QObject)` backend that is injected into QML as `root.main`.
+  - Messages sent via `root.main.qmlDebug("...")` are logged at DEBUG to the project's Python logger and also printed to `stderr` regardless of logger filters, so you get both structured logging and reliably visible early diagnostics.
+
+  Example (QML):
+
+  ```qml
+  // inside a QML component where root is the ApplicationWindow
+  if (root && root.main) {
+      root.main.qmlDebug("[THUMB] DOUBLE-CLICK idx=" + idx)
+  }
+  ```
+
+  Example (Python): the `qmlDebug` slot is implemented as:
+
+  ```python
+  @Slot(str)
+  def qmlDebug(self, message: str) -> None:
+      _logger.debug("[QML] %s", message)
+      print(f"[QML] {message}", file=sys.stderr, flush=True)
+  ```
+
+Alternative: expose a `QmlLogger` bridge
+- If you prefer separate category methods (`debug/info/warning/error`) callable directly from QML, you can expose a small QObject with `@Slot(str)` methods via the QML context:
+
+  ```python
+  qml_logger = QmlLogger()
+  qml_engine.rootContext().setContextProperty("qmlLogger", qml_logger)
+  ```
+
+  Then in QML:
+
+  ```qml
+  qmlLogger.debug("Component=Grid, event=click idx=" + idx)
+  ```
+
+  Note: the project currently uses `root.main.qmlDebug()` as the canonical path; prefer it unless you need a separate logger object for structural reasons.
+
+Capturing and filtering QML-originated logs
+- Because `qmlDebug()` also prints to stderr, messages are visible even when log-level filters would otherwise hide DEBUG records.
+- If you want to funnel QML logs through the same category filtering UI, use `--log-level debug` and `--log-cats main,engine` (or add a dedicated `qml` category in `get_logger` if you want fine-grained control).
+
 Troubleshooting
 - Logs not visible
   - If `--log-level` is `info` or higher, debug messages are not visible. Try `debug`.
