@@ -18,10 +18,36 @@ ApplicationWindow {
     property string explorerSelectedPath: ""
     property bool hqDownscaleEnabled: false
 
+    // Queueing helper: some lifecycle events fire before Python sets `root.main`.
+    // Use `qmlDebugSafe(msg)` to reliably route QML diagnostics into the Python
+    // logging pipeline. Messages are queued and flushed once `root.main` exists.
+    property var _qmlDebugQueue: []
+    function qmlDebugSafe(msg) {
+        try {
+            if (root.main) {
+                root.main.qmlDebug(msg)
+                return
+            }
+        } catch (e) {
+            // fall back to console if Python call fails
+        }
+
+        // Queue and try later (non-blocking)
+        _qmlDebugQueue.push(msg)
+        Qt.callLater(function() {
+            if (!root.main) return
+            for (var i = 0; i < _qmlDebugQueue.length; ++i) {
+                try { root.main.qmlDebug(_qmlDebugQueue[i]) } catch (e) { /* ignore */ }
+            }
+            _qmlDebugQueue = []
+        })
+    }
+
     onActiveChanged: {
         if (active && !root.main?.viewMode) {
             grid.forceActiveFocus()
         }
+        if (active) root.qmlDebugSafe("Application active change: active=" + active)
     }
 
     function _openFolderDialogAtLastParent() {
@@ -52,7 +78,7 @@ ApplicationWindow {
         color: root.main ? root.main.backgroundColor : "#1a1a1a"
 
         onVisibleChanged: {
-            if (root.main) root.main.qmlDebug("viewWindow.onVisibleChanged: visible=" + visible)
+            root.qmlDebugSafe("viewWindow.onVisibleChanged: visible=" + visible)
             if (visible) {
                 viewWindow.requestActivate()
                 Qt.callLater(function() {
@@ -60,7 +86,7 @@ ApplicationWindow {
                     viewerPage.forceActiveFocus()
                 })
             } else {
-                if (root.main) root.main.qmlDebug("viewWindow.onVisibleChanged: hiding, restoring main focus")
+                root.qmlDebugSafe("viewWindow.onVisibleChanged: hiding, restoring main focus")
                 root.requestActivate()
                 root.raise()
                 Qt.callLater(function() {
@@ -73,7 +99,7 @@ ApplicationWindow {
         }
 
         onClosing: function(close) {
-            if (root.main) root.main.qmlDebug("viewWindow.onClosing requested")
+            root.qmlDebugSafe("viewWindow.onClosing requested")
             if (root.main) root.main.closeView()
             close.accepted = false
         }
@@ -399,13 +425,17 @@ ApplicationWindow {
     Component.onCompleted: {
         deleteDialog.acceptedWithPayload.connect(function(p) {
             if (root.main && typeof root.main.performDelete === 'function') {
-                root.main.performDelete(p)
+                // Ensure we pass an array of paths to Python. If the payload is a
+                // single string (view mode), wrap it in an array to avoid PySide
+                // conversion issues when receiving raw JS strings with exotic
+                // characters.
+                root.main.performDelete(Array.isArray(p) ? p : [p])
             }
         })
 
         viewDeleteDialog.acceptedWithPayload.connect(function(p) {
             if (root.main && typeof root.main.performDelete === 'function') {
-                root.main.performDelete(p)
+                root.main.performDelete(Array.isArray(p) ? p : [p])
             }
         })
 
@@ -638,7 +668,7 @@ ApplicationWindow {
                                     // Reliable double-click handling lives here because this overlay
                                     // receives the left clicks (delegate MouseArea does not).
                                     if (isDouble && root.main) {
-                                        root.main.qmlDebug("[THUMB] DOUBLE-CLICK idx=" + idx)
+                                        root.qmlDebugSafe("[THUMB] DOUBLE-CLICK idx=" + idx)
                                         // Ensure currentIndex is set before switching view.
                                         root.main.currentIndex = idx
                                         root.main.viewMode = true
@@ -766,6 +796,27 @@ ApplicationWindow {
                             root.main.pasteFiles()
                         }
                         event.accepted = true
+                    }
+
+                    // Delete - Delete selected files (Explorer only)
+                    if (event.key === Qt.Key_Delete) {
+                        var sel = grid.selectedIndices || []
+                        if (sel.length > 0 && root.main && root.main.imageFiles) {
+                            var paths = []
+                            for (var i = 0; i < sel.length; ++i) {
+                                var id = sel[i]
+                                if (id >= 0 && id < root.main.imageFiles.length) {
+                                    paths.push(root.main.imageFiles[id])
+                                }
+                            }
+                            if (paths.length > 0) {
+                                var title = (paths.length === 1) ? "Delete File" : "Delete Files"
+                                var info = (paths.length === 1) ? (paths[0].replace(/^.*[\\/]/, "") + "\n\nIt will be moved to Recycle Bin.") : (paths.length + " files will be moved to Recycle Bin.")
+                                root.showDeleteDialog(title, "", info, paths)
+                            }
+                        }
+                        event.accepted = true
+                        return
                     }
 
                     // F2 - Rename selected file (Explorer only, single selection required)

@@ -547,12 +547,18 @@ class Main(QObject):
 
         Prints directly to stderr (flush) so we can trace input routing even when
         the Python logger is filtered or when we need visibility very early.
+        QML-origin messages are prefixed with an emoji marker so they're visually
+        distinctive in terminal output and log files.
         """
         msg = str(message)
         # Integrate QML-originated diagnostics with the Python logging pipeline.
-        # Also print directly to stderr to ensure visibility even when log filters are active.
         _logger.debug("[QML] %s", msg)
-        print(f"[QML] {msg}", file=sys.stderr, flush=True)
+        # Also print a colored line to stderr for immediate visibility in terminal
+        try:
+            print(f"\033[95m[QML] {msg}\033[0m", file=sys.stderr, flush=True)
+        except Exception:
+            # Fallback to plain print if terminal doesn't accept ANSI sequences
+            print(f"[QML] {msg}", file=sys.stderr, flush=True)
 
     @Slot()
     def nextImage(self) -> None:
@@ -747,6 +753,53 @@ class Main(QObject):
         with contextlib.suppress(Exception):
             if self._current_folder:
                 self.engine.open_folder(self._current_folder)
+
+    @Slot(str)
+    @Slot(object)
+    def performDelete(self, payload: object) -> None:
+        """Perform deletion requested by QML dialog.
+
+        `payload` may be a single path string or a list of path strings.
+        This calls into the explorer helper to move files to Recycle Bin and
+        then refreshes the current folder in the engine.
+
+        For diagnostics we log the Python-level type and a short preview of the
+        payload so we can inspect problematic QML objects that fail conversion.
+        """
+        try:
+            # Debug: record the incoming payload type and a compact repr.
+            try:
+                payload_type = payload.__class__.__name__
+            except Exception:
+                payload_type = str(type(payload))
+            _logger.debug("performDelete called with payload type=%s payload=%r", payload_type, payload)
+
+            # If it's a QJSValue, attempt to extract an array preview for logging.
+            try:
+                if payload.__class__.__name__ == "QJSValue":
+                    _logger.debug("performDelete: QJSValue.isArray=%s", getattr(payload, "isArray", lambda: False)())
+            except Exception:
+                pass
+
+            paths: list[str] = _coerce_paths(payload)
+
+            if not paths:
+                return
+
+            # Let the explorer-level helper perform deletion semantics
+            with contextlib.suppress(Exception):
+                success_count, failed = delete_files_to_recycle_bin(paths)
+                _logger.debug("performDelete: %d deleted, %d failed", success_count, len(failed))
+
+            # Refresh current folder listing so UI updates (best-effort)
+            try:
+                cur = getattr(self, "_current_folder", None)
+                if cur:
+                    self.engine.open_folder(cur)
+            except Exception:
+                pass
+        except Exception as e:
+            _logger.error("performDelete failed: %s", e)
 
     @Slot(str)
     def revealInExplorer(self, path: str) -> None:
@@ -979,35 +1032,6 @@ class Main(QObject):
             # Update cache even if not changed (first-time populate)
             self._clipboard_cached_external_paths = new_list
 
-    @Slot(object)
-    def performDelete(self, payload: object) -> None:
-        """Perform deletion requested by QML dialog.
-
-        `payload` may be a single path string or a list of path strings.
-        This calls into the explorer helper to move files to Recycle Bin and
-        then refreshes the current folder in the engine.
-        """
-        try:
-            paths: list[str] = _coerce_paths(payload)
-
-            if not paths:
-                return
-
-            # Let the explorer-level helper perform deletion semantics
-            with contextlib.suppress(Exception):
-                success_count, failed = delete_files_to_recycle_bin(paths)
-                _logger.debug("performDelete: %d deleted, %d failed", success_count, len(failed))
-
-            # Refresh current folder listing so UI updates (best-effort)
-            try:
-                cur = getattr(self, "_current_folder", None)
-                if cur:
-                    self.engine.open_folder(cur)
-            except Exception:
-                pass
-        except Exception as e:
-            _logger.error("performDelete failed: %s", e)
-
 
 def _handle_qjs_value(payload: object) -> list[str] | None:
     """Try to handle QJSValue from QML."""
@@ -1129,6 +1153,15 @@ def run(argv: list[str] | None = None) -> int:
 
     root = qml_engine.rootObjects()[0]
     root.setProperty("main", main)
+
+    # Emit an immediate QML-facing debug message to confirm the binding works.
+    # Use contextlib.suppress to avoid any startup failures if printing fails.
+    with contextlib.suppress(Exception):
+        try:
+            main.qmlDebug("[STARTUP] main property set on QML root")
+        except Exception:
+            # Fall back to logger only if direct call fails
+            _logger.debug("[STARTUP] main property set (qmlDebug call failed)")
 
     # Startup restore: prefer reopening the last opened folder when it exists.
     # Fall back to last_parent_dir for backward compatibility.
