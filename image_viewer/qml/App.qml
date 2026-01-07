@@ -324,10 +324,17 @@ ApplicationWindow {
 
     Dialog {
         id: renameDialog
+        parent: root.contentItem
         modal: true
+        focus: true
         title: "Rename"
         standardButtons: Dialog.Ok | Dialog.Cancel
         property string oldPath: ""
+        property string initialName: ""  // Store the initial filename to populate
+
+        // Keep the dialog centered (avoids "top-left corner" placement issues)
+        x: Math.round(((parent ? parent.width : root.width) - width) / 2)
+        y: Math.round(((parent ? parent.height : root.height) - height) / 2)
 
         contentItem: ColumnLayout {
             anchors.fill: parent
@@ -338,14 +345,37 @@ ApplicationWindow {
             TextField {
                 id: renameField
                 Layout.fillWidth: true
+                Layout.preferredHeight: 36
                 selectByMouse: true
                 focus: true
+                text: renameDialog.initialName  // Bind text to dialog property
+
+                padding: 8
+                font.pixelSize: 14
+
+                // Dark theme: ensure text is visible (default palette can be dark-on-dark)
+                color: "white"
+                selectionColor: "#6aa9ff"
+                selectedTextColor: "#000000"
+                cursorDelegate: Rectangle {
+                    width: 1
+                    color: "white"
+                }
+                background: Rectangle {
+                    radius: 6
+                    color: "#2a2a2a"
+                    border.color: "#555555"
+                    border.width: 1
+                    implicitHeight: 36
+                }
             }
         }
 
         onOpened: {
+            // Focus + select full filename (including extension), Windows-style.
+            renameDialog.forceActiveFocus()
             renameField.forceActiveFocus()
-            renameField.selectAll()
+            Qt.callLater(function() { renameField.selectAll() })
         }
 
         onAccepted: {
@@ -727,6 +757,22 @@ ApplicationWindow {
                         }
                         event.accepted = true
                     }
+
+                    // F2 - Rename selected file (Explorer only, single selection required)
+                    if (event.key === Qt.Key_F2) {
+                        var sel = grid.selectedIndices || []
+                        if (sel.length === 1 && root.main && root.main.imageFiles) {
+                            var idx = sel[0]
+                            if (idx >= 0 && idx < root.main.imageFiles.length) {
+                                var selPath = root.main.imageFiles[idx]
+                                renameDialog.oldPath = selPath
+                                renameDialog.initialName = selPath.replace(/^.*[\\/]/, "")
+                                renameDialog.open()
+                            }
+                        }
+                        event.accepted = true
+                        return
+                    }
                 }
 
 
@@ -880,7 +926,7 @@ ApplicationWindow {
                                 text: "Rename"
                                 onTriggered: {
                                     renameDialog.oldPath = delegateRoot.path
-                                    renameField.text = delegateRoot.name
+                                    renameDialog.initialName = delegateRoot.name
                                     renameDialog.open()
                                 }
                             }
