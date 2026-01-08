@@ -8,53 +8,49 @@ Dialog {
     property alias titleText: titleLabel.text
     property alias infoText: infoLabel.text
     property var payload: null
-    property string theme: "dark"
+    property var theme: null
 
     x: parent ? (parent.width - width) / 2 : x
     y: parent ? (parent.height - height) / 2 : y
-    width: Math.max(360, Math.min(760, (infoText.length * 6) + 240))
+    width: Math.max(400, Math.min(760, (infoText.length * 6) + 240))
 
     background: Rectangle {
-        color: dlg.theme === "light" ? "#ffffff" : "#121212"
-        radius: 8
-        border.color: dlg.theme === "light" ? "#e0e0e0" : "#303030"
+        color: dlg.theme ? dlg.theme.surface : "#121212"
+        radius: dlg.theme ? dlg.theme.radiusLarge : 8
+        border.color: dlg.theme ? dlg.theme.border : "#303030"
         border.width: 1
-        width: dlg.width
-        height: dlg.height
+
+        // Subtle shadow effect
+        layer.enabled: true
     }
 
     contentItem: ColumnLayout {
         anchors.fill: parent
-        anchors.margins: 18
-        spacing: 12
+        anchors.margins: 24
+        spacing: 20
 
         RowLayout {
-            spacing: 12
-            Layout.preferredHeight: 56
-
-            Image {
-                source: ""
-                Layout.preferredWidth: 48
-                Layout.preferredHeight: 48
-                fillMode: Image.PreserveAspectFit
-            }
+            spacing: 16
+            Layout.fillWidth: true
 
             ColumnLayout {
                 Layout.fillWidth: true
-                        Label {
+                spacing: 8
+                Label {
                     id: titleLabel
                     text: ""
-                    font.pixelSize: 14
+                    font.pixelSize: 18
                     font.bold: true
                     wrapMode: Text.Wrap
-                    color: dlg.theme === "light" ? "#000000" : "#ffffff"
+                    color: dlg.theme ? dlg.theme.text : "#ffffff"
                 }
                 Label {
                     id: infoLabel
                     text: ""
-                    font.pixelSize: 12
+                    font.pixelSize: 14
                     wrapMode: Text.Wrap
-                    color: dlg.theme === "light" ? "#333333" : "#bdbdbd"
+                    color: dlg.theme ? dlg.theme.textDim : "#bdbdbd"
+                    lineHeight: 1.2
                 }
             }
         }
@@ -63,26 +59,49 @@ Dialog {
 
         RowLayout {
             Layout.alignment: Qt.AlignRight
-            spacing: 10
+            spacing: 12
 
             Button {
                 id: noButton
-                objectName: "button-no"
-                text: qsTr("No")
+                text: qsTr("Cancel")
+                contentItem: Label {
+                    text: parent.text
+                    font: parent.font
+                    color: dlg.theme ? dlg.theme.text : "white"
+                    horizontalAlignment: Text.AlignHCenter
+                    verticalAlignment: Text.AlignVCenter
+                }
+                background: Rectangle {
+                    implicitWidth: 100
+                    implicitHeight: 36
+                    color: parent.hovered ? (dlg.theme ? dlg.theme.hover : "#2a2a2a") : "transparent"
+                    border.color: dlg.theme ? dlg.theme.border : "#333333"
+                    border.width: 1
+                    radius: dlg.theme ? dlg.theme.radiusSmall : 4
+                }
                 onClicked: { dlg.rejectedWithPayload(dlg.payload); dlg.close(); }
             }
 
             Button {
                 id: yesButton
-                objectName: "button-yes"
-                text: qsTr("Yes")
+                text: qsTr("Delete")
+                contentItem: Label {
+                    text: parent.text
+                    font: parent.font
+                    color: "white"
+                    horizontalAlignment: Text.AlignHCenter
+                    verticalAlignment: Text.AlignVCenter
+                }
+                background: Rectangle {
+                    implicitWidth: 100
+                    implicitHeight: 36
+                    color: parent.hovered ? Qt.lighter("#d32f2f", 1.1) : "#d32f2f"
+                    radius: dlg.theme ? dlg.theme.radiusSmall : 4
+                }
                 onClicked: { dlg.acceptedWithPayload(dlg.payload); dlg.close(); }
-
                 focus: true
             }
         }
-
-
     }
 
     signal acceptedWithPayload(var payload)

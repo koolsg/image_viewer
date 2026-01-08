@@ -4,6 +4,7 @@ Item {
     id: root
 
     property var main: null
+    property var theme: null
     property color backgroundColor: "#1a1a1a"
     property bool hqDownscaleEnabled: false
     focus: true
@@ -137,23 +138,26 @@ Item {
         Rectangle {
             anchors.left: parent.left
             anchors.top: parent.top
-            anchors.margins: 10
-            color: "#80000000"
-            radius: 4
-            width: infoText.width + 20
-            height: infoText.height + 10
+            anchors.margins: 16
+            color: root.theme ? Qt.rgba(root.theme.surface.r, root.theme.surface.g, root.theme.surface.b, 0.7) : "#80000000"
+            radius: root.theme ? root.theme.radiusMedium : 4
+            width: infoText.width + 24
+            height: infoText.height + 12
+            border.color: root.theme ? root.theme.border : "transparent"
+            border.width: root.theme ? 1 : 0
 
             Text {
                 id: infoText
                 anchors.centerIn: parent
-                color: "white"
+                color: root.theme ? root.theme.text : "white"
                 text: {
                     if (!root.main) return ""
                     if (root.main.statusOverlayText) return root.main.statusOverlayText
                     if (root.main.currentPath) return root.main.currentPath.replace(/^.*[\\/]/, "")
                     return "No Image"
                 }
-                font.pixelSize: 12
+                font.pixelSize: 13
+                font.bold: true
             }
         }
     }

@@ -18,6 +18,10 @@ ApplicationWindow {
     property string explorerSelectedPath: ""
     property bool hqDownscaleEnabled: false
 
+    Theme {
+        id: theme
+    }
+
     // Queueing helper: some lifecycle events fire before Python sets `root.main`.
     // Use `qmlDebugSafe(msg)` to reliably route QML diagnostics into the Python
     // logging pipeline. Messages are queued and flushed once `root.main` exists.
@@ -75,7 +79,7 @@ ApplicationWindow {
         id: viewWindow
         title: "View"
         visibility: (!!root.main && !!root.main.viewMode) ? Window.FullScreen : Window.Hidden
-        color: root.main ? root.main.backgroundColor : "#1a1a1a"
+        color: root.main ? root.main.backgroundColor : theme.background
 
         onVisibleChanged: {
             root.qmlDebugSafe("viewWindow.onVisibleChanged: visible=" + visible)
@@ -110,7 +114,7 @@ ApplicationWindow {
 
         DeleteConfirmationDialog {
             id: viewDeleteDialog
-            theme: "dark"
+            theme: root.theme
         }
 
         function showViewDeleteDialog(path) {
@@ -129,7 +133,8 @@ ApplicationWindow {
                 id: viewerPage
                 anchors.fill: parent
                 main: root.main
-                backgroundColor: root.main ? root.main.backgroundColor : "#1a1a1a"
+                theme: theme
+                backgroundColor: root.main ? root.main.backgroundColor : theme.background
                 hqDownscaleEnabled: root.hqDownscaleEnabled
             }
         }
@@ -238,6 +243,28 @@ ApplicationWindow {
                 text: "Refresh Explorer"
                 onTriggered: if (root.main) root.main.refreshCurrentFolder()
             }
+
+            Menu {
+                title: "Theme"
+                MenuItem {
+                    text: "Deep Dark"
+                    checkable: true
+                    checked: theme.currentTheme === Theme.Dark
+                    onTriggered: theme.currentTheme = Theme.Dark
+                }
+                MenuItem {
+                    text: "Pure Light"
+                    checkable: true
+                    checked: theme.currentTheme === Theme.Light
+                    onTriggered: theme.currentTheme = Theme.Light
+                }
+                MenuItem {
+                    text: "Sweet Pastel"
+                    checkable: true
+                    checked: theme.currentTheme === Theme.Pastel
+                    onTriggered: theme.currentTheme = Theme.Pastel
+                }
+            }
         }
 
         Menu {
@@ -272,18 +299,38 @@ ApplicationWindow {
     }
 
     header: ToolBar {
+        background: Rectangle {
+            color: theme.surface
+            Rectangle {
+                anchors.bottom: parent.bottom
+                width: parent.width
+                height: 1
+                color: theme.border
+            }
+        }
         RowLayout {
             anchors.fill: parent
+            anchors.leftMargin: 12
+            anchors.rightMargin: 12
             spacing: 8
 
             ToolButton {
                 text: "Open Folder"
+                contentItem: Label {
+                    text: parent.text
+                    font: parent.font
+                    color: theme.text
+                    horizontalAlignment: Text.AlignHCenter
+                    verticalAlignment: Text.AlignVCenter
+                }
                 onClicked: root._openFolderDialogAtLastParent()
             }
 
             Item { Layout.fillWidth: true }
 
             Label {
+                color: theme.text
+                font.bold: true
                 text: {
                     if (!root.main) return ""
                     var total = root.main.imageFiles ? root.main.imageFiles.length : 0
@@ -296,6 +343,13 @@ ApplicationWindow {
             ToolButton {
                 text: root.main && root.main.viewMode ? "Back" : "View"
                 enabled: root.main && (root.main.imageFiles && root.main.imageFiles.length > 0)
+                contentItem: Label {
+                    text: parent.text
+                    font: parent.font
+                    color: parent.enabled ? theme.text : theme.textDim
+                    horizontalAlignment: Text.AlignHCenter
+                    verticalAlignment: Text.AlignVCenter
+                }
                 onClicked: {
                     if (!root.main) return
                     root.main.viewMode = !root.main.viewMode
@@ -317,6 +371,7 @@ ApplicationWindow {
     ConvertWebPDialog {
         id: webpDialog
         main: root.main
+        theme: theme
     }
 
     ColorDialog {
@@ -338,7 +393,7 @@ ApplicationWindow {
 
     DeleteConfirmationDialog {
         id: deleteDialog
-        theme: "dark"
+        theme: root.theme
     }
 
     function showDeleteDialog(title, text, info, payload) {
@@ -383,18 +438,17 @@ ApplicationWindow {
                 padding: 8
                 font.pixelSize: 14
 
-                // Dark theme: ensure text is visible (default palette can be dark-on-dark)
-                color: "white"
-                selectionColor: "#6aa9ff"
-                selectedTextColor: "#000000"
+                color: theme.text
+                selectionColor: theme.accent
+                selectedTextColor: theme.surface
                 cursorDelegate: Rectangle {
                     width: 1
-                    color: "white"
+                    color: theme.accent
                 }
                 background: Rectangle {
-                    radius: 6
-                    color: "#2a2a2a"
-                    border.color: "#555555"
+                    radius: theme.radiusSmall
+                    color: theme.hover
+                    border.color: theme.border
                     border.width: 1
                     implicitHeight: 36
                 }
@@ -461,7 +515,7 @@ ApplicationWindow {
 
         Rectangle {
             anchors.fill: parent
-            color: root.main ? root.main.backgroundColor : "#121212"
+            color: root.main ? root.main.backgroundColor : theme.background
 
             GridView {
                 id: grid
@@ -688,10 +742,10 @@ ApplicationWindow {
                 // visual selection rect (content coords -> view coords)
                 Rectangle {
                     visible: grid.selectionRectVisible
-                    color: "#4a8ad4"
-                    opacity: 0.25
-                    border.color: "#4a8ad4"
+                    color: theme.selection
+                    border.color: theme.selectionBorder
                     border.width: 1
+                    radius: 2
                     x: Math.min(grid.selectionRectX, grid.selectionRectX + grid.selectionRectW) - grid.contentX
                     y: Math.min(grid.selectionRectY, grid.selectionRectY + grid.selectionRectH) - grid.contentY
                     width: Math.abs(grid.selectionRectW)
@@ -860,9 +914,9 @@ ApplicationWindow {
                         anchors.topMargin: 6
                         anchors.bottomMargin: 6
                         height: parent.height - 12
-                        radius: 8
-                        color: (grid.selectedIndices.indexOf(delegateRoot.index) !== -1) ? "#2a3b52" : "#1a1a1a"
-                        border.color: (grid.selectedIndices.indexOf(delegateRoot.index) !== -1) ? "#6aa9ff" : "#2a2a2a"
+                        radius: theme.radiusMedium
+                        color: (grid.selectedIndices.indexOf(delegateRoot.index) !== -1) ? theme.selection : theme.surface
+                        border.color: (grid.selectedIndices.indexOf(delegateRoot.index) !== -1) ? theme.selectionBorder : theme.border
                         border.width: 1
 
                         MouseArea {
@@ -891,8 +945,8 @@ ApplicationWindow {
 
 
                                 Layout.preferredHeight: Math.round(grid.thumbVisualWidth * 0.76)
-                                radius: 6
-                                color: "#0f0f0f"
+                                radius: theme.radiusSmall
+                                color: theme.background
 
                                 Image {
                                     id: thumb
@@ -909,20 +963,21 @@ ApplicationWindow {
 
                             Text {
                                 Layout.fillWidth: true
-                                color: "white"
+                                color: theme.text
                                 text: delegateRoot.name
                                 wrapMode: Text.Wrap
                                 font.pixelSize: 13
                             }
                             Text {
                                 Layout.fillWidth: true
-                                color: "#b0b0b0"
+                                color: theme.textDim
                                 font.pixelSize: 11
                                 text: [ (delegateRoot.name && delegateRoot.name.indexOf('.') !== -1) ? delegateRoot.name.split('.').pop().toUpperCase() : null, delegateRoot.resolutionText, delegateRoot.sizeText ].filter(Boolean).join(" | ")
                             }
                             Label {
                                 Layout.fillWidth: true
-                                color: "#7f7f7f"
+                                color: theme.textDim
+                                opacity: 0.7
                                 font.pixelSize: 10
                                 text: delegateRoot.mtimeText
                                 elide: Text.ElideRight

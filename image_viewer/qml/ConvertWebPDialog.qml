@@ -11,9 +11,8 @@ Dialog {
     title: "Convert to WebP"
     standardButtons: Dialog.NoButton
 
-
     property var main: null
-
+    property var theme: null
 
     property string folderText: ""
     property bool shouldResize: true
@@ -21,16 +20,15 @@ Dialog {
     property int quality: 90
     property bool deleteOriginals: true
 
-
     property string logText: ""
 
-    width: 720
-    height: 520
+    width: 760
+    height: 600
 
     background: Rectangle {
-        color: "#121212"
-        radius: 8
-        border.color: "#303030"
+        color: dlg.theme ? dlg.theme.surface : "#121212"
+        radius: dlg.theme ? dlg.theme.radiusLarge : 8
+        border.color: dlg.theme ? dlg.theme.border : "#303030"
         border.width: 1
     }
 
@@ -75,82 +73,94 @@ Dialog {
 
     contentItem: ColumnLayout {
         anchors.fill: parent
-        anchors.margins: 16
-        spacing: 12
+        anchors.margins: 24
+        spacing: 16
+
+        Label {
+            text: "Convert Images to WebP"
+            font.pixelSize: 20
+            font.bold: true
+            color: dlg.theme ? dlg.theme.text : "white"
+        }
 
         GridLayout {
             columns: 3
-            columnSpacing: 10
-            rowSpacing: 10
+            columnSpacing: 12
+            rowSpacing: 12
             Layout.fillWidth: true
 
-            Label { text: "Folder"; color: "white" }
+            Label { text: "Folder"; color: dlg.theme ? dlg.theme.text : "white"; font.bold: true }
 
             TextField {
                 id: folderField
                 Layout.fillWidth: true
                 text: dlg.folderText
                 placeholderText: "Choose a folder..."
+                color: dlg.theme ? dlg.theme.text : "white"
+                background: Rectangle {
+                    radius: dlg.theme ? dlg.theme.radiusSmall : 4
+                    color: dlg.theme ? dlg.theme.background : "#1a1a1a"
+                    border.color: dlg.theme ? dlg.theme.border : "#333333"
+                }
                 onTextChanged: dlg.folderText = text
             }
 
             Button {
-                text: "Browse..."
+                text: "Browse"
                 onClicked: folderPicker.open()
             }
 
-            Label { text: "Resize"; color: "white" }
+            Label { text: "Options"; color: dlg.theme ? dlg.theme.text : "white"; font.bold: true }
 
-            RowLayout {
-                Layout.fillWidth: true
-                CheckBox {
-                    id: resizeCb
-                    text: "Resize short side to"
-                    checked: dlg.shouldResize
-                    onToggled: dlg.shouldResize = checked
-                }
-
-                SpinBox {
-                    id: targetSpin
-                    from: 256
-                    to: 8000
-                    value: dlg.targetShortSide
-                    enabled: resizeCb.checked
-                    onValueChanged: dlg.targetShortSide = value
-                }
-
-                Label { text: "px"; color: "#bdbdbd" }
-
-                Item { Layout.fillWidth: true }
-            }
-
-            Label { text: "Quality"; color: "white" }
-            SpinBox {
-                id: qualitySpin
+            Flow {
                 Layout.columnSpan: 2
                 Layout.fillWidth: true
-                from: 50
-                to: 100
-                value: dlg.quality
-                onValueChanged: dlg.quality = value
+                spacing: 20
+
+                RowLayout {
+                    spacing: 8
+                    CheckBox {
+                        id: resizeCb
+                        text: "Resize short side to"
+                        checked: dlg.shouldResize
+                        onToggled: dlg.shouldResize = checked
+                    }
+
+                    SpinBox {
+                        id: targetSpin
+                        from: 256
+                        to: 8000
+                        value: dlg.targetShortSide
+                        enabled: resizeCb.checked
+                        onValueChanged: dlg.targetShortSide = value
+                    }
+
+                    Label { text: "px"; color: dlg.theme ? dlg.theme.textDim : "#bdbdbd" }
+                }
+
+                RowLayout {
+                    spacing: 8
+                    Label { text: "Quality"; color: dlg.theme ? dlg.theme.text : "white" }
+                    SpinBox {
+                        id: qualitySpin
+                        from: 50
+                        to: 100
+                        value: dlg.quality
+                        onValueChanged: dlg.quality = value
+                    }
+                }
             }
 
-            Label { text: "Delete originals"; color: "white" }
-            RowLayout {
+            Item { Layout.preferredHeight: 1; Layout.columnSpan: 3 }
+
+            Label { text: "Cleanup"; color: dlg.theme ? dlg.theme.text : "white"; font.bold: true }
+
+            CheckBox {
+                id: deleteCb
                 Layout.columnSpan: 2
-                Layout.fillWidth: true
-                CheckBox {
-                    id: deleteCb
-                    text: "Delete originals after convert"
-                    checked: dlg.deleteOriginals
-                    onToggled: dlg.deleteOriginals = checked
-                }
-                Label {
-                    text: deleteCb.checked ? "Warning: originals will be removed." : ""
-                    color: "#d32f2f"
-                    font.bold: true
-                }
-                Item { Layout.fillWidth: true }
+                text: "Delete originals after conversion"
+                checked: dlg.deleteOriginals
+                onToggled: dlg.deleteOriginals = checked
             }
         }
 
@@ -159,6 +169,19 @@ Dialog {
             from: 0
             to: 100
             value: dlg.main ? dlg.main.webpConvertPercent : 0
+            background: Rectangle {
+                implicitHeight: 6
+                color: dlg.theme ? dlg.theme.background : "#1a1a1a"
+                radius: 3
+            }
+            contentItem: Item {
+                Rectangle {
+                    width: parent.parent.visualPosition * parent.width
+                    height: parent.height
+                    radius: 3
+                    color: dlg.theme ? dlg.theme.accent : "#3D85C6"
+                }
+            }
         }
 
         TextArea {
@@ -170,22 +193,34 @@ Dialog {
             text: dlg.logText
             font.family: "Consolas"
             font.pixelSize: 12
-
+            color: dlg.theme ? dlg.theme.text : "white"
+            background: Rectangle {
+                color: dlg.theme ? dlg.theme.background : "#0f0f0f"
+                radius: dlg.theme ? dlg.theme.radiusSmall : 4
+                border.color: dlg.theme ? dlg.theme.border : "#333333"
+            }
 
             onTextChanged: {
-
-                logArea.contentY = logArea.contentHeight
+                logArea.contentY = Math.max(0, logArea.contentHeight - logArea.height)
             }
         }
 
         RowLayout {
             Layout.fillWidth: true
-            spacing: 10
+            spacing: 12
+
+            Label {
+                text: deleteCb.checked ? "Warning: Originals will be PERMANENTLY removed." : ""
+                color: "#d32f2f"
+                font.bold: true
+                visible: deleteCb.checked
+            }
 
             Item { Layout.fillWidth: true }
 
             Button {
-                text: (dlg.main && dlg.main.webpConvertRunning) ? "Running..." : "Start"
+                text: (dlg.main && dlg.main.webpConvertRunning) ? "Running..." : "Start Conversion"
+                highlighted: true
                 enabled: dlg.main && !dlg.main.webpConvertRunning
                 onClicked: {
                     if (!dlg.main) return
@@ -201,8 +236,8 @@ Dialog {
             }
 
             Button {
-                text: "Cancel"
-                enabled: dlg.main && dlg.main.webpConvertRunning
+                text: "Stop"
+                visible: dlg.main && dlg.main.webpConvertRunning
                 onClicked: if (dlg.main) dlg.main.cancelWebpConvert()
             }
 
@@ -215,7 +250,6 @@ Dialog {
     }
 
     onOpened: {
-
         if (dlg.main && dlg.main.currentFolder && dlg.folderText.length === 0) {
             dlg.folderText = dlg.main.currentFolder
         }
