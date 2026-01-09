@@ -263,7 +263,18 @@ def run(argv: list[str] | None = None) -> int:
     # Expose backend before QML loads so startup handlers can safely call it.
     qml_engine.rootContext().setContextProperty("backend", backend)
 
-    qml_url = QUrl.fromLocalFile(str(_BASE_DIR / "qml" / "App.qml"))
+    # QML entrypoint (new location): image_viewer/ui/qml/App.qml
+    # Keep the legacy qml/ import path available during the transition.
+    qml_root = _BASE_DIR / "ui" / "qml"
+    qml_engine.addImportPath(str(qml_root))
+    qml_engine.addImportPath(str(_BASE_DIR / "qml"))
+
+    qml_file = qml_root / "App.qml"
+    if not qml_file.exists():
+        _logger.error("QML entrypoint not found: %s", qml_file)
+        return 1
+
+    qml_url = QUrl.fromLocalFile(str(qml_file))
     qml_engine.load(qml_url)
     if not qml_engine.rootObjects():
         _logger.error("Failed to load QML root: %s", qml_url.toString())
