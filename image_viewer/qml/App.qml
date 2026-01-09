@@ -13,6 +13,7 @@ ApplicationWindow {
     height: 900
     visible: true
     title: "Image Viewer"
+    flags: Qt.Window | Qt.FramelessWindowHint
 
     property var main: null
     property string explorerSelectedPath: ""
@@ -114,7 +115,7 @@ ApplicationWindow {
 
         DeleteConfirmationDialog {
             id: viewDeleteDialog
-            theme: root.theme
+            theme: theme
         }
 
         function showViewDeleteDialog(path) {
@@ -140,223 +141,7 @@ ApplicationWindow {
         }
     }
 
-    menuBar: MenuBar {
-        Menu {
-            title: "&File"
-            MenuItem {
-                text: "Open Folder..."
-                onTriggered: root._openFolderDialogAtLastParent()
-            }
-            MenuSeparator {}
-            MenuItem {
-                text: "Exit"
-                onTriggered: Qt.quit()
-            }
-        }
 
-        Menu {
-            title: "&View"
-
-            MenuItem {
-                text: "Fit to Screen"
-                checkable: true
-                checked: root.main ? root.main.fitMode : true
-                onTriggered: {
-                    if (!root.main) return
-                    root.main.fitMode = true
-                }
-            }
-
-            MenuItem {
-                text: "Actual Size"
-                checkable: true
-                checked: root.main ? !root.main.fitMode : false
-                onTriggered: {
-                    if (!root.main) return
-                    root.main.fitMode = false
-                    root.main.zoom = 1.0
-                }
-            }
-
-            MenuItem {
-                text: "High Quality Downscale (Slow)"
-                checkable: true
-                enabled: root.main ? !root.main.fastViewEnabled : true
-                checked: root.hqDownscaleEnabled
-                onToggled: root.hqDownscaleEnabled = checked
-            }
-
-            MenuItem {
-                text: "Fast View"
-                checkable: true
-                checked: root.main ? root.main.fastViewEnabled : false
-                onToggled: {
-                    if (!root.main) return
-                    root.main.fastViewEnabled = checked
-                }
-            }
-
-            Menu {
-                title: "Background"
-                MenuItem {
-                    text: "Black"
-                    checkable: true
-                    checked: root.main ? root.main.backgroundColor === "#000000" : false
-                    onTriggered: if (root.main) root.main.backgroundColor = "#000000"
-                }
-                MenuItem {
-                    text: "White"
-                    checkable: true
-                    checked: root.main ? root.main.backgroundColor === "#ffffff" : false
-                    onTriggered: if (root.main) root.main.backgroundColor = "#ffffff"
-                }
-                MenuItem {
-                    text: "Custom..."
-                    onTriggered: bgColorDialog.open()
-                }
-            }
-
-            MenuSeparator {}
-
-            MenuItem {
-                text: "Zoom In"
-                onTriggered: if (root.main) root.main.zoom = (root.main.zoom || 1.0) * 1.25
-            }
-            MenuItem {
-                text: "Zoom Out"
-                onTriggered: if (root.main) root.main.zoom = (root.main.zoom || 1.0) / 1.25
-            }
-
-            MenuSeparator {}
-
-            MenuItem {
-                text: "Explorer Mode"
-                checkable: true
-                checked: root.main ? !root.main.viewMode : true
-                onToggled: {
-                    if (!root.main) return
-                    root.main.viewMode = !checked
-                }
-            }
-
-            MenuItem {
-                text: "Refresh Explorer"
-                onTriggered: if (root.main) root.main.refreshCurrentFolder()
-            }
-
-            Menu {
-                title: "Theme"
-                MenuItem {
-                    text: "Deep Dark"
-                    checkable: true
-                    checked: theme.currentTheme === Theme.Dark
-                    onTriggered: theme.currentTheme = Theme.Dark
-                }
-                MenuItem {
-                    text: "Pure Light"
-                    checkable: true
-                    checked: theme.currentTheme === Theme.Light
-                    onTriggered: theme.currentTheme = Theme.Light
-                }
-                MenuItem {
-                    text: "Sweet Pastel"
-                    checkable: true
-                    checked: theme.currentTheme === Theme.Pastel
-                    onTriggered: theme.currentTheme = Theme.Pastel
-                }
-            }
-        }
-
-        Menu {
-            title: "Tools"
-            MenuItem {
-                text: "Trim..."
-                onTriggered: {
-                    infoDialog.title = "Trim"
-                    infoDialog.text = "Trim workflow is not migrated to QML yet."
-                    infoDialog.open()
-                }
-            }
-            MenuItem {
-                text: "Convert to WebP..."
-                onTriggered: {
-                    webpDialog.open()
-                }
-            }
-        }
-
-        Menu {
-            title: "&Settings"
-            MenuItem {
-                text: "Preferences..."
-                onTriggered: {
-                    infoDialog.title = "Preferences"
-                    infoDialog.text = "Preferences UI is not migrated to QML yet."
-                    infoDialog.open()
-                }
-            }
-        }
-    }
-
-    header: ToolBar {
-        background: Rectangle {
-            color: theme.surface
-            Rectangle {
-                anchors.bottom: parent.bottom
-                width: parent.width
-                height: 1
-                color: theme.border
-            }
-        }
-        RowLayout {
-            anchors.fill: parent
-            anchors.leftMargin: 12
-            anchors.rightMargin: 12
-            spacing: 8
-
-            ToolButton {
-                text: "Open Folder"
-                contentItem: Label {
-                    text: parent.text
-                    font: parent.font
-                    color: theme.text
-                    horizontalAlignment: Text.AlignHCenter
-                    verticalAlignment: Text.AlignVCenter
-                }
-                onClicked: root._openFolderDialogAtLastParent()
-            }
-
-            Item { Layout.fillWidth: true }
-
-            Label {
-                color: theme.text
-                font.bold: true
-                text: {
-                    if (!root.main) return ""
-                    var total = root.main.imageFiles ? root.main.imageFiles.length : 0
-                    var idx = root.main.currentIndex
-                    if (total <= 0) return "No folder"
-                    return (idx + 1) + " / " + total
-                }
-            }
-
-            ToolButton {
-                text: root.main && root.main.viewMode ? "Back" : "View"
-                enabled: root.main && (root.main.imageFiles && root.main.imageFiles.length > 0)
-                contentItem: Label {
-                    text: parent.text
-                    font: parent.font
-                    color: parent.enabled ? theme.text : theme.textDim
-                    horizontalAlignment: Text.AlignHCenter
-                    verticalAlignment: Text.AlignVCenter
-                }
-                onClicked: {
-                    if (!root.main) return
-                    root.main.viewMode = !root.main.viewMode
-                }
-            }
-        }
-    }
 
     FolderDialog {
         id: folderDialog
@@ -393,7 +178,7 @@ ApplicationWindow {
 
     DeleteConfirmationDialog {
         id: deleteDialog
-        theme: root.theme
+        theme: theme
     }
 
     function showDeleteDialog(title, text, info, payload) {
@@ -496,17 +281,442 @@ ApplicationWindow {
 
         Qt.callLater(function() {
             try {
-                root.showMaximized()
+                // For frameless window, showMaximized() works but we need to ensure 
+                // we can still restore.
+                root.show()
                 root.requestActivate()
                 root.raise()
             } catch (e) {
-                console.log("Failed to maximize on startup: " + e)
+                console.log("Failed to show on startup: " + e)
             }
         })
     }
 
+    // --- Custom Title Bar & Window Management ---
 
+    header: Column {
+        Rectangle {
+            id: customTitleBar
+            width: parent.width
+            height: 32
+            color: theme.surface
+            z: 1000
+            layer.enabled: true // Cache as texture to prevent jitter during window drag
 
+            DragHandler {
+                id: dragHandler
+                onActiveChanged: if (active) root.startSystemMove()
+            }
+
+            TapHandler {
+                acceptedButtons: Qt.LeftButton
+                onDoubleTapped: {
+                    if (root.visibility === Window.Maximized) {
+                        root.showNormal()
+                    } else {
+                        root.showMaximized()
+                    }
+                }
+            }
+
+            Label {
+                id: titleLabel
+                anchors.left: parent.left
+                anchors.leftMargin: 12
+                anchors.verticalCenter: parent.verticalCenter
+                text: root.title
+                color: theme.text
+                font.pixelSize: 12
+            }
+
+            // Window Controls
+            Row {
+                id: windowControls
+                anchors.right: parent.right
+                height: parent.height
+                spacing: 0
+                z: 10 // Ensure buttons are above the title bar's background handlers
+
+                Button {
+                    id: minBtn
+                    width: 46
+                    height: parent.height
+                    flat: true
+                    hoverEnabled: true
+                    background: Rectangle {
+                        color: minBtn.hovered ? theme.hover : "transparent"
+                    }
+                    contentItem: Text {
+                        text: "—"
+                        color: theme.text
+                        font.pixelSize: 10
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
+                    }
+                    onClicked: root.showMinimized()
+                }
+
+                Button {
+                    id: maxBtn
+                    width: 46
+                    height: parent.height
+                    flat: true
+                    hoverEnabled: true
+                    background: Rectangle {
+                        color: maxBtn.hovered ? theme.hover : "transparent"
+                    }
+                    contentItem: Text {
+                        text: root.visibility === Window.Maximized ? "❐" : "☐"
+                        color: theme.text
+                        font.pixelSize: 14
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
+                    }
+                    onClicked: {
+                        if (root.visibility === Window.Maximized) {
+                            root.showNormal()
+                        } else {
+                            root.showMaximized()
+                        }
+                    }
+                }
+
+                Button {
+                    id: closeBtn
+                    width: 46
+                    height: parent.height
+                    flat: true
+                    hoverEnabled: true
+                    background: Rectangle {
+                        color: closeBtn.hovered ? "#E81123" : "transparent"
+                    }
+                    contentItem: Text {
+                        text: "✕"
+                        color: closeBtn.hovered ? "#FFFFFF" : theme.text
+                        font.pixelSize: 14
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
+                    }
+                    onClicked: Qt.quit()
+                }
+            }
+
+            // Bottom Border / Separator
+            Rectangle {
+                anchors.bottom: parent.bottom
+                width: parent.width
+                height: 3
+                color: theme.border
+            }
+        }
+
+        MenuBar {
+            id: mainMenuBar
+            width: parent.width
+            background: Rectangle {
+                color: theme.surface
+                Rectangle {
+                    anchors.bottom: parent.bottom
+                    width: parent.width
+                    height: 3
+                    color: theme.border
+                }
+            }
+
+            delegate: MenuBarItem {
+                id: menuBarItem
+                contentItem: Text {
+                    text: menuBarItem.text
+                    font: menuBarItem.font
+                    color: theme.text
+                    horizontalAlignment: Text.AlignLeft
+                    verticalAlignment: Text.AlignVCenter
+                    elide: Text.ElideRight
+                }
+                background: Rectangle {
+                    implicitWidth: 40
+                    implicitHeight: 30
+                    color: menuBarItem.highlighted ? theme.hover : "transparent"
+                }
+            }
+
+            Menu {
+                title: "File"
+                MenuItem {
+                    text: "Open Folder..."
+                    onTriggered: root._openFolderDialogAtLastParent()
+                }
+                MenuSeparator {}
+                MenuItem {
+                    text: "Exit"
+                    onTriggered: Qt.quit()
+                }
+            }
+
+            Menu {
+                title: "View"
+
+                MenuItem {
+                    text: "Fit to Screen"
+                    checkable: true
+                    checked: root.main ? root.main.fitMode : true
+                    onTriggered: {
+                        if (!root.main) return
+                        root.main.fitMode = true
+                    }
+                }
+
+                MenuItem {
+                    text: "Actual Size"
+                    checkable: true
+                    checked: root.main ? !root.main.fitMode : false
+                    onTriggered: {
+                        if (!root.main) return
+                        root.main.fitMode = false
+                        root.main.zoom = 1.0
+                    }
+                }
+
+                MenuItem {
+                    text: "High Quality Downscale (Slow)"
+                    checkable: true
+                    enabled: root.main ? !root.main.fastViewEnabled : true
+                    checked: root.hqDownscaleEnabled
+                    onToggled: root.hqDownscaleEnabled = checked
+                }
+
+                MenuItem {
+                    text: "Fast View"
+                    checkable: true
+                    checked: root.main ? root.main.fastViewEnabled : false
+                    onToggled: {
+                        if (!root.main) return
+                        root.main.fastViewEnabled = checked
+                    }
+                }
+
+                Menu {
+                    title: "Background"
+                    MenuItem {
+                        text: "Black"
+                        checkable: true
+                        checked: root.main ? root.main.backgroundColor === "#000000" : false
+                        onTriggered: if (root.main) root.main.backgroundColor = "#000000"
+                    }
+                    MenuItem {
+                        text: "White"
+                        checkable: true
+                        checked: root.main ? root.main.backgroundColor === "#ffffff" : false
+                        onTriggered: if (root.main) root.main.backgroundColor = "#ffffff"
+                    }
+                    MenuItem {
+                        text: "Custom..."
+                        onTriggered: bgColorDialog.open()
+                    }
+                }
+
+                MenuSeparator {}
+
+                MenuItem {
+                    text: "Zoom In"
+                    onTriggered: if (root.main) root.main.zoom = (root.main.zoom || 1.0) * 1.25
+                }
+                MenuItem {
+                    text: "Zoom Out"
+                    onTriggered: if (root.main) root.main.zoom = (root.main.zoom || 1.0) / 1.25
+                }
+
+                MenuSeparator {}
+
+                MenuItem {
+                    text: "Explorer Mode"
+                    checkable: true
+                    checked: root.main ? !root.main.viewMode : true
+                    onToggled: {
+                        if (!root.main) return
+                        root.main.viewMode = !checked
+                    }
+                }
+
+                MenuItem {
+                    text: "Refresh Explorer"
+                    onTriggered: if (root.main) root.main.refreshCurrentFolder()
+                }
+
+                Menu {
+                    title: "Theme"
+                    MenuItem {
+                        text: "Deep Dark"
+                        checkable: true
+                        checked: theme.currentTheme === Theme.Dark
+                        onTriggered: theme.currentTheme = Theme.Dark
+                    }
+                    MenuItem {
+                        text: "Pure Light"
+                        checkable: true
+                        checked: theme.currentTheme === Theme.Light
+                        onTriggered: theme.currentTheme = Theme.Light
+                    }
+                    MenuItem {
+                        text: "Sweet Pastel"
+                        checkable: true
+                        checked: theme.currentTheme === Theme.Pastel
+                        onTriggered: theme.currentTheme = Theme.Pastel
+                    }
+                }
+            }
+
+            Menu {
+                title: "Tools"
+                MenuItem {
+                    text: "Trim..."
+                    onTriggered: {
+                        infoDialog.title = "Trim"
+                        infoDialog.text = "Trim workflow is not migrated to QML yet."
+                        infoDialog.open()
+                    }
+                }
+                MenuItem {
+                    text: "Convert to WebP..."
+                    onTriggered: {
+                        webpDialog.open()
+                    }
+                }
+            }
+
+            Menu {
+                title: "Settings"
+                MenuItem {
+                    text: "Preferences..."
+                    onTriggered: {
+                        infoDialog.title = "Preferences"
+                        infoDialog.text = "Preferences UI is not migrated to QML yet."
+                        infoDialog.open()
+                    }
+                }
+            }
+        }
+
+        ToolBar {
+            id: mainToolBar
+            width: parent.width
+            background: Rectangle {
+                color: theme.surface
+                Rectangle {
+                    anchors.bottom: parent.bottom
+                    width: parent.width
+                    height: 1
+                    color: theme.border
+                }
+            }
+            RowLayout {
+                anchors.fill: parent
+                anchors.leftMargin: 12
+                anchors.rightMargin: 12
+                spacing: 8
+
+                ToolButton {
+                    id: openFolderBtn
+                    text: "Open Folder"
+                    contentItem: Label {
+                        text: openFolderBtn.text
+                        font: openFolderBtn.font
+                        color: theme.text
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
+                    }
+                    onClicked: root._openFolderDialogAtLastParent()
+                }
+
+                Item { Layout.fillWidth: true }
+
+                Label {
+                    color: theme.text
+                    font.bold: true
+                    text: {
+                        if (!root.main) return ""
+                        var total = root.main.imageFiles ? root.main.imageFiles.length : 0
+                        var idx = root.main.currentIndex
+                        if (total <= 0) return "No folder"
+                        return (idx + 1) + " / " + total
+                    }
+                }
+
+                ToolButton {
+                    id: toggleViewBtn
+                    text: root.main && root.main.viewMode ? "Back" : "View"
+                    enabled: root.main && (root.main.imageFiles && root.main.imageFiles.length > 0)
+                    contentItem: Label {
+                        text: toggleViewBtn.text
+                        font: toggleViewBtn.font
+                        color: toggleViewBtn.enabled ? theme.text : theme.textDim
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
+                    }
+                    onClicked: {
+                        if (!root.main) return
+                        root.main.viewMode = !root.main.viewMode
+                    }
+                }
+            }
+        }
+    }
+
+    // --- Resize Handles ---
+
+    MouseArea {
+        id: topResize
+        height: 6; anchors.top: parent.top; anchors.left: parent.left; anchors.right: parent.right
+        cursorShape: Qt.SizeVerCursor
+        z: 1 // Keep below header content if possible
+        enabled: root.visibility !== Window.Maximized
+        onPressed: root.startSystemResize(Qt.TopEdge)
+    }
+    MouseArea {
+        id: bottomResize
+        height: 6; anchors.bottom: parent.bottom; anchors.left: parent.left; anchors.right: parent.right
+        cursorShape: Qt.SizeVerCursor
+        enabled: root.visibility !== Window.Maximized
+        onPressed: root.startSystemResize(Qt.BottomEdge)
+    }
+    MouseArea {
+        id: leftResize
+        width: 6; anchors.left: parent.left; anchors.top: parent.top; anchors.bottom: parent.bottom
+        cursorShape: Qt.SizeHorCursor
+        enabled: root.visibility !== Window.Maximized
+        onPressed: root.startSystemResize(Qt.LeftEdge)
+    }
+    MouseArea {
+        id: rightResize
+        width: 6; anchors.right: parent.right; anchors.top: parent.top; anchors.bottom: parent.bottom
+        cursorShape: Qt.SizeHorCursor
+        enabled: root.visibility !== Window.Maximized
+        onPressed: root.startSystemResize(Qt.RightEdge)
+    }
+    MouseArea {
+        width: 10; height: 10; anchors.left: parent.left; anchors.top: parent.top
+        cursorShape: Qt.SizeFDiagCursor
+        enabled: root.visibility !== Window.Maximized
+        onPressed: root.startSystemResize(Qt.TopEdge | Qt.LeftEdge)
+    }
+    MouseArea {
+        width: 10; height: 10; anchors.right: parent.right; anchors.top: parent.top
+        cursorShape: Qt.SizeBDiagCursor
+        enabled: root.visibility !== Window.Maximized
+        onPressed: root.startSystemResize(Qt.TopEdge | Qt.RightEdge)
+    }
+    MouseArea {
+        width: 10; height: 10; anchors.left: parent.left; anchors.bottom: parent.bottom
+        cursorShape: Qt.SizeBDiagCursor
+        enabled: root.visibility !== Window.Maximized
+        onPressed: root.startSystemResize(Qt.BottomEdge | Qt.LeftEdge)
+    }
+    MouseArea {
+        width: 10; height: 10; anchors.right: parent.right; anchors.bottom: parent.bottom
+        cursorShape: Qt.SizeFDiagCursor
+        enabled: root.visibility !== Window.Maximized
+        onPressed: root.startSystemResize(Qt.BottomEdge | Qt.RightEdge)
+    }
 
     FocusScope {
         id: explorerPage
@@ -741,6 +951,7 @@ ApplicationWindow {
 
                 // visual selection rect (content coords -> view coords)
                 Rectangle {
+                    id: selectionRect
                     visible: grid.selectionRectVisible
                     color: theme.selection
                     border.color: theme.selectionBorder
