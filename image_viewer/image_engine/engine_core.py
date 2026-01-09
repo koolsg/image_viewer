@@ -28,6 +28,7 @@ from PySide6.QtCore import (
     QThread,
     QTimer,
     Signal,
+    Slot,
 )
 from PySide6.QtGui import QImage, QImageWriter
 
@@ -145,6 +146,7 @@ class EngineCore(QObject):
         self._thumb_loader.image_decoded.connect(self._on_thumb_decoded)
         _logger.debug("EngineCore initialized in thread")
 
+    @Slot()
     def shutdown(self) -> None:
         # Stop watcher/timer first to avoid late refreshes during teardown.
         with contextlib.suppress(Exception):

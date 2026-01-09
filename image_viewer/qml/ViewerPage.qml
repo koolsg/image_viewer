@@ -1,9 +1,10 @@
-import QtQuick 2.15
+import QtQuick
 
 Item {
     id: root
 
-    property var main: null
+    // Python facade (BackendFacade) injected from App.qml.
+    property var backend: null
     property var theme: null
     property color backgroundColor: "#1a1a1a"
     property bool hqDownscaleEnabled: false
@@ -11,12 +12,12 @@ Item {
 
 
     Keys.onReturnPressed: {
-        if (!root.main) return
-        root.main.closeView()
+        if (!root.backend) return
+        root.backend.dispatch("closeView", null)
     }
     Keys.onEscapePressed: {
-        if (!root.main) return
-        root.main.closeView()
+        if (!root.backend) return
+        root.backend.dispatch("closeView", null)
     }
 
 
@@ -27,7 +28,7 @@ Item {
     }
 
     function _fitScale() {
-        if (!root.main) return 1.0
+        if (!root.backend) return 1.0
         if (img.status !== Image.Ready) return 1.0
         if (img.sourceSize.width <= 0 || img.sourceSize.height <= 0) return 1.0
         var sx = flick.width / img.sourceSize.width
@@ -37,10 +38,9 @@ Item {
 
     function _zoomAround(viewX, viewY, newZoom) {
 
-
-        if (!root.main) return
+        if (!root.backend) return
         if (img.status !== Image.Ready) {
-            root.main.zoom = newZoom
+            root.backend.dispatch("setZoom", { value: newZoom })
             return
         }
 
@@ -51,7 +51,7 @@ Item {
         var rx = oldW > 0 ? (cx / oldW) : 0.5
         var ry = oldH > 0 ? (cy / oldH) : 0.5
 
-        root.main.zoom = newZoom
+    root.backend.dispatch("setZoom", { value: newZoom })
 
         Qt.callLater(function() {
             var nw = flick.contentWidth
@@ -64,17 +64,16 @@ Item {
     }
 
     function zoomBy(factor, viewX, viewY) {
-        if (!root.main) return
+        if (!root.backend) return
         var vx = (viewX !== undefined) ? viewX : (flick.width / 2)
         var vy = (viewY !== undefined) ? viewY : (flick.height / 2)
-        var base = root.main.fitMode ? root._fitScale() : root.main.zoom
-        root.main.fitMode = false
+        var base = root.backend.viewer.fitMode ? root._fitScale() : root.backend.viewer.zoom
         root._zoomAround(vx, vy, root._clamp(base * factor, 0.05, 20.0))
     }
 
     function snapToGlobalView() {
-        if (!root.main) return
-        root.main.fitMode = true
+        if (!root.backend) return
+        root.backend.dispatch("setFitMode", { value: true })
         flick.contentX = 0
         flick.contentY = 0
     }
@@ -101,11 +100,11 @@ Item {
                     id: img
                     anchors.centerIn: parent
                     transformOrigin: Item.Center
-                    rotation: root.main ? root.main.rotation : 0
+                    rotation: root.backend ? root.backend.viewer.rotation : 0
 
 
-                    width: (root.main && (root.main.fitMode || img.status !== Image.Ready)) ? flick.width : (img.status === Image.Ready ? sourceSize.width * (root.main ? root.main.zoom : 1.0) : flick.width)
-                    height: (root.main && (root.main.fitMode || img.status !== Image.Ready)) ? flick.height : (img.status === Image.Ready ? sourceSize.height * (root.main ? root.main.zoom : 1.0) : flick.height)
+                    width: (root.backend && (root.backend.viewer.fitMode || img.status !== Image.Ready)) ? flick.width : (img.status === Image.Ready ? sourceSize.width * (root.backend ? root.backend.viewer.zoom : 1.0) : flick.width)
+                    height: (root.backend && (root.backend.viewer.fitMode || img.status !== Image.Ready)) ? flick.height : (img.status === Image.Ready ? sourceSize.height * (root.backend ? root.backend.viewer.zoom : 1.0) : flick.height)
                     fillMode: Image.PreserveAspectFit
 
                     asynchronous: true
@@ -113,7 +112,7 @@ Item {
                     smooth: true
                     mipmap: root.hqDownscaleEnabled
 
-                    source: root.main ? root.main.imageUrl : ""
+                    source: root.backend ? root.backend.viewer.imageUrl : ""
 
                     onStatusChanged: {
                         if (status === Image.Error) {
@@ -127,7 +126,7 @@ Item {
                     property bool rcDragActive: false
                     property int rcStartX: 0
                     property int rcStartY: 0
-                    property real pressZoomMultiplier: (root.main ? root.main.pressZoomMultiplier : 3.0)
+                    property real pressZoomMultiplier: (root.backend ? root.backend.settings.pressZoomMultiplier : 3.0)
 
 
                 }
@@ -151,9 +150,9 @@ Item {
                 anchors.centerIn: parent
                 color: root.theme ? root.theme.text : "white"
                 text: {
-                    if (!root.main) return ""
-                    if (root.main.statusOverlayText) return root.main.statusOverlayText
-                    if (root.main.currentPath) return root.main.currentPath.replace(/^.*[\\/]/, "")
+                    if (!root.backend) return ""
+                    if (root.backend.viewer.statusOverlayText) return root.backend.viewer.statusOverlayText
+                    if (root.backend.viewer.currentPath) return root.backend.viewer.currentPath.replace(/^.*[\\/]/, "")
                     return "No Image"
                 }
                 font.pixelSize: 13

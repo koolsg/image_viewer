@@ -8,14 +8,12 @@ UI concerns (confirmation dialogs, prompts) must live in QML.
 import shutil
 from pathlib import Path
 
+from PySide6.QtCore import QMimeData, QUrl
+from PySide6.QtGui import QGuiApplication
 from send2trash import send2trash
 
-from PySide6.QtCore import QUrl
-from PySide6.QtGui import QGuiApplication
-from PySide6.QtCore import QMimeData
-
 from .logger import get_logger
-from .path_utils import abs_path_str, abs_path
+from .path_utils import abs_path, abs_path_str
 
 _logger = get_logger("file_operations")
 

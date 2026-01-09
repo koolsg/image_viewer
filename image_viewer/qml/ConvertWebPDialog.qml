@@ -1,5 +1,3 @@
-pragma ComponentBehavior: Bound
-
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
@@ -11,7 +9,8 @@ Dialog {
     title: "Convert to WebP"
     standardButtons: Dialog.NoButton
 
-    property var main: null
+    // Python facade (BackendFacade) injected from App.qml.
+    property var backend: null
     property var theme: null
 
     property string folderText: ""
@@ -53,21 +52,33 @@ Dialog {
     }
 
     Connections {
-        target: dlg.main
-        function onWebpConvertLog(line) {
-            dlg.appendLog(line)
-        }
-        function onWebpConvertFinished(converted, total) {
-            dlg.appendLog("Done: " + converted + "/" + total + " converted.")
-        }
-        function onWebpConvertCanceled() {
-            dlg.appendLog("Canceled.")
-        }
-        function onWebpConvertError(msg) {
-            dlg.appendLog(String(msg))
-            messageDialog.title = "WebP conversion error"
-            messageDialog.text = String(msg)
-            messageDialog.open()
+        target: dlg.backend
+
+        function onTaskEvent(ev) {
+            if (!ev || ev.name !== "webpConvert") return
+
+            if (ev.state === "log") {
+                dlg.appendLog(ev.message)
+                return
+            }
+
+            if (ev.state === "finished") {
+                dlg.appendLog("Done: " + ev.converted + "/" + ev.total + " converted.")
+                return
+            }
+
+            if (ev.state === "canceled") {
+                dlg.appendLog("Canceled.")
+                return
+            }
+
+            if (ev.state === "error") {
+                dlg.appendLog(String(ev.message || ""))
+                messageDialog.title = "WebP conversion error"
+                messageDialog.text = String(ev.message || "")
+                messageDialog.open()
+                return
+            }
         }
     }
 
@@ -165,10 +176,11 @@ Dialog {
         }
 
         ProgressBar {
+            id: progressBar
             Layout.fillWidth: true
             from: 0
             to: 100
-            value: dlg.main ? dlg.main.webpConvertPercent : 0
+            value: (dlg.backend && dlg.backend.tasks) ? dlg.backend.tasks.webpConvertPercent : 0
             background: Rectangle {
                 implicitHeight: 6
                 color: dlg.theme ? dlg.theme.background : "#1a1a1a"
@@ -176,7 +188,7 @@ Dialog {
             }
             contentItem: Item {
                 Rectangle {
-                    width: parent.parent.visualPosition * parent.width
+                    width: progressBar.visualPosition * parent.width
                     height: parent.height
                     radius: 3
                     color: dlg.theme ? dlg.theme.accent : "#3D85C6"
@@ -219,11 +231,11 @@ Dialog {
             Item { Layout.fillWidth: true }
 
             Button {
-                text: (dlg.main && dlg.main.webpConvertRunning) ? "Running..." : "Start Conversion"
+                text: (dlg.backend && dlg.backend.tasks && dlg.backend.tasks.webpConvertRunning) ? "Running..." : "Start Conversion"
                 highlighted: true
-                enabled: dlg.main && !dlg.main.webpConvertRunning
+                enabled: dlg.backend && dlg.backend.tasks && !dlg.backend.tasks.webpConvertRunning
                 onClicked: {
-                    if (!dlg.main) return
+                    if (!dlg.backend) return
                     if (!dlg.folderText || dlg.folderText.length === 0) {
                         messageDialog.title = "Invalid folder"
                         messageDialog.text = "Please choose a valid folder."
@@ -231,27 +243,36 @@ Dialog {
                         return
                     }
                     dlg.logText = ""
-                    dlg.main.startWebpConvert(dlg.folderText, dlg.shouldResize, dlg.targetShortSide, dlg.quality, dlg.deleteOriginals)
+                    dlg.backend.dispatch(
+                        "startWebpConvert",
+                        {
+                            folder: dlg.folderText,
+                            shouldResize: dlg.shouldResize,
+                            targetShort: dlg.targetShortSide,
+                            quality: dlg.quality,
+                            deleteOriginals: dlg.deleteOriginals
+                        }
+                    )
                 }
             }
 
             Button {
                 text: "Stop"
-                visible: dlg.main && dlg.main.webpConvertRunning
-                onClicked: if (dlg.main) dlg.main.cancelWebpConvert()
+                visible: dlg.backend && dlg.backend.tasks && dlg.backend.tasks.webpConvertRunning
+                onClicked: if (dlg.backend) dlg.backend.dispatch("cancelWebpConvert", null)
             }
 
             Button {
                 text: "Close"
-                enabled: !(dlg.main && dlg.main.webpConvertRunning)
+                enabled: !(dlg.backend && dlg.backend.tasks && dlg.backend.tasks.webpConvertRunning)
                 onClicked: dlg.close()
             }
         }
     }
 
     onOpened: {
-        if (dlg.main && dlg.main.currentFolder && dlg.folderText.length === 0) {
-            dlg.folderText = dlg.main.currentFolder
+        if (dlg.backend && dlg.backend.explorer && dlg.backend.explorer.currentFolder && dlg.folderText.length === 0) {
+            dlg.folderText = dlg.backend.explorer.currentFolder
         }
     }
 }

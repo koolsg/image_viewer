@@ -65,8 +65,8 @@ Dialog {
                 id: noButton
                 text: qsTr("Cancel")
                 contentItem: Label {
-                    text: parent.text
-                    font: parent.font
+                    text: noButton.text
+                    font: noButton.font
                     color: dlg.theme ? dlg.theme.text : "white"
                     horizontalAlignment: Text.AlignHCenter
                     verticalAlignment: Text.AlignVCenter
@@ -74,7 +74,7 @@ Dialog {
                 background: Rectangle {
                     implicitWidth: 100
                     implicitHeight: 36
-                    color: parent.hovered ? (dlg.theme ? dlg.theme.hover : "#2a2a2a") : "transparent"
+                    color: noButton.hovered ? (dlg.theme ? dlg.theme.hover : "#2a2a2a") : "transparent"
                     border.color: dlg.theme ? dlg.theme.border : "#333333"
                     border.width: 1
                     radius: dlg.theme ? dlg.theme.radiusSmall : 4
@@ -86,8 +86,8 @@ Dialog {
                 id: yesButton
                 text: qsTr("Delete")
                 contentItem: Label {
-                    text: parent.text
-                    font: parent.font
+                    text: yesButton.text
+                    font: yesButton.font
                     color: "white"
                     horizontalAlignment: Text.AlignHCenter
                     verticalAlignment: Text.AlignVCenter
@@ -95,7 +95,7 @@ Dialog {
                 background: Rectangle {
                     implicitWidth: 100
                     implicitHeight: 36
-                    color: parent.hovered ? Qt.lighter("#d32f2f", 1.1) : "#d32f2f"
+                    color: yesButton.hovered ? Qt.lighter("#d32f2f", 1.1) : "#d32f2f"
                     radius: dlg.theme ? dlg.theme.radiusSmall : 4
                 }
                 onClicked: { dlg.acceptedWithPayload(dlg.payload); dlg.close(); }

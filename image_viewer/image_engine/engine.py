@@ -7,9 +7,9 @@ data and processing operations in the image viewer application.
 import contextlib
 from collections import OrderedDict
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
-from PySide6.QtCore import QObject, QThread, Signal
+from PySide6.QtCore import QMetaObject, QObject, Qt, QThread, Signal
 from PySide6.QtGui import QImage, QPixmap
 
 from image_viewer.logger import get_logger
@@ -61,6 +61,8 @@ class ImageEngine(QObject):
 
     def __init__(self, parent: QObject | None = None):
         super().__init__(parent)
+
+        self._shutdown_done = False
 
         # UI-thread decode pipeline for full-resolution images (creates QPixmap on UI thread)
         self._loader = Loader(decode_image)
@@ -360,7 +362,7 @@ class ImageEngine(QObject):
         Returns:
             Dict with keys: resolution, size, mtime, etc.
         """
-        info = {}
+        info: dict[str, Any] = {}
         try:
             # Use cached metadata (populated by engine core DB preload)
             w, h, size_bytes, mtime = self._meta_cache.get(db_key(path), (None, None, None, None))
@@ -442,12 +444,19 @@ class ImageEngine(QObject):
 
     def shutdown(self) -> None:
         """Shutdown the engine and release resources."""
+        if self._shutdown_done:
+            return
+        self._shutdown_done = True
+
         _logger.debug("ImageEngine shutting down")
         self._loader.shutdown()
         self._pixmap_cache.clear()
         # Stop convert worker thread
         try:
             if hasattr(self, "_convert_thread") and self._convert_thread.isRunning():
+                with contextlib.suppress(Exception):
+                    # Ensure the worker is deleted in its owning thread before the event loop stops.
+                    self._convert_worker.deleteLater()
                 self._convert_thread.quit()
                 self._convert_thread.wait()
         except Exception:  # pragma: no cover - defensive cleanup
@@ -455,8 +464,22 @@ class ImageEngine(QObject):
         # Stop core engine thread
         try:
             if hasattr(self, "_core"):
+                if hasattr(self, "_core_thread") and self._core_thread.isRunning():
+                    # Run shutdown on the core thread and wait for it to finish.
+                    # This prevents QTimer destruction warnings during app teardown.
+                    with contextlib.suppress(Exception):
+                        QMetaObject.invokeMethod(self._core, "shutdown", Qt.ConnectionType.BlockingQueuedConnection)
+                else:
+                    with contextlib.suppress(Exception):
+                        self._core.shutdown()
+
+                # Keep emitting the legacy shutdown signal as a best-effort notification.
                 with contextlib.suppress(Exception):
                     self._core_shutdown.emit()
+
+                # Schedule deletion (timers already stopped by shutdown).
+                with contextlib.suppress(Exception):
+                    self._core.deleteLater()
             if hasattr(self, "_core_thread") and self._core_thread.isRunning():
                 self._core_thread.quit()
                 self._core_thread.wait()

@@ -15,7 +15,11 @@ ApplicationWindow {
     title: "Image Viewer"
     flags: Qt.Window | Qt.FramelessWindowHint
 
-    property var main: null
+    // Python sets this immediately after loading the QML root.
+    // Use `root.backend` (not the unqualified context name) to satisfy
+    // `pragma ComponentBehavior: Bound` rules.
+    property var backend: null
+
     property string explorerSelectedPath: ""
     property bool hqDownscaleEnabled: false
 
@@ -23,33 +27,21 @@ ApplicationWindow {
         id: theme
     }
 
-    // Queueing helper: some lifecycle events fire before Python sets `root.main`.
-    // Use `qmlDebugSafe(msg)` to reliably route QML diagnostics into the Python
-    // logging pipeline. Messages are queued and flushed once `root.main` exists.
-    property var _qmlDebugQueue: []
     function qmlDebugSafe(msg) {
+        // backend is injected as a context property before QML loads.
         try {
-            if (root.main) {
-                root.main.qmlDebug(msg)
+            if (root.backend) {
+                root.backend.dispatch("log", { level: "debug", message: String(msg) })
                 return
             }
         } catch (e) {
             // fall back to console if Python call fails
         }
-
-        // Queue and try later (non-blocking)
-        _qmlDebugQueue.push(msg)
-        Qt.callLater(function() {
-            if (!root.main) return
-            for (var i = 0; i < _qmlDebugQueue.length; ++i) {
-                try { root.main.qmlDebug(_qmlDebugQueue[i]) } catch (e) { /* ignore */ }
-            }
-            _qmlDebugQueue = []
-        })
+        console.log(String(msg))
     }
 
     onActiveChanged: {
-        if (active && !root.main?.viewMode) {
+        if (active && root.backend && !root.backend.viewer.viewMode) {
             grid.forceActiveFocus()
         }
         if (active) root.qmlDebugSafe("Application active change: active=" + active)
@@ -58,7 +50,7 @@ ApplicationWindow {
     function _openFolderDialogAtLastParent() {
         // Start the FolderDialog at the parent directory of the last opened folder.
         // QtQuick.Dialogs expects a file:/// URL.
-        var base = (root.main && root.main.currentFolder) ? ("" + root.main.currentFolder) : ""
+        var base = (root.backend && root.backend.explorer && root.backend.explorer.currentFolder) ? ("" + root.backend.explorer.currentFolder) : ""
         if (!base) {
             folderDialog.open()
             return
@@ -79,8 +71,8 @@ ApplicationWindow {
     Window {
         id: viewWindow
         title: "View"
-        visibility: (!!root.main && !!root.main.viewMode) ? Window.FullScreen : Window.Hidden
-        color: root.main ? root.main.backgroundColor : theme.background
+        visibility: (root.backend && root.backend.viewer && root.backend.viewer.viewMode) ? Window.FullScreen : Window.Hidden
+        color: (root.backend && root.backend.settings) ? root.backend.settings.backgroundColor : theme.background
 
         onVisibleChanged: {
             root.qmlDebugSafe("viewWindow.onVisibleChanged: visible=" + visible)
@@ -105,7 +97,7 @@ ApplicationWindow {
 
         onClosing: function(close) {
             root.qmlDebugSafe("viewWindow.onClosing requested")
-            if (root.main) root.main.closeView()
+            if (root.backend) root.backend.dispatch("closeView", null)
             close.accepted = false
         }
 
@@ -133,9 +125,9 @@ ApplicationWindow {
             ViewerPage {
                 id: viewerPage
                 anchors.fill: parent
-                main: root.main
+                backend: root.backend
                 theme: theme
-                backgroundColor: root.main ? root.main.backgroundColor : theme.background
+                backgroundColor: (root.backend && root.backend.settings) ? root.backend.settings.backgroundColor : theme.background
                 hqDownscaleEnabled: root.hqDownscaleEnabled
             }
         }
@@ -147,15 +139,14 @@ ApplicationWindow {
         id: folderDialog
         title: "Choose a folder"
         onAccepted: {
-            if (!root.main) return
-
-            root.main.openFolder(folderDialog.selectedFolder.toString())
+            if (!root.backend) return
+            root.backend.dispatch("openFolder", { path: folderDialog.selectedFolder.toString() })
         }
     }
 
     ConvertWebPDialog {
         id: webpDialog
-        main: root.main
+        backend: root.backend
         theme: theme
     }
 
@@ -163,9 +154,8 @@ ApplicationWindow {
         id: bgColorDialog
         title: "Choose background color"
         onAccepted: {
-            if (!root.main) return
-
-            root.main.setBackgroundColor(bgColorDialog.selectedColor)
+            if (!root.backend) return
+            root.backend.dispatch("setBackgroundColor", { color: bgColorDialog.selectedColor })
         }
     }
 
@@ -254,34 +244,28 @@ ApplicationWindow {
         }
 
         onAccepted: {
-            if (!root.main) return
+            if (!root.backend) return
             if (!oldPath) return
-            root.main.renameFile(oldPath, renameField.text)
+            root.backend.dispatch("renameFile", { path: oldPath, newName: renameField.text })
         }
     }
 
 
     Component.onCompleted: {
         deleteDialog.acceptedWithPayload.connect(function(p) {
-            if (root.main && typeof root.main.performDelete === 'function') {
-                // Ensure we pass an array of paths to Python. If the payload is a
-                // single string (view mode), wrap it in an array to avoid PySide
-                // conversion issues when receiving raw JS strings with exotic
-                // characters.
-                root.main.performDelete(Array.isArray(p) ? p : [p])
-            }
+            if (!root.backend) return
+            root.backend.dispatch("deleteFiles", { paths: (Array.isArray(p) ? p : [p]) })
         })
 
         viewDeleteDialog.acceptedWithPayload.connect(function(p) {
-            if (root.main && typeof root.main.performDelete === 'function') {
-                root.main.performDelete(Array.isArray(p) ? p : [p])
-            }
+            if (!root.backend) return
+            root.backend.dispatch("deleteFiles", { paths: (Array.isArray(p) ? p : [p]) })
         })
 
 
         Qt.callLater(function() {
             try {
-                // For frameless window, showMaximized() works but we need to ensure 
+                // For frameless window, showMaximized() works but we need to ensure
                 // we can still restore.
                 root.show()
                 root.requestActivate()
@@ -459,28 +443,27 @@ ApplicationWindow {
                 MenuItem {
                     text: "Fit to Screen"
                     checkable: true
-                    checked: root.main ? root.main.fitMode : true
+                    checked: root.backend ? root.backend.viewer.fitMode : true
                     onTriggered: {
-                        if (!root.main) return
-                        root.main.fitMode = true
+                        if (!root.backend) return
+                        root.backend.dispatch("setFitMode", { value: true })
                     }
                 }
 
                 MenuItem {
                     text: "Actual Size"
                     checkable: true
-                    checked: root.main ? !root.main.fitMode : false
+                    checked: root.backend ? !root.backend.viewer.fitMode : false
                     onTriggered: {
-                        if (!root.main) return
-                        root.main.fitMode = false
-                        root.main.zoom = 1.0
+                        if (!root.backend) return
+                        root.backend.dispatch("setZoom", { value: 1.0 })
                     }
                 }
 
                 MenuItem {
                     text: "High Quality Downscale (Slow)"
                     checkable: true
-                    enabled: root.main ? !root.main.fastViewEnabled : true
+                    enabled: root.backend ? !root.backend.settings.fastViewEnabled : true
                     checked: root.hqDownscaleEnabled
                     onToggled: root.hqDownscaleEnabled = checked
                 }
@@ -488,10 +471,10 @@ ApplicationWindow {
                 MenuItem {
                     text: "Fast View"
                     checkable: true
-                    checked: root.main ? root.main.fastViewEnabled : false
+                    checked: root.backend ? root.backend.settings.fastViewEnabled : false
                     onToggled: {
-                        if (!root.main) return
-                        root.main.fastViewEnabled = checked
+                        if (!root.backend) return
+                        root.backend.dispatch("setFastViewEnabled", { value: checked })
                     }
                 }
 
@@ -500,14 +483,14 @@ ApplicationWindow {
                     MenuItem {
                         text: "Black"
                         checkable: true
-                        checked: root.main ? root.main.backgroundColor === "#000000" : false
-                        onTriggered: if (root.main) root.main.backgroundColor = "#000000"
+                        checked: root.backend ? root.backend.settings.backgroundColor === "#000000" : false
+                        onTriggered: if (root.backend) root.backend.dispatch("setBackgroundColor", { color: "#000000" })
                     }
                     MenuItem {
                         text: "White"
                         checkable: true
-                        checked: root.main ? root.main.backgroundColor === "#ffffff" : false
-                        onTriggered: if (root.main) root.main.backgroundColor = "#ffffff"
+                        checked: root.backend ? root.backend.settings.backgroundColor === "#ffffff" : false
+                        onTriggered: if (root.backend) root.backend.dispatch("setBackgroundColor", { color: "#ffffff" })
                     }
                     MenuItem {
                         text: "Custom..."
@@ -519,11 +502,11 @@ ApplicationWindow {
 
                 MenuItem {
                     text: "Zoom In"
-                    onTriggered: if (root.main) root.main.zoom = (root.main.zoom || 1.0) * 1.25
+                    onTriggered: if (root.backend) root.backend.dispatch("zoomBy", { factor: 1.25 })
                 }
                 MenuItem {
                     text: "Zoom Out"
-                    onTriggered: if (root.main) root.main.zoom = (root.main.zoom || 1.0) / 1.25
+                    onTriggered: if (root.backend) root.backend.dispatch("zoomBy", { factor: 0.8 })
                 }
 
                 MenuSeparator {}
@@ -531,16 +514,16 @@ ApplicationWindow {
                 MenuItem {
                     text: "Explorer Mode"
                     checkable: true
-                    checked: root.main ? !root.main.viewMode : true
+                    checked: root.backend ? !root.backend.viewer.viewMode : true
                     onToggled: {
-                        if (!root.main) return
-                        root.main.viewMode = !checked
+                        if (!root.backend) return
+                        root.backend.dispatch("setViewMode", { value: !checked })
                     }
                 }
 
                 MenuItem {
                     text: "Refresh Explorer"
-                    onTriggered: if (root.main) root.main.refreshCurrentFolder()
+                    onTriggered: if (root.backend) root.backend.dispatch("refreshCurrentFolder", null)
                 }
 
                 Menu {
@@ -634,9 +617,10 @@ ApplicationWindow {
                     color: theme.text
                     font.bold: true
                     text: {
-                        if (!root.main) return ""
-                        var total = root.main.imageFiles ? root.main.imageFiles.length : 0
-                        var idx = root.main.currentIndex
+                        if (!root.backend) return ""
+                        var files = root.backend.explorer ? root.backend.explorer.imageFiles : null
+                        var total = files ? files.length : 0
+                        var idx = root.backend.explorer ? root.backend.explorer.currentIndex : -1
                         if (total <= 0) return "No folder"
                         return (idx + 1) + " / " + total
                     }
@@ -644,8 +628,8 @@ ApplicationWindow {
 
                 ToolButton {
                     id: toggleViewBtn
-                    text: root.main && root.main.viewMode ? "Back" : "View"
-                    enabled: root.main && (root.main.imageFiles && root.main.imageFiles.length > 0)
+                    text: root.backend && root.backend.viewer.viewMode ? "Back" : "View"
+                    enabled: root.backend && (root.backend.explorer.imageFiles && root.backend.explorer.imageFiles.length > 0)
                     contentItem: Label {
                         text: toggleViewBtn.text
                         font: toggleViewBtn.font
@@ -654,8 +638,8 @@ ApplicationWindow {
                         verticalAlignment: Text.AlignVCenter
                     }
                     onClicked: {
-                        if (!root.main) return
-                        root.main.viewMode = !root.main.viewMode
+                        if (!root.backend) return
+                        root.backend.dispatch("setViewMode", { value: !root.backend.viewer.viewMode })
                     }
                 }
             }
@@ -725,21 +709,21 @@ ApplicationWindow {
 
         Rectangle {
             anchors.fill: parent
-            color: root.main ? root.main.backgroundColor : theme.background
+            color: root.backend ? root.backend.settings.backgroundColor : theme.background
 
             GridView {
                 id: grid
                 anchors.fill: parent
                 anchors.margins: 12
-                property int thumbVisualWidth: root.main ? (root.main.thumbnailWidth ? root.main.thumbnailWidth : 220) : 220
+                property int thumbVisualWidth: (root.backend && root.backend.settings) ? root.backend.settings.thumbnailWidth : 220
                 property int minHSpacing: 6
                 property int computedCols: Math.max(1, Math.floor(width / (thumbVisualWidth + minHSpacing)))
                 property int hSpacing: Math.max(minHSpacing, Math.floor((width - (computedCols * thumbVisualWidth)) / Math.max(1, computedCols)))
                 cellWidth: thumbVisualWidth + hSpacing
                 cellHeight: Math.round((thumbVisualWidth + hSpacing) * 1.2)
                 clip: true
-                model: root.main ? root.main.imageModel : null
-                currentIndex: root.main ? root.main.currentIndex : -1
+                model: root.backend ? root.backend.explorer.imageModel : null
+                currentIndex: root.backend ? root.backend.explorer.currentIndex : -1
                 focus: true
                 activeFocusOnTab: true
 
@@ -762,24 +746,28 @@ ApplicationWindow {
                 function setSelectionTo(idx) {
                     grid.selectedIndices = (idx >= 0) ? [idx] : []
                     grid.lastClickedIndex = idx
-                    root.main.currentIndex = idx
-                    if (idx >= 0 && root.main && root.main.imageFiles && idx < root.main.imageFiles.length) {
-                        root.explorerSelectedPath = root.main.imageFiles[idx]
+                    if (root.backend) {
+                        root.backend.dispatch("setCurrentIndex", { index: idx })
+                    }
+                    if (idx >= 0 && root.backend && root.backend.explorer.imageFiles && idx < root.backend.explorer.imageFiles.length) {
+                        root.explorerSelectedPath = root.backend.explorer.imageFiles[idx]
                     }
                 }
 
                 function setCurrentIndexOnly(idx) {
-                    root.main.currentIndex = idx
-                    if (idx >= 0 && root.main && root.main.imageFiles && idx < root.main.imageFiles.length) {
-                        root.explorerSelectedPath = root.main.imageFiles[idx]
+                    if (root.backend) {
+                        root.backend.dispatch("setCurrentIndex", { index: idx })
+                    }
+                    if (idx >= 0 && root.backend && root.backend.explorer.imageFiles && idx < root.backend.explorer.imageFiles.length) {
+                        root.explorerSelectedPath = root.backend.explorer.imageFiles[idx]
                     }
                 }
 
                 onCurrentIndexChanged: {
                     if (grid.dragSelecting || !grid.selectionSyncEnabled) return
-                    if (root.main && root.main.currentIndex >= 0) {
-                        grid.selectedIndices = [root.main.currentIndex]
-                        grid.lastClickedIndex = root.main.currentIndex
+                    if (root.backend && root.backend.explorer.currentIndex >= 0) {
+                        grid.selectedIndices = [root.backend.explorer.currentIndex]
+                        grid.lastClickedIndex = root.backend.explorer.currentIndex
                     }
                 }
 
@@ -845,7 +833,7 @@ ApplicationWindow {
                             var y2 = Math.max(grid.selectionRectY, grid.selectionRectY + grid.selectionRectH)
 
                             // use cell math for reliable hit detection
-                            var total = root.main ? (root.main.imageFiles ? root.main.imageFiles.length : 0) : 0
+                            var total = root.backend ? (root.backend.explorer.imageFiles ? root.backend.explorer.imageFiles.length : 0) : 0
                             var cols = grid.computedCols || 1
                             var newSel = grid.selectedIndices.slice()
                             for (var i = 0; i < total; ++i) {
@@ -885,14 +873,14 @@ ApplicationWindow {
                                 // click on empty area -> clear selection unless modifiers held
                                 if (!(mouse.modifiers & Qt.ControlModifier) && !(mouse.modifiers & Qt.ShiftModifier)) {
                                     grid.selectedIndices = []
-                                    root.main.currentIndex = -1
+                                    if (root.backend) root.backend.dispatch("setCurrentIndex", { index: -1 })
                                     root.explorerSelectedPath = ""
                                 }
                                 grid._lastClickIndex = -1
                                 grid._lastClickAtMs = 0
                             } else {
                                 var idx = row * cols + col
-                                var total = root.main ? (root.main.imageFiles ? root.main.imageFiles.length : 0) : 0
+                                var total = root.backend ? (root.backend.explorer.imageFiles ? root.backend.explorer.imageFiles.length : 0) : 0
                                 if (idx >= 0 && idx < total) {
                                     var nowMs = Date.now()
                                     var isDouble = (idx === grid._lastClickIndex) && ((nowMs - grid._lastClickAtMs) <= grid._doubleClickIntervalMs)
@@ -931,11 +919,11 @@ ApplicationWindow {
 
                                     // Reliable double-click handling lives here because this overlay
                                     // receives the left clicks (delegate MouseArea does not).
-                                    if (isDouble && root.main) {
+                                    if (isDouble && root.backend) {
                                         root.qmlDebugSafe("[THUMB] DOUBLE-CLICK idx=" + idx)
                                         // Ensure currentIndex is set before switching view.
-                                        root.main.currentIndex = idx
-                                        root.main.viewMode = true
+                                        root.backend.dispatch("setCurrentIndex", { index: idx })
+                                        root.backend.dispatch("setViewMode", { value: true })
                                     }
                                 }
                             }
@@ -965,10 +953,10 @@ ApplicationWindow {
                 }
 
                 Keys.onPressed: function(event) {
-                    if (!root.main) return
+                    if (!root.backend) return
 
-                    var total = root.main.imageFiles ? root.main.imageFiles.length : 0
-                    var idx = (root.main.currentIndex >= 0) ? root.main.currentIndex : 0
+                    var total = root.backend.explorer.imageFiles ? root.backend.explorer.imageFiles.length : 0
+                    var idx = (root.backend.explorer.currentIndex >= 0) ? root.backend.explorer.currentIndex : 0
                     var cols = grid.computedCols || 1
 
                     // Arrow key navigation within the grid
@@ -1014,11 +1002,11 @@ ApplicationWindow {
 
                     // Enter opens viewer for the current selection
                     if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-                        if (root.main.currentIndex >= 0) {
-                            root.explorerSelectedPath = (root.main.imageFiles && root.main.currentIndex < root.main.imageFiles.length)
-                                ? root.main.imageFiles[root.main.currentIndex]
+                        if (root.backend.explorer.currentIndex >= 0) {
+                            root.explorerSelectedPath = (root.backend.explorer.imageFiles && root.backend.explorer.currentIndex < root.backend.explorer.imageFiles.length)
+                                ? root.backend.explorer.imageFiles[root.backend.explorer.currentIndex]
                                 : root.explorerSelectedPath
-                            root.main.viewMode = true
+                            root.backend.dispatch("setViewMode", { value: true })
                         }
                         event.accepted = true
                     }
@@ -1026,15 +1014,15 @@ ApplicationWindow {
                     // Ctrl+C - Copy selected files
                     if (event.key === Qt.Key_C && (event.modifiers & Qt.ControlModifier)) {
                         var sel = grid.selectedIndices || []
-                        if (sel.length > 0 && root.main && root.main.imageFiles) {
+                        if (sel.length > 0 && root.backend && root.backend.explorer.imageFiles) {
                             var paths = []
                             for (var i = 0; i < sel.length; ++i) {
                                 var id = sel[i]
-                                if (id >= 0 && id < root.main.imageFiles.length) {
-                                    paths.push(root.main.imageFiles[id])
+                                if (id >= 0 && id < root.backend.explorer.imageFiles.length) {
+                                    paths.push(root.backend.explorer.imageFiles[id])
                                 }
                             }
-                            if (paths.length > 0) root.main.copyFiles(paths)
+                            if (paths.length > 0) root.backend.dispatch("copyFiles", { paths: paths })
                         }
                         event.accepted = true
                     }
@@ -1042,23 +1030,23 @@ ApplicationWindow {
                     // Ctrl+X - Cut selected files
                     if (event.key === Qt.Key_X && (event.modifiers & Qt.ControlModifier)) {
                         var sel = grid.selectedIndices || []
-                        if (sel.length > 0 && root.main && root.main.imageFiles) {
+                        if (sel.length > 0 && root.backend && root.backend.explorer.imageFiles) {
                             var paths = []
                             for (var i = 0; i < sel.length; ++i) {
                                 var id = sel[i]
-                                if (id >= 0 && id < root.main.imageFiles.length) {
-                                    paths.push(root.main.imageFiles[id])
+                                if (id >= 0 && id < root.backend.explorer.imageFiles.length) {
+                                    paths.push(root.backend.explorer.imageFiles[id])
                                 }
                             }
-                            if (paths.length > 0) root.main.cutFiles(paths)
+                            if (paths.length > 0) root.backend.dispatch("cutFiles", { paths: paths })
                         }
                         event.accepted = true
                     }
 
                     // Ctrl+V - Paste files
                     if (event.key === Qt.Key_V && (event.modifiers & Qt.ControlModifier)) {
-                        if (root.main && root.main.clipboardHasFiles) {
-                            root.main.pasteFiles()
+                        if (root.backend && root.backend.explorer.clipboardHasFiles) {
+                            root.backend.dispatch("pasteFiles", null)
                         }
                         event.accepted = true
                     }
@@ -1066,12 +1054,12 @@ ApplicationWindow {
                     // Delete - Delete selected files (Explorer only)
                     if (event.key === Qt.Key_Delete) {
                         var sel = grid.selectedIndices || []
-                        if (sel.length > 0 && root.main && root.main.imageFiles) {
+                        if (sel.length > 0 && root.backend && root.backend.explorer.imageFiles) {
                             var paths = []
                             for (var i = 0; i < sel.length; ++i) {
                                 var id = sel[i]
-                                if (id >= 0 && id < root.main.imageFiles.length) {
-                                    paths.push(root.main.imageFiles[id])
+                                if (id >= 0 && id < root.backend.explorer.imageFiles.length) {
+                                    paths.push(root.backend.explorer.imageFiles[id])
                                 }
                             }
                             if (paths.length > 0) {
@@ -1087,10 +1075,10 @@ ApplicationWindow {
                     // F2 - Rename selected file (Explorer only, single selection required)
                     if (event.key === Qt.Key_F2) {
                         var sel = grid.selectedIndices || []
-                        if (sel.length === 1 && root.main && root.main.imageFiles) {
+                        if (sel.length === 1 && root.backend && root.backend.explorer.imageFiles) {
                             var idx = sel[0]
-                            if (idx >= 0 && idx < root.main.imageFiles.length) {
-                                var selPath = root.main.imageFiles[idx]
+                            if (idx >= 0 && idx < root.backend.explorer.imageFiles.length) {
+                                var selPath = root.backend.explorer.imageFiles[idx]
                                 renameDialog.oldPath = selPath
                                 renameDialog.initialName = selPath.replace(/^.*[\\/]/, "")
                                 renameDialog.open()
@@ -1202,26 +1190,26 @@ ApplicationWindow {
                             MenuItem {
                                 text: "Open"
                                 onTriggered: {
-                                    if (!root.main) return
-                                    root.main.currentIndex = delegateRoot.index
-                                    root.main.viewMode = true
+                                    if (!root.backend) return
+                                    root.backend.dispatch("setCurrentIndex", { index: delegateRoot.index })
+                                    root.backend.dispatch("setViewMode", { value: true })
                                 }
                             }
                             MenuSeparator {}
                             MenuItem {
                                 text: grid.selectedIndices.length > 1 ? "Copy " + grid.selectedIndices.length + " files" : "Copy"
                                 onTriggered: {
-                                    if (!root.main) return
-                                    if (grid.selectedIndices.length > 0 && root.main.imageFiles) {
+                                    if (!root.backend) return
+                                    if (grid.selectedIndices.length > 0 && root.backend.explorer.imageFiles) {
                                         var paths = []
                                         for (var i = 0; i < grid.selectedIndices.length; ++i) {
                                             var idx = grid.selectedIndices[i]
-                                            if (idx >= 0 && idx < root.main.imageFiles.length) {
-                                                paths.push(root.main.imageFiles[idx])
+                                            if (idx >= 0 && idx < root.backend.explorer.imageFiles.length) {
+                                                paths.push(root.backend.explorer.imageFiles[idx])
                                             }
                                         }
                             if (paths.length > 0) {
-                                root.main.copyFiles(paths)
+                                root.backend.dispatch("copyFiles", { paths: paths })
                             }
                                     }
                                 }
@@ -1229,25 +1217,25 @@ ApplicationWindow {
                             MenuItem {
                                 text: grid.selectedIndices.length > 1 ? "Cut " + grid.selectedIndices.length + " files" : "Cut"
                                 onTriggered: {
-                                    if (!root.main) return
-                                    if (grid.selectedIndices.length > 0 && root.main.imageFiles) {
+                                    if (!root.backend) return
+                                    if (grid.selectedIndices.length > 0 && root.backend.explorer.imageFiles) {
                                         var paths = []
                                         for (var i = 0; i < grid.selectedIndices.length; ++i) {
                                             var idx = grid.selectedIndices[i]
-                                            if (idx >= 0 && idx < root.main.imageFiles.length) {
-                                                paths.push(root.main.imageFiles[idx])
+                                            if (idx >= 0 && idx < root.backend.explorer.imageFiles.length) {
+                                                paths.push(root.backend.explorer.imageFiles[idx])
                                             }
                                         }
                                         if (paths.length > 0) {
-                                            root.main.cutFiles(paths)
+                                            root.backend.dispatch("cutFiles", { paths: paths })
                                         }
                                     }
                                 }
                             }
                             MenuItem {
                                 text: "Paste"
-                                enabled: root.main && root.main.clipboardHasFiles
-                                onTriggered: if (root.main) root.main.pasteFiles()
+                                enabled: root.backend && root.backend.explorer.clipboardHasFiles
+                                onTriggered: if (root.backend) root.backend.dispatch("pasteFiles", null)
                             }
                             MenuItem {
                                 text: "Rename"
@@ -1271,11 +1259,11 @@ ApplicationWindow {
                             MenuSeparator {}
                             MenuItem {
                                 text: "Copy path"
-                                onTriggered: if (root.main) root.main.copyText(delegateRoot.path)
+                                onTriggered: if (root.backend) root.backend.dispatch("copyText", { text: delegateRoot.path })
                             }
                             MenuItem {
                                 text: "Reveal in Explorer"
-                                onTriggered: if (root.main) root.main.revealInExplorer(delegateRoot.path)
+                                onTriggered: if (root.backend) root.backend.dispatch("revealInExplorer", { path: delegateRoot.path })
                             }
                         }
 
