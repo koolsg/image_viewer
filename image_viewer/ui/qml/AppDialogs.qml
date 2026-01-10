@@ -6,8 +6,6 @@
 pragma ComponentBehavior: Bound
 
 import QtQuick
-import QtQuick.Controls
-import QtQuick.Layouts
 import QtQuick.Dialogs
 import "."
 
@@ -110,72 +108,14 @@ Item {
         }
     }
 
-    Dialog {
+    RenameFileDialog {
         id: renameDialog
-        // Parent will be set by the caller's window; keep it null-safe.
-        parent: null
-        modal: true
-        focus: true
-        title: "Rename"
-        standardButtons: Dialog.Ok | Dialog.Cancel
+        theme: dialogs.theme
 
-        property string oldPath: ""
-        property string initialName: ""  // Store the initial filename to populate
-
-        // Keep the dialog centered (avoids "top-left corner" placement issues)
-        x: Math.round(((parent ? parent.width : 0) - width) / 2)
-        y: Math.round(((parent ? parent.height : 0) - height) / 2)
-
-        contentItem: ColumnLayout {
-            anchors.fill: parent
-            anchors.margins: 16
-            spacing: 10
-
-            TextField {
-                id: renameField
-                Layout.fillWidth: true
-                Layout.preferredHeight: 36
-                selectByMouse: true
-                focus: true
-                text: renameDialog.initialName
-
-                padding: 8
-                font.pixelSize: 14
-
-                color: dialogs.theme.text
-                selectionColor: dialogs.theme.accent
-                selectedTextColor: dialogs.theme.surface
-                cursorDelegate: Rectangle {
-                    width: 1
-                    color: dialogs.theme.accent
-                }
-                background: Rectangle {
-                    radius: dialogs.theme.radiusSmall
-                    color: dialogs.theme.hover
-                    border.color: dialogs.theme.border
-                    border.width: 1
-                    implicitHeight: 36
-                }
-
-                Keys.onReturnPressed: function(event) {
-                    // Pressing Enter confirms the rename (same as clicking OK)
-                    renameDialog.accept()
-                    event.accepted = true
-                }
-            }
-        }
-
-        onOpened: {
-            // Focus + select full filename (including extension), Windows-style.
-            renameDialog.forceActiveFocus()
-            renameField.forceActiveFocus()
-            Qt.callLater(function() { renameField.selectAll() })
-        }
-
-        onAccepted: {
+        onAcceptedWithPayload: function(p) {
             if (!dialogs.backend) return
-            if (!oldPath) return
-            dialogs.backend.dispatch("renameFile", { path: oldPath, newName: renameField.text })
+            if (!p || !p.path) return
+            dialogs.backend.dispatch("renameFile", { path: p.path, newName: p.newName })
         }
     }
 

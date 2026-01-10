@@ -177,7 +177,7 @@ Dialog {
 
             Button {
                 id: yesButton
-                text: qsTr("Yes")
+                text: qsTr("Yes (Y)")
                 KeyNavigation.right: noButton
                 implicitWidth: 100
                 implicitHeight: 36
@@ -201,7 +201,7 @@ Dialog {
 
             Button {
                 id: noButton
-                text: qsTr("No")
+                text: qsTr("No (N)")
                 KeyNavigation.left: yesButton
                 implicitWidth: 100
                 implicitHeight: 36

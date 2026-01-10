@@ -255,6 +255,53 @@ ApplicationWindow {
                         return
                     }
 
+                    // Home/End navigation
+                    if (event.key === Qt.Key_Home) {
+                        if (total > 0) {
+                            idx = 0
+                            grid.setSelectionTo(idx)
+                            grid.positionViewAtIndex(idx, GridView.Visible)
+                        }
+                        event.accepted = true
+                        return
+                    }
+
+                    if (event.key === Qt.Key_End) {
+                        if (total > 0) {
+                            idx = total - 1
+                            grid.setSelectionTo(idx)
+                            grid.positionViewAtIndex(idx, GridView.Visible)
+                        }
+                        event.accepted = true
+                        return
+                    }
+
+                    // PageUp/PageDown navigation
+                    // Compute "page" size based on how many full rows fit in the current viewport.
+                    // This automatically adapts to window size and thumbnail sizing.
+                    var rowsVisible = Math.max(1, Math.floor(grid.height / Math.max(1, grid.cellHeight)))
+                    var pageStep = rowsVisible * cols
+
+                    if (event.key === Qt.Key_PageUp) {
+                        if (total > 0) {
+                            idx = Math.max(0, idx - pageStep)
+                            grid.setSelectionTo(idx)
+                            grid.positionViewAtIndex(idx, GridView.Visible)
+                        }
+                        event.accepted = true
+                        return
+                    }
+
+                    if (event.key === Qt.Key_PageDown) {
+                        if (total > 0) {
+                            idx = Math.min(total - 1, idx + pageStep)
+                            grid.setSelectionTo(idx)
+                            grid.positionViewAtIndex(idx, GridView.Visible)
+                        }
+                        event.accepted = true
+                        return
+                    }
+
                     // Explorer-specific file/action shortcuts (Enter/Delete/Ctrl+*/F2) moved to `ExplorerShortcuts.qml`.
                     // Shortcut instances are injected next to the grid and are enabled only when View mode is not active.
                     // (Arrow navigation remains handled here for repeat/hold behaviour.)
