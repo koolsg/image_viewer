@@ -1,4 +1,10 @@
+/*
+ ViewerPage.qml — 단일 이미지 표시 및 팬/줌/fit 동작을 처리하는 뷰어 페이지 컴포넌트.
+ 존재 이유: 이미지 뷰 모드의 렌더링과 상호작용(확대/팬/회전 등)을 캡슐화하기 위해 분리되어 있습니다.
+*/
+
 import QtQuick
+import "."
 
 Item {
     id: root
@@ -10,15 +16,8 @@ Item {
     property bool hqDownscaleEnabled: false
     focus: true
 
-
-    Keys.onReturnPressed: {
-        if (!root.backend) return
-        root.backend.dispatch("closeView", null)
-    }
-    Keys.onEscapePressed: {
-        if (!root.backend) return
-        root.backend.dispatch("closeView", null)
-    }
+    // Viewer-local shortcuts moved to ViewerShortcuts.qml
+    ViewerShortcuts { backend: root.backend }
 
 
 

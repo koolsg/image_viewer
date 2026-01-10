@@ -1,6 +1,12 @@
+/*
+ Theme.qml — 애플리케이션의 색상, 간격, 반경 등 테마 속성을 정의합니다.
+ 이 파일은 Controls palette를 중앙화하여 앱 전역에서 일관된 스타일을 제공하기 위해 존재합니다.
+*/
+
 import QtQuick
 
 QtObject {
+    id: themeRoot
     enum Type {
         Dark,
         Light,
@@ -88,5 +94,23 @@ QtObject {
             case Theme.Pastel: return "#FFB7B2"
             default: return "#3D85C6"
         }
+    }
+
+    // Centralized Controls palette for the app.
+    // NOTE: Refer to Theme properties via `themeRoot.*` because Palette has
+    // overlapping property names (e.g., `text`) that would otherwise cause
+    // self-referential bindings.
+    readonly property var palette: Palette {
+        window: themeRoot.background
+        windowText: themeRoot.text
+
+        base: themeRoot.surface
+        text: themeRoot.text
+
+        button: themeRoot.surface
+        buttonText: themeRoot.text
+
+        highlight: themeRoot.accent
+        highlightedText: themeRoot.currentTheme === Theme.Dark ? "#FFFFFF" : "#000000"
     }
 }

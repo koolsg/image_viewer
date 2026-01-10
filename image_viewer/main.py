@@ -85,9 +85,34 @@ def run(argv: list[str] | None = None) -> int:
 
     argv = _apply_cli_logging_options(list(argv))
 
+    # Optional Qt Quick rendering overrides (Windows driver / cursor artifact workarounds).
+    # Keep defaults unchanged; allow opting in via env vars.
+    #
+    # Examples:
+    #   IMAGE_VIEWER_QSG_RHI_BACKEND=opengl  -> set QSG_RHI_BACKEND=opengl
+    #   IMAGE_VIEWER_QT_QUICK_BACKEND=software -> set QT_QUICK_BACKEND=software
+    #
+    # These must be set before QApplication is created.
+    applied_overrides: list[tuple[str, str, str]] = []
+
+    rhi_backend = os.environ.get("IMAGE_VIEWER_QSG_RHI_BACKEND", "").strip()
+    if rhi_backend:
+        os.environ.setdefault("QSG_RHI_BACKEND", rhi_backend)
+        applied_overrides.append(("IMAGE_VIEWER_QSG_RHI_BACKEND", "QSG_RHI_BACKEND", rhi_backend))
+
+    quick_backend = os.environ.get("IMAGE_VIEWER_QT_QUICK_BACKEND", "").strip()
+    if quick_backend:
+        os.environ.setdefault("QT_QUICK_BACKEND", quick_backend)
+        applied_overrides.append(("IMAGE_VIEWER_QT_QUICK_BACKEND", "QT_QUICK_BACKEND", quick_backend))
+
     # Apply CLI-provided env overrides (IMAGE_VIEWER_LOG_LEVEL / IMAGE_VIEWER_LOG_CATS)
     # after parsing, because many module-level loggers are created before env vars exist.
     setup_logger()
+
+    # Log any applied Qt backend overrides at debug level so it's easy to diagnose platform workarounds.
+    for src_var, dst_var, value in applied_overrides:
+        _logger.debug("Applied Qt backend override: %s -> %s=%s", src_var, dst_var, value)
+
     _logger.info("Starting Image Viewer (QML)")
 
     # Qt Quick Controls: ensure we use a non-native style so that our QML

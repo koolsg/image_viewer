@@ -1,3 +1,8 @@
+/*
+ ConvertWebPDialog.qml — 이미지들을 WebP로 일괄 변환하는 UI 다이얼로그입니다.
+ 이 파일은 변환 설정, 진행 로그 표시 및 백엔드 변환 작업과의 상호작용을 담당합니다.
+*/
+
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
