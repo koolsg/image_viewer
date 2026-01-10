@@ -14,7 +14,11 @@ from image_viewer.app.state.explorer_state import ExplorerState
 from image_viewer.app.state.settings_state import SettingsState
 from image_viewer.app.state.tasks_state import TasksState
 from image_viewer.app.state.viewer_state import ViewerState
-from image_viewer.file_operations import (
+from image_viewer.image_engine.engine import ImageEngine
+from image_viewer.infra.logger import get_logger
+from image_viewer.infra.path_utils import abs_dir_str, abs_path_str, db_key
+from image_viewer.infra.settings_manager import SettingsManager
+from image_viewer.ops.file_operations import (
     copy_files_to_clipboard,
     cut_files_to_clipboard,
     delete_files_to_recycle_bin,
@@ -22,12 +26,8 @@ from image_viewer.file_operations import (
     paste_files,
     rename_file,
 )
-from image_viewer.image_engine.engine import ImageEngine
-from image_viewer.logger import get_logger
-from image_viewer.path_utils import abs_dir_str, abs_path_str, db_key
-from image_viewer.qml_models import QmlImageGridModel
-from image_viewer.settings_manager import SettingsManager
-from image_viewer.webp_converter import ConvertController
+from image_viewer.ops.webp_converter import ConvertController
+from image_viewer.ui.qml_models import QmlImageGridModel
 
 _logger = get_logger("backend")
 _BASE_DIR = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parents[1]))

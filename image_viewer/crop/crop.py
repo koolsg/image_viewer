@@ -6,7 +6,7 @@ Pure functions for cropping images, no Qt dependencies.
 import contextlib
 from typing import Any
 
-from image_viewer.logger import get_logger
+from image_viewer.infra.logger import get_logger
 
 _logger = get_logger("crop")
 

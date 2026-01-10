@@ -423,10 +423,4 @@ def apply_theme(app: QApplication, theme: str = "dark", font_size: int = 10) -> 
     _apply_style(app, pal_def, font_size)
 
 
-# Legacy aliases if needed, though apply_theme handles both
-def apply_dark_theme(app: QApplication) -> None:
-    apply_theme(app, "dark")
-
-
-def apply_light_theme(app: QApplication) -> None:
-    apply_theme(app, "light")
+# Note: `apply_theme` covers both dark and light; legacy aliases removed.

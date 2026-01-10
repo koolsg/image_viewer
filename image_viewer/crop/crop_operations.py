@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 
 from PySide6.QtWidgets import QMessageBox
 
-from image_viewer.logger import get_logger
+from image_viewer.infra.logger import get_logger
 
 from .crop import apply_crop_to_file
 from .ui_crop import CropDialog

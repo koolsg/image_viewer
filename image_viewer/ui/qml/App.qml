@@ -282,38 +282,51 @@ ApplicationWindow {
     // --- Custom Title Bar & Window Management ---
 
     header: Column {
+        // Ensure header spans the window width so children (title bar + menu bar) are visible
+        width: root.width
         Rectangle {
             id: customTitleBar
             width: parent.width
             height: 32
             color: theme.surface
             z: 1000
-            layer.enabled: true // Cache as texture to prevent jitter during window drag
+            // NOTE (Windows): Enabling a layer here can cause visible trailing/lag during
+            // startSystemMove() window drags (the title bar appears to "chase" the window).
+            // Keep it disabled for responsive, artifact-free dragging.
+            layer.enabled: false
 
-            DragHandler {
-                id: dragHandler
-                onActiveChanged: if (active) root.startSystemMove()
-            }
+            Item {
+                id: dragRegion
+                anchors.left: parent.left
+                anchors.right: windowControls.left
+                anchors.top: parent.top
+                anchors.bottom: parent.bottom
 
-            TapHandler {
-                acceptedButtons: Qt.LeftButton
-                onDoubleTapped: {
-                    if (root.visibility === Window.Maximized) {
-                        root.showNormal()
-                    } else {
-                        root.showMaximized()
+                DragHandler {
+                    id: dragHandler
+                    onActiveChanged: if (active) root.startSystemMove()
+                }
+
+                TapHandler {
+                    acceptedButtons: Qt.LeftButton
+                    onDoubleTapped: {
+                        if (root.visibility === Window.Maximized) {
+                            root.showNormal()
+                        } else {
+                            root.showMaximized()
+                        }
                     }
                 }
-            }
 
-            Label {
-                id: titleLabel
-                anchors.left: parent.left
-                anchors.leftMargin: 12
-                anchors.verticalCenter: parent.verticalCenter
-                text: root.title
-                color: theme.text
-                font.pixelSize: 12
+                Label {
+                    id: titleLabel
+                    anchors.left: parent.left
+                    anchors.leftMargin: 12
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: root.title
+                    color: theme.text
+                    font.pixelSize: 12
+                }
             }
 
             // Window Controls
@@ -331,9 +344,11 @@ ApplicationWindow {
                     flat: true
                     hoverEnabled: true
                     background: Rectangle {
+                        anchors.fill: parent
                         color: minBtn.hovered ? theme.hover : "transparent"
                     }
                     contentItem: Text {
+                        anchors.fill: parent
                         text: "—"
                         color: theme.text
                         font.pixelSize: 10
@@ -350,9 +365,11 @@ ApplicationWindow {
                     flat: true
                     hoverEnabled: true
                     background: Rectangle {
+                        anchors.fill: parent
                         color: maxBtn.hovered ? theme.hover : "transparent"
                     }
                     contentItem: Text {
+                        anchors.fill: parent
                         text: root.visibility === Window.Maximized ? "❐" : "☐"
                         color: theme.text
                         font.pixelSize: 14
@@ -375,9 +392,11 @@ ApplicationWindow {
                     flat: true
                     hoverEnabled: true
                     background: Rectangle {
+                        anchors.fill: parent
                         color: closeBtn.hovered ? "#E81123" : "transparent"
                     }
                     contentItem: Text {
+                        anchors.fill: parent
                         text: "✕"
                         color: closeBtn.hovered ? "#FFFFFF" : theme.text
                         font.pixelSize: 14
@@ -400,6 +419,8 @@ ApplicationWindow {
         MenuBar {
             id: mainMenuBar
             width: parent.width
+            // Explicit height to avoid zero/implicit sizing issues on some styles/platforms
+            height: 30
             background: Rectangle {
                 color: theme.surface
                 Rectangle {
@@ -585,7 +606,7 @@ ApplicationWindow {
 
         ToolBar {
             id: mainToolBar
-            width: parent.width
+            width: root.width
             background: Rectangle {
                 color: theme.surface
                 Rectangle {
@@ -1127,8 +1148,11 @@ ApplicationWindow {
 
                             onClicked: function(mouse) {
                                 if (mouse.button === Qt.RightButton) {
+                                    // Open context menu at the click position relative to the delegate item.
+                                    // According to Qt Quick Controls 2 docs, popup(x, y) positions in the popup's
+                                    // parent coordinate system. Passing the parent item ensures correct placement.
                                     grid.setSelectionTo(delegateRoot.index)
-                                    ctxMenu.popup(mouse.x, mouse.y)
+                                    ctxMenu.popup(delegateRoot, mouse.x, mouse.y)
                                 }
                             }
                         }

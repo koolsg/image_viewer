@@ -24,9 +24,9 @@ from PySide6.QtWidgets import (
 )
 
 from image_viewer.image_engine.decoder import get_image_dimensions
-from image_viewer.logger import get_logger
-from image_viewer.styles import apply_theme
+from image_viewer.infra.logger import get_logger
 from image_viewer.trim.trim import apply_trim_to_file, detect_trim_box_stats
+from image_viewer.ui.styles import apply_theme
 
 _logger = get_logger("ui_trim")
 

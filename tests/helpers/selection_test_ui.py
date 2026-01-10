@@ -13,7 +13,7 @@ from PySide6.QtGui import QImage, QPixmap
 from PySide6.QtWidgets import QApplication, QGraphicsScene, QGraphicsView, QGraphicsPixmapItem, QVBoxLayout, QWidget
 
 from image_viewer.crop.ui_crop_selection import SelectionRectItem
-from image_viewer.logger import get_logger
+from image_viewer.infra.logger import get_logger
 
 _logger = get_logger("ui_crop_test")
 

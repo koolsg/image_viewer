@@ -12,8 +12,8 @@ from typing import TYPE_CHECKING, Any
 from PySide6.QtCore import QMetaObject, QObject, Qt, QThread, Signal
 from PySide6.QtGui import QImage, QPixmap
 
-from image_viewer.logger import get_logger
-from image_viewer.path_utils import abs_path, abs_path_str, db_key
+from image_viewer.infra.logger import get_logger
+from image_viewer.infra.path_utils import abs_path, abs_path_str, db_key
 
 from .convert_worker import ConvertWorker
 from .decoder import decode_image
@@ -489,19 +489,6 @@ class ImageEngine(QObject):
     # ═══════════════════════════════════════════════════════════════════════
     # Internal Handlers
     # ═══════════════════════════════════════════════════════════════════════
-
-    def _on_image_decoded(self, path: str, image_data, error) -> None:
-        """Handle decoded image from loader."""
-        # Legacy hook - the loader is connected directly to the convert worker
-        # which will handle both normal and error cases. Keep this method for
-        # completeness but prefer the worker pipeline above.
-        if error or image_data is None:
-            _logger.debug("decode error for %s: %s", path, error)
-            self.image_ready.emit(path, QPixmap(), error)
-            return
-
-        # Normal conversion now occurs in the ConvertWorker running in a
-        # background thread; results are handled in `_on_image_converted`.
 
     def _on_image_converted(self, path: str, qimage: QImage, error) -> None:
         """Handle QImage produced by the ConvertWorker and make a QPixmap.

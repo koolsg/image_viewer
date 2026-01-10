@@ -31,8 +31,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from image_viewer.logger import get_logger
-from image_viewer.settings_manager import SettingsManager
+from image_viewer.infra.logger import get_logger
+from image_viewer.infra.settings_manager import SettingsManager
 
 # local imports (may be split out later)
 try:

@@ -6,8 +6,8 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Final
 
-from image_viewer.logger import get_logger
-from image_viewer.path_utils import abs_path_str, db_key
+from image_viewer.infra.logger import get_logger
+from image_viewer.infra.path_utils import abs_path_str, db_key
 
 try:
     import ctypes

@@ -16,7 +16,7 @@ from PySide6.QtGui import QImage, QKeySequence, QPixmap, QShortcut
 from PySide6.QtWidgets import QApplication, QMessageBox
 
 from image_viewer.image_engine.decoder import decode_image, get_image_dimensions
-from image_viewer.logger import get_logger
+from image_viewer.infra.logger import get_logger
 from image_viewer.trim.trim import apply_trim_to_file, detect_trim_box_stats, make_trim_preview
 from image_viewer.trim.ui_trim import TrimBatchWorker, TrimPreviewDialog, TrimReportDialog
 

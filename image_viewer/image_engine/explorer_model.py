@@ -20,8 +20,8 @@ from PySide6.QtCore import QAbstractTableModel, QFileInfo, QModelIndex, Qt, Sign
 from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtWidgets import QFileIconProvider
 
-from image_viewer.logger import get_logger
-from image_viewer.path_utils import db_key
+from image_viewer.infra.logger import get_logger
+from image_viewer.infra.path_utils import db_key
 
 _logger = get_logger("explorer_model")
 

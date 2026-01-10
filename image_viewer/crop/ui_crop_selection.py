@@ -19,7 +19,7 @@ except Exception:
     cursor_name = None
     overlay_message = None
 
-from image_viewer.logger import get_logger
+from image_viewer.infra.logger import get_logger
 
 _logger = get_logger("ui_crop")
 
