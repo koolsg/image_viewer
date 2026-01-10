@@ -16,6 +16,13 @@ Item {
     required property var backend
     required property var theme
 
+    // IMPORTANT: GridView (Flickable) children are parented to `contentItem` by default.
+    // This overlay must live in the viewport, not in the scrolling content, otherwise
+    // `mouse.x/y` are already in content coordinates and adding `contentX/contentY`
+    // will double-offset hit testing (breaking click selection).
+    parent: overlay.grid
+    z: 1000
+
     anchors.fill: overlay.grid
 
     function _log(msg) {

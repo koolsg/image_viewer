@@ -17,7 +17,9 @@ Item {
     focus: true
 
     // Viewer-local shortcuts moved to ViewerShortcuts.qml
-    ViewerShortcuts { backend: root.backend }
+    ViewerShortcuts {
+        backend: root.backend
+    }
 
 
 
