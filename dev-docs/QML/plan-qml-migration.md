@@ -84,7 +84,7 @@ Python은 `AppController`(명령/상태) + `ImageEngine`(디코드/캐시/DB/스
 - `image_viewer/ui_canvas.py` — 기존 Viewer 동작 참조, QML로 대체될 부분 명세
 - `image_viewer/image_engine/engine.py` — QML ImageProvider용 API(이미지 크기/디코드 정보 노출)
 - `image_viewer/ui_explorer_grid.py`, `ui_explorer_tree.py` — 탐색기 재구성 시 참고
-- 새 파일(권장): `image_viewer/qml/ViewerPage.qml`, `image_viewer/qml/components/StatusOverlay.qml`, `image_viewer/qml_bridge.py` 또는 C++ QObject bridge
+- 새 파일(권장): `image_viewer/ui/qml/ViewerPage.qml`, `image_viewer/ui/qml/components/StatusOverlay.qml`, `image_viewer/qml_bridge.py` 또는 C++ QObject bridge
 
 ---
 

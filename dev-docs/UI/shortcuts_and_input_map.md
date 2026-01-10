@@ -2,6 +2,10 @@
 
 이 문서는 QML UI에서 사용되는 키보드 단축키, Keys 핸들러, 마우스 휠 동작, 마우스 클릭/호버 처리에 대한 최신 요약입니다. 각 동작이 어느 파일에 정의되어 있고, 어떤 전제(포커스/모드)를 필요로 하는지 명확히 적었습니다.
 
+> NOTE (2026-01-10): QML 파일들은 `image_viewer/ui/qml/`가 단일 소스 오브 트루스입니다.
+> 과거 문서/코드에 등장하는 `image_viewer/qml/*` 경로는 **레거시**이며 제거되었습니다.
+> 또한 현재 앱 셸은 `root.backend` + `backend.dispatch(...)` 계약을 사용합니다(과거 `root.main` 기반 설명은 참고용으로만 보세요).
+
 ---
 
 ## 한눈에 보기 ✅
@@ -18,7 +22,7 @@
 
 ## 파일별 맵핑 (무엇을 어디에 정의했는가)
 
-### image_viewer/qml/App.qml
+### image_viewer/ui/qml/App.qml
 - 역할: 메인 탐색(썸네일) UI, `viewWindow`(풀스크린 뷰어) 보유
 - 주요 단축키/동작
   - Application-level (Explorer 전용, `Qt.ApplicationShortcut`, 작동 조건: `!root.main.viewMode`):
@@ -36,7 +40,7 @@
   - `viewWindow.visibility`는 `viewMode` 바인딩으로만 제어합니다 (핸들러에서 직접 할당 금지)
   - `onVisibleChanged`/`onActiveChanged`에서 `forceActiveFocus()`로 포커스 복원
 
-### image_viewer/qml/ViewerPage.qml
+### image_viewer/ui/qml/ViewerPage.qml
 - 역할: 풀스크린 뷰어의 핵심 로직 (이미지 표시 + 뷰어 전용 입력)
 - 주요 Key 규칙
   - `Keys.priority = Keys.BeforeItem` + `Keys.onShortcutOverride` 사용: Escape/Enter를 `event.accepted = true`로 처리해 Shortcut이 가로채지 못하게 함
@@ -47,13 +51,13 @@
   - Image MouseArea: press-to-zoom, 우클릭 드래그 팬, 중간 클릭으로 fit
 - 우선순위: 포커스 있는 경우 Viewer Keys가 우선적으로 작업 처리함
 
-### image_viewer/qml/ConvertWebPDialog.qml
+### image_viewer/ui/qml/ConvertWebPDialog.qml
 - 배치 WebP 변환 다이얼로그
   - Browse 버튼 → `FolderDialog`
   - Start / Cancel / Close 버튼 연결 (`main.startWebpConvert`, `main.cancelWebpConvert`)
   - 변환 로그는 dialog의 TextArea에 append
 
-### image_viewer/qml/DeleteConfirmationDialog.qml
+### image_viewer/ui/qml/DeleteConfirmationDialog.qml
 - 간단한 Y/N 단축키
   - `Shortcut { sequences: ["Y"] ; onActivated: yesButton.clicked() }`
   - `Shortcut { sequences: ["N"] ; onActivated: noButton.clicked() }`
@@ -63,7 +67,7 @@
 ## 발견된 Shortcut / 시퀀스 (파일별, 전체 목록)
 아래는 코드베이스에서 직접 확인한 모든 `Shortcut {}` 시퀀스와 `Keys`로 처리되는 주요 키들의 요약입니다. **F5는 `Refresh Explorer`(폴더 새로고침)** 용도로 `App.qml`에서 정의되어 있으며 문서에 추가했습니다.
 
-- `image_viewer/qml/App.qml` (Action / Application / Window level)
+- `image_viewer/ui/qml/App.qml` (Action / Application / Window level)
   - `StandardKey.Open` (예: Ctrl+O) → Open Folder... (Action `actionOpenFolder`)
   - `Alt+F4` → Exit (Action `actionExit`)
   - `StandardKey.ZoomIn` → Zoom In (Action `actionZoomIn`)
@@ -76,18 +80,18 @@
   - `"Delete"` → Show delete confirmation for selected file (Application-level)
   - `"F2"` → Rename selected file (Explorer only, single selection required)
 
-- `image_viewer/qml/App.qml` (viewWindow)
+- `image_viewer/ui/qml/App.qml` (viewWindow)
   - No window-level Escape/Return fallbacks; `ViewerPage.qml` handles viewer close actions via `Keys` when focused. Avoid adding window-level shortcuts in viewMode to prevent routing conflicts.
 
-- `image_viewer/qml/DeleteConfirmationDialog.qml`
+- `image_viewer/ui/qml/DeleteConfirmationDialog.qml`
   - `"Y"` → confirm (yes)
   - `"N"` → cancel (no)
 
 - `Keys`로 직접 처리되는 주요 키 (파일: `ViewerPage.qml`, `App.qml` Grid Keys)
-  - `image_viewer/qml/ViewerPage.qml` (viewer Keys)
+  - `image_viewer/ui/qml/ViewerPage.qml` (viewer Keys)
     - Shortcut override / immediate-response keys: `Escape`, `Return`, `Enter`
     - Viewer `onPressed` keys: `A`, `D`, `Ctrl+Shift+Left`, `Ctrl+Shift+Right`, `Ctrl+Shift+0`, `Left`, `Right`, `Home`, `End`, `Space`, `Up`, `Down`, `F`, `1` (각 키는 회전/이동/줌/fit 등 뷰어 동작을 수행)
-  - `image_viewer/qml/App.qml` (Grid Keys)
+  - `image_viewer/ui/qml/App.qml` (Grid Keys)
     - Grid navigation: `Left`, `Right`, `Up`, `Down`, `Home`, `End`, `Return`/`Enter` (선택/뷰 모드 전환)
 
 - Wheel / Mouse bindings

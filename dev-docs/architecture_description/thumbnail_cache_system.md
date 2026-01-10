@@ -175,15 +175,16 @@
 
 ---
 
-## 📝 상세 흐름
+## 📝 상세 흐름 (레거시: Widget 기반, 현행 구현과 다름)
+
+> NOTE: 아래 코드는 과거 Widget 기반 구현 설명입니다. 현재 QML/EngineCore 기반 구현에서는 `busy_cursor` 및 `_busy_cursor_active`를 사용하지 않습니다.
 
 ### 1️⃣ **폴더 로드 시작**
 ```python
 # ThumbnailGridWidget.load_folder()
 def load_folder(self, folder_path: str) -> None:
-    with busy_cursor():  # 🕐 모래시계 커서 시작
-        idx = self._model.setRootPath(folder_path)
-        self._list.setRootIndex(idx)
+    idx = self._model.setRootPath(folder_path)
+    self._list.setRootIndex(idx)
 ```
 
 ### 2️⃣ **Qt가 각아이템 렌더링 요청**
@@ -211,9 +212,8 @@ def _request_thumbnail(self, path: str) -> None:
         return  # ✅ 디스크에서 로드 성공
 
     # 3. 디스크에도 없음 → Loader에 디코딩 요청
-    if not self._busy_cursor_active:
-        QApplication.setOverrideCursor(...)  # 🕐 모래시계 시작
-        self._busy_cursor_active = True
+    # (legacy note) 과거 구현에서는 여기서 busy cursor를 켰지만,
+    # 현행 구현(QML/EngineCore 기반)에서는 UI thread에서 커서를 직접 제어하지 않습니다.
 
     self._thumb_pending.add(path)
     self._loader.request_load(

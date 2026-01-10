@@ -1,3 +1,41 @@
+## 2026-01-10
+
+### Remove unused legacy helpers in main/styles/engine
+**Files:** image_viewer/main.py, image_viewer/ui/styles.py, image_viewer/image_engine/engine.py
+**What:** Deleted duplicate/unused QML image providers and payload coercion helpers from `main.py` (providers now live in `BackendFacade`), removed legacy theme alias functions from `ui/styles.py`, and dropped an unused legacy `_on_image_decoded` hook from `ImageEngine`. This reduces noise and eliminates dead code without affecting the QML-first app path.
+**Checks:** Ruff: pass; Pyright: pass; Tests: 3 passed
+
+### QML: Centralize Controls palette in Theme
+**Files:** image_viewer/ui/qml/Theme.qml, image_viewer/ui/qml/App.qml
+**What:** Moved the app-wide Qt Quick Controls palette values into `Theme.qml` as `theme.palette` and bound `ApplicationWindow.palette` to it, so palette policy lives in one place and stays consistent across the UI.
+**Checks:** pyside6-qmllint: pass; Tests: 3 passed
+
+> NOTE (2026-01-10): QML 단일 경로는 `image_viewer/ui/qml/` 입니다. 과거 기록에 남아있는 `image_viewer/qml/*` 경로는 레거시이며 현재는 제거되었습니다.
+
+## 2026-01-10
+
+### QML: Fix frameless titlebar drag lag + align window controls
+**Files:** image_viewer/ui/qml/App.qml
+**What:** Fixed Windows frameless-drag artifacts where the custom titlebar appeared to lag/"trail" behind the window during drag by disabling layer caching on the titlebar and restricting the drag handler to a dedicated drag region (excluding the window buttons). Also anchored the minimize/maximize/close glyphs so they remain properly centered and consistent across DPI/font metrics. Finally, fixed MenuBar items rendering as blank by wiring the custom MenuBar delegate to the underlying `Menu` objects (`modelData.title` + `menu: modelData`).
+**Checks:** pyside6-qmllint: pass; Manual run: launched (UI verification recommended)
+
+### QML: Restore MenuBar labels after delegate changes
+**Files:** image_viewer/ui/qml/App.qml
+**What:** Fixed a regression where the top MenuBar appeared to be "missing" because the custom `MenuBarItem` delegate was not bound to the underlying `Menu` model objects. Restored `text: modelData.title` and `menu: modelData` so the menubar shows "File/View/..." and opens correctly.
+**Checks:** pyside6-qmllint: pass; Manual run: launched; Tests: 3 passed
+
+## 2026-01-09
+
+### QML boundary cleanup: remove `main` shims; stub legacy Main(QObject)
+**Files:** image_viewer/qml/App.qml, image_viewer/qml/ViewerPage.qml, image_viewer/qml/ConvertWebPDialog.qml, image_viewer/main.py
+**What:** Finished the remaining QML compatibility cleanup by removing the `main`-based facade injection shims and standardizing on a direct `backend` property for components. Replaced the unused legacy `Main(QObject)` QML bridge with a fail-fast stub so accidental imports are caught immediately.
+**Checks:** Ruff: pass (2 fixed); Pyright: pass; Tests: 3 passed
+
+### Remove Python shim modules; migrate imports to layered packages
+**Files:** image_viewer/main.py, image_viewer/app/backend.py, image_viewer/image_engine/*, image_viewer/crop/*, image_viewer/trim/*, tests/*
+**What:** Removed top-level compatibility shims (`image_viewer/logger.py`, `path_utils.py`, `settings_manager.py`, `file_operations.py`, `webp_converter.py`, `styles.py`, `qml_models.py`) and migrated all imports to canonical modules under `image_viewer/infra`, `image_viewer/ops`, and `image_viewer/ui`.
+**Checks:** Ruff: pass (2 fixed); Pyright: pass; Tests: 3 passed
+
 ## 2026-01-07
 
 ### Fix: Rename dialog UX polish and fixes (T-UI-06)
@@ -90,7 +128,7 @@ Also added `tests/test_qml_mouse_interactions.py` to validate press-to-zoom and 
 
 ### QML Explorer plan update + QML grid model cleanup
 **Files:** dev-docs/QML/plan-qml-migration.md, image_viewer/qml_models.py
-**What:** Updated the QML migration plan to reflect the decided full QML shell direction and the Explorer priorities (thumbnail grid, metadata, context menu, shortcuts). Also refactored `QmlImageGridModel.data()` to remove a Ruff `PLR0912` “too many branches” violation by switching to a role->getter mapping.
+**What:** Updated the QML migration plan to reflect the decided full QML shell direction and the Explorer priorities (thumbnail grid, metadata, context menu, shortcuts). Also refactored `QmlImageGridModel.data()` to remove a Ruff `PLR0912` "too many branches" violation by switching to a role->getter mapping.
 **Checks:** Ruff: pass; Pyright: pass; Tests: 76 passed
 
 ### QML ImageProvider & engine integration (T-QLM-02)
@@ -132,7 +170,7 @@ Also added `tests/test_qml_mouse_interactions.py` to validate press-to-zoom and 
 - Centralized the thumbnail DB schema into a single spec and generated SQL via f-strings (including column types/constraints).
 - Enforced strict schema validation; when the on-disk schema/version mismatches, the thumbnails table is dropped and recreated (no migrations/compat).
 - Removed legacy `ThumbDB`/`ThumbDBOperatorAdapter` and legacy `ThumbnailCache` implementation code (modules now fail fast if imported).
-- Unified crop preset UI so “Configure Preset” is the single entry point (removed the separate “add preset” path).
+- Unified crop preset UI so "Configure Preset" is the single entry point (removed the separate "add preset" path).
 **Checks:** Ruff: pass; Pyright: 0 errors; Tests: 55 passed, 7 skipped
 
 ### Fix EngineCore ThumbDBBytesAdapter operator access
@@ -164,7 +202,7 @@ Also added `tests/test_qml_mouse_interactions.py` to validate press-to-zoom and 
 - Scroll up: 1.25x zoom in
 - Scroll down: 0.8x zoom out
 - Zoom applied directly via `QGraphicsView.scale()` transform
-- Scale clamped to 0.1–10.0 range to prevent extreme zoom levels
+- Scale clamped to 0.1-10.0 range to prevent extreme zoom levels
 - Proper event handling: `event.accept()` on success, `event.ignore()` on error
 - Robust exception handling with debug logging
 - No conflicts with existing SelectionRectItem mouse handling (SelectionRectItem only accepts LeftButton, doesn't override wheelEvent)

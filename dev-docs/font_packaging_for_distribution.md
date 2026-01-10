@@ -18,8 +18,8 @@
   - `scripts/install_dejavu_fonts.py` — downloads/extracts DejaVu TTF files into `third_party/fonts`
   - `scripts/run_tests_offscreen.py` — sets `QT_QPA_FONTDIR` to a repo fonts folder for tests
 - UI font references (where fonts are used)
-  - QML: `image_viewer/qml/App.qml`, `image_viewer/qml/ViewerPage.qml`, `image_viewer/qml/ConvertWebPDialog.qml`, etc. (look for `font.family`, `font.pixelSize`, `font.bold`)
-  - Python: `image_viewer/styles.py` (app default `QFont("Segoe UI")` and qss `font-family`), `image_viewer/trim/ui_trim.py` (uses `QFont` directly)
+  - QML: `image_viewer/ui/qml/App.qml`, `image_viewer/ui/qml/ViewerPage.qml`, `image_viewer/ui/qml/ConvertWebPDialog.qml`, etc. (look for `font.family`, `font.pixelSize`, `font.bold`)
+  - Python: `image_viewer/ui/styles.py` (app default `QFont("Segoe UI")` and qss `font-family`), `image_viewer/trim/ui_trim.py` (uses `QFont` directly)
 
 ---
 
