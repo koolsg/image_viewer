@@ -12,6 +12,7 @@ Dialog {
     modal: true
     dim: true
     focus: true
+    Keys.priority: Keys.BeforeItem
     // Do not close when user clicks outside; keep it open and modal.
     closePolicy: Popup.NoAutoClose
     property alias titleText: titleLabel.text
@@ -28,6 +29,60 @@ Dialog {
     // Use dialog padding instead of anchoring the contentItem to the dialog.
     // Anchored content items don't contribute to implicit sizing and can overflow.
     padding: 24
+
+    function _acceptNow() {
+        dlg.acceptedWithPayload(dlg.payload)
+        dlg.close()
+    }
+
+    function _rejectNow() {
+        dlg.rejectedWithPayload(dlg.payload)
+        dlg.close()
+    }
+
+    function _activateFocusedButton() {
+        if (noButton.activeFocus) dlg._rejectNow()
+        else dlg._acceptNow()
+    }
+
+    // Keyboard behavior:
+    // - Enter: activate the currently-focused button
+    // - Esc: close immediately (no signals)
+    // - Y/N: Yes/No (activate)
+    // - Left/Right: move focus between Yes/No (do not activate)
+    Keys.onEscapePressed: function(event) {
+        dlg.close()
+        event.accepted = true
+    }
+
+    Shortcut {
+        sequence: "Y"
+        enabled: dlg.visible
+        onActivated: dlg._acceptNow()
+    }
+
+    Shortcut {
+        sequence: "N"
+        enabled: dlg.visible
+        onActivated: dlg._rejectNow()
+    }
+
+    // Some Qt Quick Controls setups may not deliver Return/Enter to Keys handlers
+    // on a modal Popup reliably when a Control has focus. These shortcuts ensure
+    // Enter/Return always triggers the focused action.
+    Shortcut {
+        sequence: "Return"
+        enabled: dlg.visible
+        context: Qt.WindowShortcut
+        onActivated: dlg._activateFocusedButton()
+    }
+
+    Shortcut {
+        sequence: "Enter"
+        enabled: dlg.visible
+        context: Qt.WindowShortcut
+        onActivated: dlg._activateFocusedButton()
+    }
 
     // Allow user to drag the dialog by a small header area
     property bool draggable: true
@@ -121,30 +176,9 @@ Dialog {
             spacing: 12
 
             Button {
-                id: noButton
-                text: qsTr("Cancel")
-                implicitWidth: 100
-                implicitHeight: 36
-                contentItem: Label {
-                    text: noButton.text
-                    font: noButton.font
-                    color: dlg.theme ? dlg.theme.text : "white"
-                    horizontalAlignment: Text.AlignHCenter
-                    verticalAlignment: Text.AlignVCenter
-                }
-                background: Rectangle {
-                    anchors.fill: parent
-                    color: noButton.hovered ? (dlg.theme ? dlg.theme.hover : "#2a2a2a") : "transparent"
-                    border.color: dlg.theme ? dlg.theme.border : "#333333"
-                    border.width: 1
-                    radius: dlg.theme ? dlg.theme.radiusSmall : 4
-                }
-                onClicked: { dlg.rejectedWithPayload(dlg.payload); dlg.close(); }
-            }
-
-            Button {
                 id: yesButton
-                text: qsTr("Delete")
+                text: qsTr("Yes")
+                KeyNavigation.right: noButton
                 implicitWidth: 100
                 implicitHeight: 36
                 contentItem: Label {
@@ -156,11 +190,36 @@ Dialog {
                 }
                 background: Rectangle {
                     anchors.fill: parent
-                    color: yesButton.hovered ? Qt.lighter("#d32f2f", 1.1) : "#d32f2f"
+                    color: (yesButton.hovered || yesButton.activeFocus) ? Qt.lighter("#d32f2f", 1.15) : "#d32f2f"
+                    border.color: yesButton.activeFocus ? (dlg.theme ? dlg.theme.selectionBorder : "#ffffff") : "transparent"
+                    border.width: yesButton.activeFocus ? 2 : 0
                     radius: dlg.theme ? dlg.theme.radiusSmall : 4
                 }
-                onClicked: { dlg.acceptedWithPayload(dlg.payload); dlg.close(); }
+                onClicked: dlg._acceptNow()
                 focus: true
+            }
+
+            Button {
+                id: noButton
+                text: qsTr("No")
+                KeyNavigation.left: yesButton
+                implicitWidth: 100
+                implicitHeight: 36
+                contentItem: Label {
+                    text: noButton.text
+                    font: noButton.font
+                    color: dlg.theme ? dlg.theme.text : "white"
+                    horizontalAlignment: Text.AlignHCenter
+                    verticalAlignment: Text.AlignVCenter
+                }
+                background: Rectangle {
+                    anchors.fill: parent
+                    color: (noButton.hovered || noButton.activeFocus) ? (dlg.theme ? dlg.theme.hover : "#2a2a2a") : "transparent"
+                    border.color: noButton.activeFocus ? (dlg.theme ? dlg.theme.selectionBorder : "#ffffff") : (dlg.theme ? dlg.theme.border : "#333333")
+                    border.width: noButton.activeFocus ? 2 : 1
+                    radius: dlg.theme ? dlg.theme.radiusSmall : 4
+                }
+                onClicked: dlg._rejectNow()
             }
         }
     }
