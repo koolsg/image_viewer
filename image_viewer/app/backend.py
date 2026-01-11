@@ -3,6 +3,8 @@ from __future__ import annotations
 import contextlib
 import json
 import sys
+import threading
+from collections import OrderedDict
 from pathlib import Path
 from typing import Any
 
@@ -10,14 +12,17 @@ from PySide6.QtCore import Property, QObject, Qt, QUrl, Signal, Slot
 from PySide6.QtGui import QColor, QDesktopServices, QGuiApplication, QPixmap
 from PySide6.QtQuick import QQuickImageProvider
 
+from image_viewer.app.state.crop_state import CropState
 from image_viewer.app.state.explorer_state import ExplorerState
 from image_viewer.app.state.settings_state import SettingsState
 from image_viewer.app.state.tasks_state import TasksState
 from image_viewer.app.state.viewer_state import ViewerState
+from image_viewer.crop.crop import apply_crop_to_file
 from image_viewer.image_engine.engine import ImageEngine
 from image_viewer.infra.logger import get_logger
 from image_viewer.infra.path_utils import abs_dir_str, abs_path_str, db_key
 from image_viewer.infra.settings_manager import SettingsManager
+from image_viewer.ops.crop_controller import RectN, clamp_rect_n
 from image_viewer.ops.file_operations import (
     copy_files_to_clipboard,
     cut_files_to_clipboard,
@@ -30,6 +35,7 @@ from image_viewer.ops.webp_converter import ConvertController
 from image_viewer.ui.qml_models import QmlImageGridModel
 
 _logger = get_logger("backend")
+_thumb_cache_logger = get_logger("thumb_cache")
 _BASE_DIR = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parents[1]))
 _GEN_PATH_SPLIT_MAX = 1
 _GEN_PATH_PARTS = 2
@@ -78,13 +84,82 @@ class EngineImageProvider(QQuickImageProvider):
 class ThumbImageProvider(QQuickImageProvider):
     """QML image provider for thumbnail PNG bytes (image://thumb/<gen>/<key>)."""
 
-    def __init__(self, thumb_bytes_by_key: dict[str, bytes]) -> None:
+    def __init__(self, thumb_bytes_by_key: dict[str, bytes], *, max_cached_pixmaps: int = 512) -> None:
         super().__init__(QQuickImageProvider.ImageType.Pixmap)
         self._thumb_bytes_by_key = thumb_bytes_by_key
+        self._max_cached_pixmaps = max(0, int(max_cached_pixmaps))
+        # Cache decoded pixmaps to avoid repeatedly running QPixmap.loadFromData()
+        # when QML requests the same thumb many times (scrolling/relayout).
+        # Cache key includes the provider id (which may include a generation prefix)
+        # so that URL-based cache-busting continues to work.
+        self._pixmap_cache: OrderedDict[str, QPixmap] = OrderedDict()
+        self._cache_lock = threading.Lock()
+        self._cache_hits = 0
+        self._cache_misses = 0
+        self._cache_evictions = 0
+        self._requests = 0
+
+    def _log_cache_stats(self) -> None:
+        total = self._cache_hits + self._cache_misses
+        hit_rate = (self._cache_hits / total) if total else 0.0
+        _thumb_cache_logger.debug(
+            "thumb_lru stats: requests=%d hits=%d misses=%d hit_rate=%.1f%% cache=%d evictions=%d",
+            self._requests,
+            self._cache_hits,
+            self._cache_misses,
+            hit_rate * 100.0,
+            len(self._pixmap_cache),
+            self._cache_evictions,
+        )
+
+    def _cache_get(self, cache_id: str) -> QPixmap | None:
+        if self._max_cached_pixmaps <= 0:
+            return None
+        with self._cache_lock:
+            pix = self._pixmap_cache.get(cache_id)
+            if pix is None:
+                self._cache_misses += 1
+                # Log periodic summaries so we can see whether the cache is actually useful.
+                if (self._cache_hits + self._cache_misses) % 200 == 0:
+                    self._log_cache_stats()
+                return None
+            # LRU: mark as most recently used
+            self._pixmap_cache.move_to_end(cache_id)
+            self._cache_hits += 1
+            _thumb_cache_logger.debug(
+                "thumb_lru HIT: id=%s cache=%d hits=%d misses=%d",
+                cache_id,
+                len(self._pixmap_cache),
+                self._cache_hits,
+                self._cache_misses,
+            )
+            return pix
+
+    def _cache_put(self, cache_id: str, pix: QPixmap) -> None:
+        if self._max_cached_pixmaps <= 0:
+            return
+        with self._cache_lock:
+            self._pixmap_cache[cache_id] = pix
+            self._pixmap_cache.move_to_end(cache_id)
+            while len(self._pixmap_cache) > self._max_cached_pixmaps:
+                evicted_id, _ = self._pixmap_cache.popitem(last=False)
+                self._cache_evictions += 1
+                _thumb_cache_logger.debug(
+                    "thumb_lru EVICT: id=%s cache=%d evictions=%d",
+                    evicted_id,
+                    len(self._pixmap_cache),
+                    self._cache_evictions,
+                )
 
     def requestPixmap(self, id: str, size: Any, requestedSize: Any) -> QPixmap:
-        parts = str(id).split("/", _GEN_PATH_SPLIT_MAX)
-        key = parts[1] if len(parts) == _GEN_PATH_PARTS and parts[0].isdigit() else str(id)
+        self._requests += 1
+        cache_id = str(id)
+        pix_cached = self._cache_get(cache_id)
+        if pix_cached is not None and not pix_cached.isNull():
+            return pix_cached
+
+        parts = cache_id.split("/", _GEN_PATH_SPLIT_MAX)
+        key = parts[1] if len(parts) == _GEN_PATH_PARTS and parts[0].isdigit() else cache_id
 
         data = self._thumb_bytes_by_key.get(key)
         if not data:
@@ -102,6 +177,8 @@ class ThumbImageProvider(QQuickImageProvider):
             placeholder = QPixmap(1, 1)
             placeholder.fill(Qt.GlobalColor.transparent)
             return placeholder
+
+        self._cache_put(cache_id, pix)
 
         return pix
 
@@ -195,6 +272,7 @@ class BackendFacade(QObject):
         self._explorer = ExplorerState(self)
         self._settings = SettingsState(self)
         self._tasks = TasksState(self)
+        self._crop = CropState(self)
 
         self._thumb_bytes_by_key: dict[str, bytes] = {}
         self.engine_image_provider = EngineImageProvider(self._engine)
@@ -245,12 +323,18 @@ class BackendFacade(QObject):
 
     tasksState = Property(QObject, _get_tasks, constant=True)  # type: ignore[arg-type]
 
+    def _get_crop(self) -> QObject:
+        return self._crop
+
+    cropState = Property(QObject, _get_crop, constant=True)  # type: ignore[arg-type]
+
     # For ergonomic QML usage:
     #   backend.viewer / backend.explorer / backend.settings / backend.tasks
     viewer = Property(QObject, _get_viewer, constant=True)  # type: ignore[arg-type]
     explorer = Property(QObject, _get_explorer, constant=True)  # type: ignore[arg-type]
     settings = Property(QObject, _get_settings, constant=True)  # type: ignore[arg-type]
     tasks = Property(QObject, _get_tasks, constant=True)  # type: ignore[arg-type]
+    crop = Property(QObject, _get_crop, constant=True)  # type: ignore[arg-type]
 
     # ---- init wiring ----
     def _init_webp_converter(self) -> None:
@@ -287,7 +371,7 @@ class BackendFacade(QObject):
     # NOTE: The second argument must be a Qt-friendly variant type.
     # Using `object` here causes runtime failures when QML passes a JS object
     # (e.g. `{ index: 3 }`).
-    @Slot(str, "QVariant")
+    @Slot(str, "QVariant")  # type: ignore[call-overload]
     def dispatch(self, cmd: str, payload: object | None = None) -> None:  # noqa: PLR0915, PLR0912, PLR0911
         command = str(cmd or "").strip()
         if not command:
@@ -304,6 +388,50 @@ class BackendFacade(QObject):
 
         if command == "closeView":
             self._viewer._set_view_mode(False)
+            return
+
+        if command == "openCrop":
+            self._cmd_open_crop()
+            return
+
+        if command == "closeCrop":
+            self._cmd_close_crop()
+            return
+
+        if command == "cropSetAspect":
+            self._cmd_crop_set_aspect(payload)
+            return
+
+        if command == "cropSetPreview":
+            self._crop._set_preview_enabled(bool(_get_payload_value(payload, "value", default=False)))
+            return
+
+        if command == "cropSetFitMode":
+            self._crop._set_fit_mode(bool(_get_payload_value(payload, "value", default=True)))
+            return
+
+        if command == "cropSetZoom":
+            self._crop._set_fit_mode(False)
+            self._crop._set_zoom(float(_get_payload_value(payload, "value", default=1.0)))
+            return
+
+        if command == "cropZoomBy":
+            factor = float(_get_payload_value(payload, "factor", default=1.0))
+            base = 1.0 if self._crop._get_fit_mode() else self._crop._get_zoom()
+            self._crop._set_fit_mode(False)
+            self._crop._set_zoom(base * factor)
+            return
+
+        if command == "cropSetRect":
+            self._cmd_crop_set_rect(payload)
+            return
+
+        if command == "cropResetRect":
+            self._crop._set_rect(0.25, 0.25, 0.5, 0.5)
+            return
+
+        if command == "cropSaveAs":
+            self._cmd_crop_save_as(payload)
             return
 
         if command == "setViewMode":
@@ -412,6 +540,163 @@ class BackendFacade(QObject):
                 "name": "error",
                 "level": "warning",
                 "message": f"Unknown cmd: {command}",
+            }
+        )
+
+    # ---- crop helpers ----
+    def _cmd_open_crop(self) -> None:
+        path = str(self._viewer._get_current_path() or "")
+        if not path:
+            return
+
+        # Crop UI is a sub-mode of view mode.
+        self._viewer._set_view_mode(True)
+        self._crop._set_active(True)
+        self._crop._set_current_path(path)
+        self._crop._set_preview_enabled(False)
+
+        # Default: free aspect.
+        self._crop._set_aspect_ratio(0.0)
+        self._crop._set_fit_mode(True)
+        self._crop._set_zoom(1.0)
+
+        # Image URL uses the same engine provider.
+        self._crop._set_image_url(self._viewer._get_image_url())
+
+        res = None
+        with contextlib.suppress(Exception):
+            res = self._engine.get_resolution(path)
+        if res and res[0] and res[1]:
+            self._crop._set_image_size(int(res[0]), int(res[1]))
+        else:
+            self._crop._set_image_size(0, 0)
+
+        # Default rect centered (50% of area).
+        self._crop._set_rect(0.25, 0.25, 0.5, 0.5)
+
+        # Ensure we have a preview pixmap ready.
+        if not self._viewer._get_image_url():
+            self._request_preview(path, 2048)
+
+    def _cmd_close_crop(self) -> None:
+        self._crop._set_preview_enabled(False)
+        self._crop._set_active(False)
+
+    def _cmd_crop_set_aspect(self, payload: object | None) -> None:
+        val = float(_get_payload_value(payload, "ratio", default=0.0))
+        # 0 means free.
+        if val <= 0:
+            self._crop._set_aspect_ratio(0.0)
+            return
+        self._crop._set_aspect_ratio(val)
+
+        # Re-apply current rect through the constraint clamp so the UI snaps.
+        self._cmd_crop_set_rect(
+            {
+                "x": self._crop._get_x(),
+                "y": self._crop._get_y(),
+                "w": self._crop._get_w(),
+                "h": self._crop._get_h(),
+                "anchor": "center",
+            }
+        )
+
+    def _cmd_crop_set_rect(self, payload: object | None) -> None:
+        x = float(_get_payload_value(payload, "x", default=self._crop._get_x()))
+        y = float(_get_payload_value(payload, "y", default=self._crop._get_y()))
+        w = float(_get_payload_value(payload, "w", default=self._crop._get_w()))
+        h = float(_get_payload_value(payload, "h", default=self._crop._get_h()))
+        anchor = str(_get_payload_value(payload, "anchor", default="center"))
+
+        img_w = int(self._crop._get_image_width())
+        img_h = int(self._crop._get_image_height())
+        # Legacy widget used 8px; normalize against original image size.
+        min_w = (8.0 / img_w) if img_w > 0 else 0.01
+        min_h = (8.0 / img_h) if img_h > 0 else 0.01
+
+        cur = RectN(self._crop._get_x(), self._crop._get_y(), self._crop._get_w(), self._crop._get_h())
+        prop = RectN(x, y, w, h)
+        out = clamp_rect_n(
+            current=cur,
+            proposed=prop,
+            anchor=anchor,
+            aspect_ratio=float(self._crop._get_aspect_ratio()),
+            min_size=(min_w, min_h),
+        )
+        self._crop._set_rect(out.x, out.y, out.w, out.h)
+
+    def _cmd_crop_save_as(self, payload: object | None) -> None:
+        src = str(self._crop._get_current_path() or "")
+        if not src:
+            return
+
+        raw_out = _get_payload_value(payload, "outputPath", default="")
+        out = str(raw_out or "")
+        if out.startswith("file:"):
+            url = QUrl(out)
+            if url.isLocalFile():
+                out = url.toLocalFile()
+
+        out = abs_path_str(out)
+        if not out:
+            return
+
+        # Compute pixel crop from normalized rect.
+        res = None
+        with contextlib.suppress(Exception):
+            res = self._engine.get_resolution(src)
+        img_w = int(res[0]) if res and res[0] else int(self._crop._get_image_width())
+        img_h = int(res[1]) if res and res[1] else int(self._crop._get_image_height())
+        if img_w <= 0 or img_h <= 0:
+            self.taskEvent.emit(
+                {
+                    "type": "task",
+                    "name": "cropSave",
+                    "state": "error",
+                    "message": "Failed to determine image size for cropping.",
+                }
+            )
+            return
+
+        x = float(self._crop._get_x())
+        y = float(self._crop._get_y())
+        w = float(self._crop._get_w())
+        h = float(self._crop._get_h())
+
+        left = round(x * img_w)
+        top = round(y * img_h)
+        width = round(w * img_w)
+        height = round(h * img_h)
+
+        left = max(0, min(left, img_w - 1))
+        top = max(0, min(top, img_h - 1))
+        width = max(1, min(width, img_w - left))
+        height = max(1, min(height, img_h - top))
+
+        crop_px = (left, top, width, height)
+
+        try:
+            apply_crop_to_file(src, crop_px, out)
+            with contextlib.suppress(Exception):
+                self._engine.prefetch([out], None)
+        except Exception as e:
+            self.taskEvent.emit(
+                {
+                    "type": "task",
+                    "name": "cropSave",
+                    "state": "error",
+                    "message": str(e),
+                }
+            )
+            return
+
+        self.taskEvent.emit(
+            {
+                "type": "task",
+                "name": "cropSave",
+                "state": "finished",
+                "outputPath": out,
+                "crop": {"left": left, "top": top, "width": width, "height": height},
             }
         )
 
@@ -860,6 +1145,9 @@ class BackendFacade(QObject):
 
         self._generation += 1
         self._viewer._set_image_url(f"image://engine/{self._generation}/{path}")
+
+        if self._crop._get_active() and str(path) == self._crop._get_current_path():
+            self._crop._set_image_url(self._viewer._get_image_url())
 
 
 def _get_payload_value(payload: object | None, key: str, *, default: Any) -> Any:
