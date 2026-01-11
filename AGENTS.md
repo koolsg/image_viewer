@@ -35,6 +35,12 @@ All commands assume the repo root (`image_viewer`) as the working directory.
 - Sync dependencies (recommended):
   - `uv sync`
 
+- Optional Qt Quick backend overrides (use only for troubleshooting rendering/input issues on specific platforms):
+  - `IMAGE_VIEWER_QSG_RHI_BACKEND` → sets `QSG_RHI_BACKEND` (e.g. `opengl`)
+  - `IMAGE_VIEWER_QT_QUICK_BACKEND` → sets `QT_QUICK_BACKEND` (e.g. `software`)
+  - Example: `IMAGE_VIEWER_QSG_RHI_BACKEND=opengl uv run python -m image_viewer`
+  - These are applied early at startup and are logged at DEBUG level when used. See `dev-docs/qt_quick_backend_overrides.md` for details.
+
 ### Running the application
 
 -- Run the viewer (uv-managed environment):
@@ -186,6 +192,7 @@ Work rules (must follow)
 - Fail fast / avoid excessive try/except: Do not blanket-catch Exception. Prefer targeted exception handling and let unexpected errors surface quickly so they can be diagnosed and fixed; catch only expected exceptions and provide informative logs.
 - Record the results of checks in SESSIONS.md.
 - Only one task should be in_progress at a time.
+- Git policy: **Read-only git queries are allowed** (e.g. `git status`, `git diff`, `git log`). **But any git operation that changes repo state is forbidden unless the user explicitly asks.** This includes (but is not limited to) `git add`, `git commit`, `git restore`, `git checkout/switch`, `git reset`, `git merge/rebase`, `git stash`, `git push`, and editing `.git*` metadata.
 - Do not commit or push changes unless the user explicitly asks. When asked to commit, follow the commit checklist:
   - Review git status/diff/log and stage only relevant files
   - Draft a concise English commit message focused on the "why"

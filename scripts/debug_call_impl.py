@@ -1,34 +1,13 @@
 import sys
 
+# A lightweight script that avoids creating the legacy CropDialog and instead
+# demonstrates the backend crop helper usage.
 sys.path.insert(0, r"c:\Projects\image_viewer")
-import image_viewer.crop.ui_crop as impl
-from image_viewer.crop.ui_crop import CropDialog
-from PySide6.QtGui import QImage, QPixmap
+from image_viewer.crop.dev_helpers import make_test_pixmap, apply_crop_to_tempfile
 
-img = QImage(64, 48, QImage.Format.Format_RGB888)
-img.fill(0x112233)
-pm = QPixmap.fromImage(img)
+pm = make_test_pixmap(64, 48, 0x112233)
+print("Created test pixmap; size=", pm.size())
 
-dlg = CropDialog(None, "/test/path", pm)
-print("Before call, has preview_btn:", hasattr(dlg, "preview_btn"))
-# Call impl._create_left_panel directly
-try:
-    panel = impl._create_left_panel(dlg)
-    print("panel created, has preview_btn now:", hasattr(dlg, "preview_btn"))
-    # inspect some attrs
-    print("fit_btn present:", hasattr(dlg, "fit_btn"))
-    if hasattr(dlg, "fit_btn"):
-        print("fit_btn checked:", dlg.fit_btn.isChecked())
-except Exception:
-    import traceback
-
-    traceback.print_exc()
-
-# Now call impl._setup_ui
-try:
-    impl._setup_ui(dlg)
-    print("after _setup_ui, has preview_btn:", hasattr(dlg, "preview_btn"))
-except Exception:
-    import traceback
-
-    traceback.print_exc()
+# Demonstrate apply_crop_to_tempfile (writes to temp file via backend)
+out = apply_crop_to_tempfile("/nonexistent/source.png", (0, 0, 10, 10))
+print("Crop output written to:", out)
