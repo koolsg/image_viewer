@@ -19,6 +19,25 @@
 				"showReuseMessage": false,
 				"clear": false
 			}
+		},
+		{
+			"type": "shell",
+			"label": "Run Image Viewer (Thumb LRU Cache Logs Only)",
+			"command": "Remove-Item debug.log -ErrorAction SilentlyContinue; $env:IMAGE_VIEWER_LOG_LEVEL='debug'; $env:IMAGE_VIEWER_LOG_CATS='thumb_cache'; & { uv run python -m image_viewer --log-level debug 2>&1 } | Where-Object { $_ -match 'thumb_lru' } | ForEach-Object { Write-Host $_; Add-Content -Path debug.log -Value $_ }",
+			"detail": "PowerShell task — filters to only thumb_lru lines and writes exactly the same output to both console and debug.log.",
+			"group": {
+				"kind": "test",
+				"isDefault": false
+			},
+			"isBackground": true,
+			"presentation": {
+				"echo": true,
+				"reveal": "always",
+				"focus": true,
+				"panel": "dedicated",
+				"showReuseMessage": false,
+				"clear": true
+			}
 		}
 	]
 }

@@ -1,3 +1,125 @@
+## 2026-01-11
+
+### QML: Crop mode (normalized rect + overlay preview + pan)
+**Files:** image_viewer/app/backend.py, image_viewer/app/state/crop_state.py, image_viewer/ops/crop_controller.py, image_viewer/ui/qml/CropPage.qml, image_viewer/ui/qml/ViewWindow.qml, image_viewer/ui/qml/ViewerShortcuts.qml, tests/test_crop_controller.py
+**What:** Added an initial QML-first crop mode driven by a new `backend.crop` state object. The crop rectangle is stored as normalized (0..1) coordinates, rendered with an overlay mask, and supports resize handles, moving the selection, wheel zoom, and Space-held pan. Preview is non-destructive (mask/overlay + live preview panel sampling the current image). Saving uses `pyvips` crop via `image_viewer.crop.crop.apply_crop_to_file` and reports results through `backend.taskEvent` (`name: "cropSave"`).
+**Checks:** Ruff: pass; Pyright: pass; Tests: 7 passed
+
+### QML: View mode Del key delete confirmation
+**Files:** image_viewer/ui/qml/ViewerShortcuts.qml, image_viewer/ui/qml/ViewWindow.qml, image_viewer/ui/qml/ViewerPage.qml
+**What:** Implemented View-mode delete on the `Delete` key using the existing `DeleteConfirmationDialog` owned by `ViewWindow`. The shortcut now lives in `ViewerShortcuts.qml` (so all view-only shortcuts are centralized) and triggers `showViewDeleteDialog(currentPath)`; on confirmation it dispatches `deleteFiles` (Recycle Bin) via the existing backend command.
+**Checks:** pyside6-qmllint: pass; Ruff: pass; Pyright: pass; Tests: 3 passed
+
+### QML: Fix Explorer thumbnail left-click selection
+**Files:** image_viewer/ui/qml/ExplorerSelectionOverlay.qml
+**What:** Fixed Explorer thumbnail left-click selection by parenting the selection overlay to the GridView viewport (not the Flickable contentItem). This makes click coordinates consistent with the existing `contentX/contentY` offset logic and restores reliable thumbnail clicks.
+**Checks:** pyside6-qmllint: pass; Tests: 3 passed
+
+### Perf: Thumbnail ImageProvider QPixmap LRU cache + diagnostics
+**Files:** image_viewer/app/backend.py, .vscode/tasks.json
+**What / 문제:** Explorer grid에서 썸네일이 `image://thumb/...`로 다시 요청될 때마다 `QPixmap.loadFromData(png_bytes)` 디코딩이 반복되어 CPU를 태우고 스크롤/리사이즈 시 끊김이 발생.
+**Fix / 해결:** `ThumbImageProvider` 내부에 QPixmap LRU 캐시(키: thumb id)를 추가해 동일 썸네일 요청 시 디코딩을 생략. 또한 `thumb_cache` 로거로 `thumb_lru HIT/MISS/EVICT` 및 주기적 stats 로그를 추가해 히트율/효과를 검증 가능하게 함. VS Code task("Run Image Viewer (Thumb LRU Cache Logs Only)")를 추가해 콘솔과 `debug.log`에 동일한 필터링 로그만 기록하도록 구성.
+**Checks:** (not rerun in this entry); Manual runtime: HIT 로그로 캐시 동작 확인
+
+### QML: Fix Explorer wrong item picked after scrolling
+**Files:** image_viewer/ui/qml/ExplorerSelectionOverlay.qml
+**What / 문제:** 스크롤을 많이 내린 뒤 클릭하면, 클릭 좌표→index 계산을 `cellWidth/cellHeight`로 직접 나누는 방식(수동 col/row 계산) 때문에 GridView의 실제 레이아웃/라운딩/여백과 미세하게 어긋나 잘못된 index가 선택됨.
+**Fix / 해결:** 클릭 hit-test를 수동 수학에서 `GridView.indexAt(contentX+mouse.x, contentY+mouse.y)` 기반으로 변경하여, GridView가 실제로 배치한 item geometry로부터 index를 얻도록 수정.
+**Checks:** pyside6-qmllint: pass
+
+### Infra: Migrate legacy crop widget usage -> deprecate UI, add helpers & tests
+**Files:** image_viewer/crop/ui_crop.py, image_viewer/crop/ui_crop_selection.py, image_viewer/crop/dev_helpers.py, scripts/debug_call_impl.py, scripts/debug_crop_setup.py, tests/test_crop_backend.py, dev-docs/crop/legacy_vs_qml_migration.md
+**What:** Began migration to reduce reliance on the legacy QWidget-based crop UI:
+- Added deprecation header to `ui_crop.py` and `ui_crop_selection.py` to mark them as legacy and recommend `image_viewer/ui/qml/CropPage.qml` and `image_viewer.crop.apply_crop_to_file`.
+- Added `image_viewer/crop/dev_helpers.py` with utilities (`make_test_pixmap`, `apply_crop_to_tempfile`) intended for scripts/tests to call the backend crop implementation without instantiating UI dialogs.
+- Updated developer scripts (`scripts/debug_call_impl.py`, `scripts/debug_crop_setup.py`) to use the dev helpers instead of instantiating `CropDialog`.
+- Added `tests/test_crop_backend.py` with a pyvips shim to ensure `apply_crop_to_file` behavior is covered by unit tests.
+**Checks:** Unit tests added: `tests/test_crop_backend.py` — passed locally; pyside6-qmllint: n/a
+
+### QML: DeleteConfirmationDialog keyboard shortcuts + focus UX
+**Files:** image_viewer/ui/qml/DeleteConfirmationDialog.qml
+**What / Goal:** Make delete confirmation fast in keyboard flow (Del → Enter) by defaulting focus to **Yes**, while still keeping a safe/clear UX via visible focus indication and predictable key bindings.
+
+**Implemented:**
+- Buttons changed to **Yes / No** (Yes first) and wired to existing signals:
+  - Yes → `acceptedWithPayload(payload)`
+  - No → `rejectedWithPayload(payload)`
+- Default focus: `Yes` gets initial focus (`focus: true`) so `Del → Enter` confirms.
+- Enter/Return: activates the **currently focused** button (not "always delete").
+- Y/N shortcuts: `Y` confirms, `N` cancels.
+- Arrow keys: Left/Right move **focus only** between Yes/No (do not activate).
+- Esc: closes immediately **without emitting** accept/reject signals.
+- Focus visuals: both buttons now show a clearer focused state (border + subtle color shift) using `activeFocus`.
+
+**What was broken / Why:**
+- In Qt Quick Controls, when a `Dialog` (Popup) is modal and a `Button` has focus, key events like Enter/Return can be consumed by the focused control and **not reliably delivered** to `Keys.on*Pressed` handlers on the Dialog.
+- Similarly, arrow keys may not reach Dialog-level handlers depending on focus and control behavior.
+
+**Fix / How:**
+- Centralized accept/reject into `dlg._acceptNow()` / `dlg._rejectNow()` and a focus-aware dispatcher `dlg._activateFocusedButton()`.
+- Added explicit `Shortcut { sequence: "Return" }` and `Shortcut { sequence: "Enter" }` with `context: Qt.WindowShortcut` so Enter/Return reliably triggers `dlg._activateFocusedButton()` even when a control has focus.
+- Set `Keys.priority: Keys.BeforeItem` and added `KeyNavigation.left/right` between the Yes/No buttons for predictable focus navigation.
+
+**Checks:** pyside6-qmllint: pass; Tests: 3 passed
+
+### QML: Explorer PageUp/PageDown grid navigation
+**Files:** image_viewer/ui/qml/App.qml
+**What:** Added `PageUp` / `PageDown` navigation in the Explorer grid keyboard handler. The jump size is computed dynamically from the current viewport and thumbnail sizing by estimating how many full rows fit (`Math.floor(grid.height / grid.cellHeight)`) and multiplying by the current column count (`computedCols`). This keeps paging behavior consistent across window resizes and different thumbnail sizes.
+**Checks:** pyside6-qmllint: pass; Ruff: pass; Pyright: pass; Tests: 3 passed
+
+### QML: Extract Rename dialog into its own file
+**Files:** image_viewer/ui/qml/RenameFileDialog.qml, image_viewer/ui/qml/AppDialogs.qml
+**What:** Refactored the Explorer F2 rename UI so the rename dialog lives in its own reusable component (`RenameFileDialog.qml`), similar to `DeleteConfirmationDialog.qml`. `AppDialogs.openRenameDialog()` now configures and opens the component, and dispatches `renameFile` via `acceptedWithPayload({path,newName})`.
+**Checks:** pyside6-qmllint: pass; Ruff: pass; Pyright: pass; Tests: 3 passed
+
+## 2026-01-10
+
+### Remove unused legacy helpers in main/styles/engine
+**Files:** image_viewer/main.py, image_viewer/ui/styles.py, image_viewer/image_engine/engine.py
+**What:** Deleted duplicate/unused QML image providers and payload coercion helpers from `main.py` (providers now live in `BackendFacade`), removed legacy theme alias functions from `ui/styles.py`, and dropped an unused legacy `_on_image_decoded` hook from `ImageEngine`. This reduces noise and eliminates dead code without affecting the QML-first app path.
+**Checks:** Ruff: pass; Pyright: pass; Tests: 3 passed
+
+### QML: Centralize Controls palette in Theme
+**Files:** image_viewer/ui/qml/Theme.qml, image_viewer/ui/qml/App.qml
+**What:** Moved the app-wide Qt Quick Controls palette values into `Theme.qml` as `theme.palette` and bound `ApplicationWindow.palette` to it, so palette policy lives in one place and stays consistent across the UI.
+**Checks:** pyside6-qmllint: pass; Tests: 3 passed
+
+### QML: Fix DeleteConfirmationDialog modal behavior and layout overflow
+**Files:** image_viewer/ui/qml/DeleteConfirmationDialog.qml, image_viewer/ui/qml/AppDialogs.qml
+**What:** Fixed a bug where the Delete confirmation dialog allowed background clicks and could be closed by clicking the parent window. Root causes were incorrect parenting and layout overflow: dialog was not using the window overlay for modality and its content layout used `anchors.fill` causing implicit sizing issues that let the buttons render outside the dialog. Fixes:
+- Parent dialogs to the window overlay (fallback to `contentItem`) so Qt Quick Controls' modal dimming and input blocking work.
+- Set `closePolicy: Popup.NoAutoClose` and `dim: true` on the dialog so outside clicks don't close it and the background is dimmed.
+- Replace `anchors.fill` usage with dialog `padding` and rely on `implicitHeight` for content; wrap long text in a `ScrollView` and give buttons stable `implicitHeight`/`implicitWidth` so buttons cannot overflow the dialog bounds.
+- Add a small draggable header area so dialogs can be moved by the user.
+**Checks:** pyside6-qmllint: pass; Manual verification: modal scrim blocks background clicks, clicking the parent no longer closes the dialog, buttons fully visible and dialog draggable; Tests: 3 passed
+
+### Dev: document Qt Quick backend overrides and log when applied
+**Files:** image_viewer/main.py, dev-docs/qt_quick_backend_overrides.md
+**What:** Added debug logging to `main.py` so when `IMAGE_VIEWER_QSG_RHI_BACKEND` or `IMAGE_VIEWER_QT_QUICK_BACKEND` is used we record the applied override (`IMAGE_VIEWER_QSG_RHI_BACKEND -> QSG_RHI_BACKEND=...`). Also added `dev-docs/qt_quick_backend_overrides.md` with one-line usage examples and notes.
+**Checks:** pyside6-qmllint: n/a; Tests: 3 passed
+
+> NOTE (2026-01-10): QML 단일 경로는 `image_viewer/ui/qml/` 입니다. 과거 기록에 남아있는 `image_viewer/qml/*` 경로는 레거시이며 현재는 제거되었습니다.
+**Files:** image_viewer/ui/qml/App.qml
+**What:** Fixed Windows frameless-drag artifacts where the custom titlebar appeared to lag/"trail" behind the window during drag by disabling layer caching on the titlebar and restricting the drag handler to a dedicated drag region (excluding the window buttons). Also anchored the minimize/maximize/close glyphs so they remain properly centered and consistent across DPI/font metrics. Finally, fixed MenuBar items rendering as blank by wiring the custom MenuBar delegate to the underlying `Menu` objects (`modelData.title` + `menu: modelData`).
+**Checks:** pyside6-qmllint: pass; Manual run: launched (UI verification recommended)
+
+### QML: Restore MenuBar labels after delegate changes
+**Files:** image_viewer/ui/qml/App.qml
+**What:** Fixed a regression where the top MenuBar appeared to be "missing" because the custom `MenuBarItem` delegate was not bound to the underlying `Menu` model objects. Restored `text: modelData.title` and `menu: modelData` so the menubar shows "File/View/..." and opens correctly.
+**Checks:** pyside6-qmllint: pass; Manual run: launched; Tests: 3 passed
+
+## 2026-01-09
+
+### QML boundary cleanup: remove `main` shims; stub legacy Main(QObject)
+**Files:** image_viewer/qml/App.qml, image_viewer/qml/ViewerPage.qml, image_viewer/qml/ConvertWebPDialog.qml, image_viewer/main.py
+**What:** Finished the remaining QML compatibility cleanup by removing the `main`-based facade injection shims and standardizing on a direct `backend` property for components. Replaced the unused legacy `Main(QObject)` QML bridge with a fail-fast stub so accidental imports are caught immediately.
+**Checks:** Ruff: pass (2 fixed); Pyright: pass; Tests: 3 passed
+
+### Remove Python shim modules; migrate imports to layered packages
+**Files:** image_viewer/main.py, image_viewer/app/backend.py, image_viewer/image_engine/*, image_viewer/crop/*, image_viewer/trim/*, tests/*
+**What:** Removed top-level compatibility shims (`image_viewer/logger.py`, `path_utils.py`, `settings_manager.py`, `file_operations.py`, `webp_converter.py`, `styles.py`, `qml_models.py`) and migrated all imports to canonical modules under `image_viewer/infra`, `image_viewer/ops`, and `image_viewer/ui`.
+**Checks:** Ruff: pass (2 fixed); Pyright: pass; Tests: 3 passed
+
 ## 2026-01-07
 
 ### Fix: Rename dialog UX polish and fixes (T-UI-06)
@@ -90,7 +212,7 @@ Also added `tests/test_qml_mouse_interactions.py` to validate press-to-zoom and 
 
 ### QML Explorer plan update + QML grid model cleanup
 **Files:** dev-docs/QML/plan-qml-migration.md, image_viewer/qml_models.py
-**What:** Updated the QML migration plan to reflect the decided full QML shell direction and the Explorer priorities (thumbnail grid, metadata, context menu, shortcuts). Also refactored `QmlImageGridModel.data()` to remove a Ruff `PLR0912` “too many branches” violation by switching to a role->getter mapping.
+**What:** Updated the QML migration plan to reflect the decided full QML shell direction and the Explorer priorities (thumbnail grid, metadata, context menu, shortcuts). Also refactored `QmlImageGridModel.data()` to remove a Ruff `PLR0912` "too many branches" violation by switching to a role->getter mapping.
 **Checks:** Ruff: pass; Pyright: pass; Tests: 76 passed
 
 ### QML ImageProvider & engine integration (T-QLM-02)
@@ -132,7 +254,7 @@ Also added `tests/test_qml_mouse_interactions.py` to validate press-to-zoom and 
 - Centralized the thumbnail DB schema into a single spec and generated SQL via f-strings (including column types/constraints).
 - Enforced strict schema validation; when the on-disk schema/version mismatches, the thumbnails table is dropped and recreated (no migrations/compat).
 - Removed legacy `ThumbDB`/`ThumbDBOperatorAdapter` and legacy `ThumbnailCache` implementation code (modules now fail fast if imported).
-- Unified crop preset UI so “Configure Preset” is the single entry point (removed the separate “add preset” path).
+- Unified crop preset UI so "Configure Preset" is the single entry point (removed the separate "add preset" path).
 **Checks:** Ruff: pass; Pyright: 0 errors; Tests: 55 passed, 7 skipped
 
 ### Fix EngineCore ThumbDBBytesAdapter operator access
@@ -164,7 +286,7 @@ Also added `tests/test_qml_mouse_interactions.py` to validate press-to-zoom and 
 - Scroll up: 1.25x zoom in
 - Scroll down: 0.8x zoom out
 - Zoom applied directly via `QGraphicsView.scale()` transform
-- Scale clamped to 0.1–10.0 range to prevent extreme zoom levels
+- Scale clamped to 0.1-10.0 range to prevent extreme zoom levels
 - Proper event handling: `event.accept()` on success, `event.ignore()` on error
 - Robust exception handling with debug logging
 - No conflicts with existing SelectionRectItem mouse handling (SelectionRectItem only accepts LeftButton, doesn't override wheelEvent)

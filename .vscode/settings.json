@@ -13,5 +13,11 @@
     "python.testing.unittestEnabled": false,
     "python.testing.pytestEnabled": true,
     "windsurfPyright.disableLanguageServices": false,
-    "explorer.sortOrder": "type"
+    "explorer.sortOrder": "type",
+    "chat.tools.terminal.autoApprove": {
+        "/^Get-ChildItem -Path \"C:\\\\Projects\\\\image_viewer\\\\image_viewer\\\\ui\\\\qml\" -Filter \\*\\.qml \\| ForEach-Object \\{ uv run pyside6-qmllint \\$_\\.FullName \\}$/": {
+            "approve": true,
+            "matchCommandLine": true
+        }
+    }
 }

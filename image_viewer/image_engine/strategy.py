@@ -7,7 +7,7 @@ This module provides different strategies for image decoding:
 
 from abc import ABC, abstractmethod
 
-from image_viewer.logger import get_logger
+from image_viewer.infra.logger import get_logger
 
 _logger = get_logger("strategy")
 

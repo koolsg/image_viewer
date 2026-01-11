@@ -7,8 +7,8 @@ from pathlib import Path
 
 from PySide6.QtCore import QObject, Signal
 
-from image_viewer.logger import get_logger
-from image_viewer.path_utils import abs_dir, db_key
+from image_viewer.infra.logger import get_logger
+from image_viewer.infra.path_utils import abs_dir, db_key
 
 from .db.db_operator import DbOperator
 from .db.thumbdb_bytes_adapter import ThumbDBBytesAdapter

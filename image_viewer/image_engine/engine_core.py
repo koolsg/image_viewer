@@ -28,11 +28,12 @@ from PySide6.QtCore import (
     QThread,
     QTimer,
     Signal,
+    Slot,
 )
 from PySide6.QtGui import QImage, QImageWriter
 
-from image_viewer.logger import get_logger
-from image_viewer.path_utils import abs_dir, abs_dir_str, db_key
+from image_viewer.infra.logger import get_logger
+from image_viewer.infra.path_utils import abs_dir, abs_dir_str, db_key
 
 from .db.thumbdb_bytes_adapter import ThumbDBBytesAdapter
 from .decoder import encode_image_to_png, get_image_dimensions
@@ -145,6 +146,7 @@ class EngineCore(QObject):
         self._thumb_loader.image_decoded.connect(self._on_thumb_decoded)
         _logger.debug("EngineCore initialized in thread")
 
+    @Slot()
     def shutdown(self) -> None:
         # Stop watcher/timer first to avoid late refreshes during teardown.
         with contextlib.suppress(Exception):

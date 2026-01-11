@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from image_viewer.settings_manager import SettingsManager
+from image_viewer.infra.settings_manager import SettingsManager
 
 
 def test_last_open_dir_is_normalized_and_directory(tmp_path: Path) -> None:

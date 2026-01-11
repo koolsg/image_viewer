@@ -11,7 +11,7 @@ from typing import Any
 
 import numpy as np
 
-from image_viewer.logger import get_logger
+from image_viewer.infra.logger import get_logger
 
 _logger = get_logger("decoder")
 
