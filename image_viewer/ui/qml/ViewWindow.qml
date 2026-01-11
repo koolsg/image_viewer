@@ -34,7 +34,8 @@ Window {
             viewWindow.requestActivate()
             Qt.callLater(function() {
                 viewFocus.forceActiveFocus()
-                viewerPage.forceActiveFocus()
+                if (backend && backend.crop && backend.crop.active) cropPage.forceActiveFocus()
+                else viewerPage.forceActiveFocus()
             })
         } else {
             log("viewWindow.onVisibleChanged: hiding, requesting main focus restore")
@@ -79,6 +80,17 @@ Window {
             theme: viewWindow.theme
             backgroundColor: (viewWindow.backend && viewWindow.backend.settings) ? viewWindow.backend.settings.backgroundColor : viewWindow.theme.background
             hqDownscaleEnabled: viewWindow.hqDownscaleEnabled
+            visible: !(viewWindow.backend && viewWindow.backend.crop && viewWindow.backend.crop.active)
+            enabled: visible
+        }
+
+        CropPage {
+            id: cropPage
+            anchors.fill: parent
+            backend: viewWindow.backend
+            theme: viewWindow.theme
+            visible: (viewWindow.backend && viewWindow.backend.crop && viewWindow.backend.crop.active)
+            enabled: visible
         }
     }
 }
