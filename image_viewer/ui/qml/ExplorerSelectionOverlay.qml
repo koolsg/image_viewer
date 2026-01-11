@@ -128,10 +128,13 @@ Item {
                 // Do grid selection based on click position
                 var cx = mouse.x + overlay.grid.contentX
                 var cy = mouse.y + overlay.grid.contentY
-                var cols = overlay.grid.computedCols || 1
-                var col = Math.floor(cx / overlay.grid.cellWidth)
-                var row = Math.floor(cy / overlay.grid.cellHeight)
-                if (col < 0 || row < 0) {
+
+                // NOTE: Don't derive index from cell math. GridView can have subtle
+                // layout differences (margins, rounding, style, etc.) that make
+                // manual col/row calculations drift after scrolling. indexAt()
+                // uses the view's actual layout.
+                var idx = overlay.grid.indexAt(cx, cy)
+                if (idx < 0) {
                     // click on empty area -> clear selection unless modifiers held
                     if (!(mouse.modifiers & Qt.ControlModifier) && !(mouse.modifiers & Qt.ShiftModifier)) {
                         overlay.grid.selectedIndices = []
@@ -141,7 +144,6 @@ Item {
                     overlay.grid._lastClickIndex = -1
                     overlay.grid._lastClickAtMs = 0
                 } else {
-                    var idx = row * cols + col
                     var total = overlay.backend ? (overlay.backend.explorer ? (overlay.backend.explorer.imageFiles ? overlay.backend.explorer.imageFiles.length : 0) : 0) : 0
                     if (idx >= 0 && idx < total) {
                         var nowMs = Date.now()
