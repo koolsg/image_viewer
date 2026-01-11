@@ -17,7 +17,6 @@ Dialog {
     modal: true
     dim: true
     focus: true
-    Keys.priority: Keys.BeforeItem
     closePolicy: Popup.NoAutoClose
 
     property var theme: null
@@ -46,9 +45,11 @@ Dialog {
         dlg.close()
     }
 
-    Keys.onEscapePressed: function(event) {
-        dlg.close()
-        event.accepted = true
+    Shortcut {
+        sequence: "Escape"
+        enabled: dlg.visible
+        context: Qt.WindowShortcut
+        onActivated: dlg.close()
     }
 
     background: Rectangle {
