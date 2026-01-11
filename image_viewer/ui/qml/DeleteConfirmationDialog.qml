@@ -12,7 +12,6 @@ Dialog {
     modal: true
     dim: true
     focus: true
-    Keys.priority: Keys.BeforeItem
     // Do not close when user clicks outside; keep it open and modal.
     closePolicy: Popup.NoAutoClose
     property alias titleText: titleLabel.text
@@ -50,9 +49,12 @@ Dialog {
     // - Esc: close immediately (no signals)
     // - Y/N: Yes/No (activate)
     // - Left/Right: move focus between Yes/No (do not activate)
-    Keys.onEscapePressed: function(event) {
-        dlg.close()
-        event.accepted = true
+
+    Shortcut {
+        sequence: "Escape"
+        enabled: dlg.visible
+        context: Qt.WindowShortcut
+        onActivated: dlg.close()
     }
 
     Shortcut {
@@ -145,27 +147,36 @@ Dialog {
             Layout.preferredHeight: Math.min(480, Math.max(120, textContent.implicitHeight))
             clip: true
 
-            contentItem: ColumnLayout {
-                id: textContent
-                width: parent.width
-                spacing: 8
+            contentItem: Flickable {
+                id: flick
+                clip: true
+                boundsBehavior: Flickable.StopAtBounds
+                flickableDirection: Flickable.VerticalFlick
+                contentWidth: flick.width
+                contentHeight: textContent.implicitHeight
 
-                Label {
-                    id: titleLabel
-                    text: ""
-                    font.pixelSize: 18
-                    font.bold: true
-                    wrapMode: Text.Wrap
-                    color: dlg.theme ? dlg.theme.text : "#ffffff"
-                }
+                ColumnLayout {
+                    id: textContent
+                    width: flick.width
+                    spacing: 8
 
-                Label {
-                    id: infoLabel
-                    text: ""
-                    font.pixelSize: 14
-                    wrapMode: Text.WordWrap
-                    color: dlg.theme ? dlg.theme.textDim : "#bdbdbd"
-                    lineHeight: 1.2
+                    Label {
+                        id: titleLabel
+                        text: ""
+                        font.pixelSize: 18
+                        font.bold: true
+                        wrapMode: Text.Wrap
+                        color: dlg.theme ? dlg.theme.text : "#ffffff"
+                    }
+
+                    Label {
+                        id: infoLabel
+                        text: ""
+                        font.pixelSize: 14
+                        wrapMode: Text.WordWrap
+                        color: dlg.theme ? dlg.theme.textDim : "#bdbdbd"
+                        lineHeight: 1.2
+                    }
                 }
             }
         }
